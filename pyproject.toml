@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The bare name `carryon` is taken on PyPI by an unrelated packaging tool, so
+# the distribution is published as agent-carryon. The import name, the repo and
+# the command a user types are all still `carryon`.
+name = "agent-carryon"
+version = "0.1.0"
+description = "Move an AI coding agent setup to a new machine - config, capability and knowledge, never chats."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["claude-code", "codex", "cursor", "migration", "dotfiles", "agents"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/marshaikh/carryon"
+
+[project.scripts]
+carryon = "carryon.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["carryon*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

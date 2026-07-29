@@ -1,0 +1,59 @@
+"""Claude Code - ~/.claude"""
+
+from .base import CAPABILITY, CONFIG, KNOWLEDGE, Adapter, Excluded, Item
+
+ADAPTER = Adapter(
+    key="claude-code",
+    name="Claude Code",
+    detect=".claude",
+    verified_against="Claude Code 2.1.220, macOS 15",
+    platforms=("darwin",),
+    items=(
+        Item(".claude/settings.json", "claude/settings.json",
+             "file", CONFIG, "model, permissions, hooks", required=True),
+        Item(".claude/settings.local.json", "claude/settings.local.json",
+             "file", CONFIG, "local overrides"),
+        Item(".claude/keybindings.json", "claude/keybindings.json",
+             "file", CONFIG, "key bindings"),
+        Item(".claude/CLAUDE.md", "claude/CLAUDE.md",
+             "file", KNOWLEDGE, "global instructions"),
+        Item(".claude/skills", "claude/skills",
+             "skills", CAPABILITY, "symlinks re-resolve; real dirs must be carried"),
+        Item(".claude/agents", "claude/agents",
+             "tree", CAPABILITY, "subagents"),
+        Item(".claude/commands", "claude/commands",
+             "tree", CAPABILITY, "slash commands"),
+        Item(".claude/plugins/installed_plugins.json",
+             "claude/plugins/installed_plugins.json",
+             "file", CAPABILITY, "manifest; plugins are re-resolved, not copied"),
+        Item(".claude/plugins/known_marketplaces.json",
+             "claude/plugins/known_marketplaces.json",
+             "file", CAPABILITY, "marketplace list"),
+    ),
+    exclude=(
+        Excluded(".claude/projects/", "chats and per-project memory",
+                 "use entangle - it re-keys the paths recorded inside transcripts"),
+        Excluded(".claude.json", "machine identity, caches, config",
+                 "holds machineID and onboarding state"),
+        Excluded(".claude/{cache,paste-cache,stats-cache.json}", "caches", "regenerated"),
+        Excluded(".claude/{daemon*,telemetry,ide}", "runtime state", "regenerated"),
+        Excluded(".claude/{shell-snapshots,file-history,downloads}",
+                 "machine-local history", "regenerated"),
+        Excluded(".claude/{sessions,session-env,tasks,jobs}",
+                 "live run state", "not portable"),
+        Excluded(".claude/history.jsonl", "prompt history",
+                 "entangle carries this if you want it"),
+        Excluded(".claude/backups", "config backups", "belong to the old machine"),
+    ),
+    # Everything seen in a real ~/.claude on 2.1.220. Anything outside this list
+    # is reported by `doctor` as a possible layout change.
+    known_entries=(
+        "settings.json", "settings.local.json", "keybindings.json", "CLAUDE.md",
+        "skills", "agents", "commands", "plugins", "projects",
+        "cache", "paste-cache", "stats-cache.json", "telemetry", "ide",
+        "daemon*", "shell-snapshots", "file-history", "downloads",
+        "sessions", "session-env", "tasks", "jobs", "backups",
+        "history.jsonl", ".last-cleanup", ".last-update-result.json",
+        "statsig", "todos", ".DS_Store",
+    ),
+)
