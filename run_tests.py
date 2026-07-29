@@ -18,7 +18,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 MODULES = ("tests.test_secrets", "tests.test_capture", "tests.test_layout",
-           "tests.test_transport")
+           "tests.test_transport", "tests.test_crypto")
 
 
 def main() -> int:

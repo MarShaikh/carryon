@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import pathlib
 import sys
 
-from . import __version__, capture, layout
+from . import __version__, capture, crypto, layout
 from .adapters import ADAPTERS, CATEGORIES, HOME, is_installed
 
 
@@ -34,6 +35,39 @@ def cmd_list(args) -> int:
                 print(f"        {category:<11} {', '.join(names)}")
     print("\nNo chats or sessions are included in any of the above - see README.md.")
     return 0
+
+
+def cmd_crypt(args) -> int:
+    """Encrypt or decrypt any file - including an entangle chat bundle."""
+    src = pathlib.Path(args.file).expanduser().resolve()
+    encrypting = args.command == "encrypt"
+    default = src.with_suffix(src.suffix + ".enc") if encrypting else _strip_enc(src)
+    dst = pathlib.Path(args.out).expanduser().resolve() if args.out else default
+
+    if dst.exists():
+        raise SystemExit(f"{dst} exists - remove it or pass --out")
+
+    passphrase = getpass.getpass("passphrase: ")
+    if encrypting:
+        if passphrase != getpass.getpass("confirm: "):
+            raise SystemExit("passphrases do not match")
+        if not passphrase:
+            raise SystemExit("empty passphrase")
+
+    try:
+        (crypto.encrypt if encrypting else crypto.decrypt)(src, dst, passphrase)
+    except crypto.CryptoError as exc:
+        raise SystemExit(f"{args.command} failed: {exc}")
+
+    print(f"{dst}  ({dst.stat().st_size/1024:.0f}K)")
+    if encrypting:
+        print("The plaintext is still on disk. Delete it when you no longer need it.")
+    return 0
+
+
+def _strip_enc(path: pathlib.Path) -> pathlib.Path:
+    return path.with_suffix("") if path.suffix == ".enc" else path.with_name(
+        path.name + ".decrypted")
 
 
 def cmd_doctor(args) -> int:
@@ -84,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--archive", metavar="FILE.tar.gz",
                      help="also pack the bundle into a single file")
     cap.set_defaults(func=cmd_capture)
+
+    for name, helptext in (
+        ("encrypt", "encrypt any file before it crosses a network"),
+        ("decrypt", "decrypt a file encrypted by `carryon encrypt`"),
+    ):
+        crypt = sub.add_parser(name, help=helptext)
+        crypt.add_argument("file")
+        crypt.add_argument("--out", help="output path (default: alongside the input)")
+        crypt.set_defaults(func=cmd_crypt)
+
     return parser
 
 

@@ -58,8 +58,22 @@ rclone copy r2:my-bucket/agent-state ~/agent-state    # new machine
 Works the same for R2, S3, B2, Drive or Dropbox. Keep it private: no
 credentials is not the same as not personal.
 
-An `entangle` chat bundle is a different matter — it is unredacted, so encrypt
-it before it goes anywhere, or move it offline.
+## Encrypting a bundle
+
+An `entangle` chat bundle is a different matter: transcripts are unredacted and
+record everything printed to a terminal. Encrypt it and it can take the same
+route as everything else.
+
+```bash
+carryon encrypt ~/sessions.tgz          # prompts, writes sessions.tgz.enc
+rclone copy ~/sessions.tgz.enc r2:my-bucket/
+carryon decrypt ~/sessions.tgz.enc      # on the new machine
+```
+
+AES-256-CBC with PBKDF2, via the `openssl` already on your system. The
+passphrase is prompted for, never passed as an argument, and works on any file
+— carryon's own bundles included, if you would rather not rely on the storage
+being private.
 
 ## Platform support
 
