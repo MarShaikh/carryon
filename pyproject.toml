@@ -23,7 +23,7 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/marshaikh/carryon"
+Homepage = "https://github.com/MarShaikh/carryon"
 
 [project.scripts]
 carryon = "carryon.cli:main"

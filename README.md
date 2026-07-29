@@ -36,16 +36,23 @@ verbatim copy overwrites your curated one.
 
 ## Install
 
-```bash
-pip install agent-carryon        # the command is still `carryon`
-```
-
-Or run it from a clone — there are no dependencies:
+Not on PyPI yet. Install from the repo — there are no dependencies, so this is
+a clone and nothing else:
 
 ```bash
-git clone https://github.com/marshaikh/carryon && cd carryon
+git clone https://github.com/MarShaikh/carryon && cd carryon
 python3 -m carryon.cli doctor
 ```
+
+Or install it so the `carryon` command is on your path:
+
+```bash
+pip install git+https://github.com/MarShaikh/carryon
+```
+
+When it is published the distribution will be `agent-carryon` — the bare name
+`carryon` is taken on PyPI by an unrelated packaging tool — while the repo,
+the import and the command all stay `carryon`.
 
 ## Commands
 
