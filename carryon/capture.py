@@ -94,17 +94,32 @@ class Capture:
         return {"stripped_keys": removed}
 
     def do_skills(self, src, dst, item) -> dict:
-        """Split a skills dir into re-resolvable links and must-carry originals.
+        """Sort a skills directory into three groups.
 
-        A symlinked skill points into a shared store and is recorded in a lock
-        file with its upstream, so the new machine re-installs it. A real
-        directory has no upstream: if it is not carried here, it is gone.
+        re-resolvable  a symlink into the shared store, recorded in a lock file
+                       with its upstream, so the new machine re-installs it
+        external       a symlink somewhere else - typically a dotfiles repo.
+                       Whatever owns it will restore it, but the skills
+                       installer will not, so it must be named rather than
+                       quietly counted as handled
+        carried        a real directory. No upstream: if it is not copied here,
+                       it is gone
         """
-        linked = sorted(p.name for p in src.iterdir() if p.is_symlink())
-        owned = sorted((p for p in src.iterdir()
-                        if not p.is_symlink() and p.is_dir()), key=lambda p: p.name)
+        store = (self.home / item.resolvable_via).resolve() if item.resolvable_via else None
+
+        resolvable, external, owned = [], {}, []
+        for path in sorted(src.iterdir(), key=lambda p: p.name):
+            if path.is_symlink():
+                target = path.resolve()
+                if store and store in target.parents:
+                    resolvable.append(path.name)
+                else:
+                    external[path.name] = str(target)
+            elif path.is_dir():
+                owned.append(path)
+
         print(f"      {item.src:<46} {len(owned):>3} carried, "
-              f"{len(linked)} re-resolvable  {item.note}")
+              f"{len(resolvable)} re-resolvable, {len(external)} external")
         for path in owned:
             print(f"        + {path.name}  (no upstream - lost if not carried)")
             for f in tree_files(path):
@@ -113,7 +128,12 @@ class Capture:
                 copied, written = copy_tree(path, dst / path.name)
                 self.files += copied
                 self.bytes += written
-        return {"carried": [p.name for p in owned], "re_resolvable": linked}
+        for name, target in external.items():
+            print(f"        ~ {name}  managed elsewhere: {target}")
+
+        return {"carried": [p.name for p in owned],
+                "re_resolvable": resolvable,
+                "external": external}
 
 
 HANDLERS = {

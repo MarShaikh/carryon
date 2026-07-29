@@ -145,3 +145,30 @@ def test_every_adapter_declares_what_it_was_verified_against():
         assert adapter.items, f"{key} captures nothing"
         for item in adapter.items:
             assert item.category in CATEGORIES
+
+
+def test_symlink_outside_the_lock_store_is_not_called_re_resolvable(tmp_path):
+    """A symlink is only re-resolvable if it points into the shared store.
+
+    Dotfiles repos also symlink skills into ~/.claude/skills. Those have no
+    entry in .skill-lock.json, so calling them re-resolvable would mean the
+    skills installer is expected to restore something it has never heard of -
+    and they would be silently lost.
+    """
+    home = build_home(tmp_path)
+    elsewhere = tmp_path / "dotfiles" / "claude" / "skills" / "from-dotfiles"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "SKILL.md").write_text("managed by a dotfiles repo")
+    (home / ".claude" / "skills" / "from-dotfiles").symlink_to(elsewhere)
+
+    code, manifest = run(home, tmp_path / "bundle")
+    assert code == 0
+
+    skills = [i for i in manifest["agents"]["claude-code"]["items"]
+              if i["kind"] == "skills"][0]
+
+    assert "from-dotfiles" not in skills["re_resolvable"], \
+        "a symlink outside the lock store is not re-resolvable"
+    assert "from-dotfiles" in skills["external"], \
+        "it must be reported as managed elsewhere, not silently dropped"
+    assert "shared-skill" in skills["re_resolvable"]

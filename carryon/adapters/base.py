@@ -34,6 +34,15 @@ class Item:
     category: str
     note: str
     strip: tuple = ()   # json-strip only: keys to drop
+    resolvable_via: str = ""
+    """skills only: the store, relative to $HOME, whose symlinks re-resolve.
+
+    A symlink into this store is recorded in a lock file with its upstream, so
+    the new machine re-installs it. A symlink anywhere else - a dotfiles repo,
+    say - is managed by something this tool does not control, and is reported
+    rather than assumed handled.
+    """
+
     required: bool = False
     """True when an installed agent should essentially always have this.
 

@@ -65,6 +65,20 @@ def build_restore(manifest: dict) -> str:
         out += [f"    cp -R claude/skills/{name} ~/.claude/skills/" for name in carried]
         out.append("")
 
+    external = {}
+    for agent in manifest["agents"].values():
+        for item in agent["items"]:
+            external.update(item.get("external", {}))
+    if external:
+        out += [
+            "Some skills are symlinks managed by something else - a dotfiles",
+            "repo, most likely. They are not in this bundle and the skills",
+            "installer will not restore them. Whatever owns these must run too:",
+            "",
+        ]
+        out += [f"    {name}  <- {target}" for name, target in sorted(external.items())]
+        out.append("")
+
     out += ["## 4. Config and knowledge", ""] + _copy_lines(manifest) + [""]
 
     out += [
