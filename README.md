@@ -44,6 +44,23 @@ pip install git+https://github.com/MarShaikh/carryon
 Skills installed from a repo are recorded as re-resolvable and left for the
 skills installer. Only skills with no upstream are carried.
 
+## Moving the bundle
+
+It holds no credentials — `capture` refuses to finish if it finds one — so any
+private storage works. A private git repo, `--archive` onto a USB stick, or
+object storage:
+
+```bash
+rclone copy ~/agent-state r2:my-bucket/agent-state    # old machine
+rclone copy r2:my-bucket/agent-state ~/agent-state    # new machine
+```
+
+Works the same for R2, S3, B2, Drive or Dropbox. Keep it private: no
+credentials is not the same as not personal.
+
+An `entangle` chat bundle is a different matter — it is unredacted, so encrypt
+it before it goes anywhere, or move it offline.
+
 ## Platform support
 
 macOS is verified. Linux is expected to work and Windows is untested — the code
