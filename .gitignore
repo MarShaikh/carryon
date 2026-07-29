@@ -12,3 +12,7 @@ agent-state/
 *-bundle/
 MANIFEST.json
 RESTORE.md
+
+# uv
+.venv/
+uv.lock
