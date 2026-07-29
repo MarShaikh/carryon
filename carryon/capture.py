@@ -272,7 +272,7 @@ def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
         write_archive(out, archive)
         print(f"  {archive}  ({archive.stat().st_size/1024:.0f}K)")
 
-    print("\nThis bundle passed the credential scan, so it is safe to put in a")
-    print("private git repo. The chat bundle from entangle is not - keep that")
-    print("one off any remote.")
+    print("\nThis bundle passed the credential scan, so private storage of any")
+    print("kind will do. An entangle chat bundle is unredacted - run it through")
+    print("`carryon encrypt` before it goes anywhere you do not control.")
     return 0, manifest
