@@ -16,8 +16,7 @@ found there is reported and carried, never redacted or blocked.
 Supports Claude Code, Codex CLI, Cursor, and the `~/.agents` skills
 convention; a History moves for Claude Code and Codex, the two whose session
 layout the engine knows. No Python dependencies — encryption shells out to the
-`openssl` already on the machine — and Python 3.9+. macOS only; what that is
-worth is at the foot of this file.
+`openssl` already on the machine — and Python 3.9+. Run on macOS only, so far.
 
 This file is an index. The vocabulary is defined in [CONTEXT.md](CONTEXT.md)
 and the reasoning behind each decision in [docs/adr/](docs/adr/).
@@ -57,13 +56,15 @@ in is not a command yet, so keep a paired machine while that is true.
 
 `push`, `pull` and `capture` print a plan and change nothing without `--apply`;
 `--help` on a subcommand lists its own flags (`--agent`, `--category`, `--map`,
-`--force`). A pull never deletes anything under `$HOME`, and nothing carryon
-writes goes through a path another tool already holds — a dotfiles symlink, a
-second hard link, a name this machine will not answer about. A file like that
-is skipped and named in the report; an argument that names one is refused
-before the command does anything. `--force` writes through the first two on
-the Setup half only; it still refuses a path no adapter here declares, one that
-lands in carryon's own state, and anything that is not an ordinary file.
+`--force`).
+
+A pull never deletes anything under `$HOME`, and carryon never writes through a
+path another tool already holds — a dotfiles symlink, a second hard link, a
+name this machine will not answer about. Such a path is skipped and named in
+the report rather than silently overwritten. `--force` writes through a symlink
+or hard link on the Setup half; it still refuses a path no adapter here
+declares, one landing in carryon's own state, and anything that is not an
+ordinary file.
 
 ## Destinations
 
@@ -109,31 +110,34 @@ lists every top-level name you know about — anything else is reported by
 sit in a shape the History engine has no layout for carries its Setup only;
 adding that shape is engine work rather than a declaration.
 
-## Tests, and what they are evidence of
+## Platform support
+
+Every adapter is declared for `darwin` and was checked there; only the
+`~/.agents` one also claims Linux. Nothing has been run on Linux or Windows.
+`doctor` tells you when you are on a platform an adapter does not cover, and an
+adapter's `verified_against` records the version and OS it was actually checked
+on rather than a guess.
+
+## Tests
 
 ```bash
 uv run --extra dev pytest -q
 python3 run_tests.py           # no pytest required
 ```
 
-Both runners run the same suite and have to agree. What that evidence covers,
-said plainly, because a History is your transcripts and that is not a decision
-to make from a feature list. It is **macOS only**: every adapter is declared
-for `darwin` and was checked there, only the `~/.agents` one also claims Linux,
-nothing has been run on Linux or Windows, and `doctor` says so on a platform an
-adapter does not cover. **No agent binary is involved anywhere** — the suite
-builds agent directories itself and drives carryon over them, so what is
-verified is carryon's behaviour against the layouts each adapter records in
-`verified_against`, on the date recorded there. **The keyring is exercised
-through its file backend**, with the real keychain pinned out, so `security(1)`
-and `secret-tool` are covered by the arguments carryon builds for them rather
-than by use. `openssl` and `git` are the real ones on the machine, and a whole
-journey — init, push, pair, join, pull, push back — runs against both a
-directory Destination and a bare git repository; `rclone` is a stand-in binary.
-**Nothing tests two carryon runs against one Archive at the same time**: a
-local Destination writes through a temp file and an atomic rename, and one
-test does race a thread against the Destination walk, but concurrent pushes
-from two machines are not something this suite has seen.
+Both runners run the same suite and have to agree.
+
+A History is your transcripts, so what the suite does *not* cover is worth
+knowing before you point carryon at them. No agent binary is involved anywhere:
+the suite builds agent directories itself, so what is verified is carryon's
+behaviour against the layouts each adapter records — not against a live agent,
+and not against a vendor who has since reorganised. The keyring runs through
+its file backend with the real keychain pinned out, so `security(1)` and
+`secret-tool` are covered by the arguments carryon builds for them rather than
+by use. `openssl` and `git` are the real binaries, and a full journey — init,
+push, pair, join, pull, push back — runs against both a directory Destination
+and a bare git repository; `rclone` is a stand-in. Two carryon runs against one
+Archive at the same time is not tested.
 
 ## Licence
 
