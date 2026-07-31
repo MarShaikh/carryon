@@ -70,8 +70,22 @@ checked against.
 ### Moving it
 
 **Destination**:
-Somewhere a Snapshot can be put and later fetched. Carryon holds no credentials
-for one: it borrows whatever the user already has.
+Somewhere a Snapshot can be put and later fetched. Carryon stores no credential
+for one. It borrows a tool that already holds them — git's keys, rclone's
+config — and where it helps set that tool up, the credential passes straight
+through and is never kept.
+
+**Provider**:
+A storage service carryon knows how to set a Remote up for: which handful of
+fields that service needs, and nothing else about it. Knowing a Provider is not
+speaking its protocol — rclone does that.
+
+**Remote**:
+rclone's stored definition of how to reach a Provider. It belongs to rclone and
+lives in rclone's config; carryon can create one and never reads it back.
+_Avoid_: using "remote" for the Destination — a Destination names a Remote and a
+path within it, and the same Remote can hold Archives that are nothing to do
+with each other
 
 **Re-keying**:
 Rewriting the absolute paths recorded inside a History so they do not belong to
