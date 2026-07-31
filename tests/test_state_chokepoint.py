@@ -841,14 +841,14 @@ ALLOWED_READS = {
         "a Transcript already past the gate, read for its cwd", ("open",)),
     ("rekey.py", "read_cwd"): (
         "the same read one module down, standalone", ("open",)),
-    ("sync.py", "_neutralise_staged_setup"): (
+    ("setup_out.py", "_neutralise_staged_setup"): (
         "carryon's own staging tree, already captured through the gate",
         ("read_bytes",)),
-    ("sync.py", "_stored_manifest"): (
+    ("stored_setup.py", "_stored_manifest"): (
         "the stored Setup in carryon's staging", ("read_text",)),
-    ("sync.py", "_stored_setup_tag"): (
+    ("authentication.py", "_stored_setup_tag"): (
         "the stored Setup in carryon's staging", ("read_bytes",)),
-    ("sync.py", "_restore_setup_item"): (
+    ("setup_in.py", "_restore_setup_item"): (
         "the staged Setup being written out, an Archive's bytes on their way "
         "IN", ("read_bytes",)),
     ("archive.py", "setup_tree_manifest"): (
@@ -920,7 +920,7 @@ ALLOWED_WRITES = {
         "Destination.write, the Archive chokepoint", ("write",)),
     ("archive.py", "put_pairing"): (
         "Destination.write, the Archive chokepoint", ("write",)),
-    ("sync.py", "_neutralise_staged_setup"): (
+    ("setup_out.py", "_neutralise_staged_setup"): (
         "carryon's own staging tree, under a staging root config."
         "state_write_path answered for", ("write_bytes", "write_text",
                                           "write_text")),
@@ -928,7 +928,7 @@ ALLOWED_WRITES = {
         "the atomic rename of an in-flight blob into place, inside the "
         "descriptor the openat walk ended on (ADR-0009)",
         ("os.rename", "os.replace")),
-    ("sync.py", "_push_partial_setup"): (
+    ("setup_out.py", "_push_partial_setup"): (
         "carryon's own staging tree", ("write_bytes", "write_text",
                                        "write_text")),
     ("sync.py", "push"): ("carryon's own staging tree", ("write_bytes",)),
@@ -986,7 +986,7 @@ ALLOWED_REMOVALS = {
     ("keyring.py", "forget_master"): (
         "the fallback master key, which is the whole of what that command "
         "was asked to do", ("unlink",)),
-    ("sync.py", "_neutralise_staged_setup"): (
+    ("setup_out.py", "_neutralise_staged_setup"): (
         "a file withheld from the staging tree so a full push clears one an "
         "earlier version published - carryon's own tree, on the push leg",
         ("unlink",)),

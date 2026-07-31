@@ -39,6 +39,7 @@ MODULES = (
     "tests.test_capture_gate",
     "tests.test_state_chokepoint",
     "tests.test_state_files",
+    "tests.test_highwater_once",
     "tests.test_write_chokepoint",
     "tests.test_keyring",
     "tests.test_destinations",
