@@ -1,6 +1,6 @@
 """Claude Code - ~/.claude"""
 
-from .base import CAPABILITY, CONFIG, KNOWLEDGE, Adapter, Excluded, Item
+from .base import CAPABILITY, CONFIG, HISTORY, KNOWLEDGE, Adapter, Excluded, Item
 
 ADAPTER = Adapter(
     key="claude-code",
@@ -30,10 +30,11 @@ ADAPTER = Adapter(
         Item(".claude/plugins/known_marketplaces.json",
              "claude/plugins/known_marketplaces.json",
              "file", CAPABILITY, "marketplace list"),
+        Item(".claude/projects", "history/claude-code",
+             "chats", HISTORY, "sessions and per-project memory",
+             layout="claude-projects"),
     ),
     exclude=(
-        Excluded(".claude/projects/", "chats and per-project memory",
-                 "use entangle - it re-keys the paths recorded inside transcripts"),
         Excluded(".claude.json", "machine identity, caches, config",
                  "holds machineID and onboarding state"),
         Excluded(".claude/{cache,paste-cache,stats-cache.json}", "caches", "regenerated"),
@@ -43,7 +44,8 @@ ADAPTER = Adapter(
         Excluded(".claude/{sessions,session-env,tasks,jobs}",
                  "live run state", "not portable"),
         Excluded(".claude/history.jsonl", "prompt history",
-                 "entangle carries this if you want it"),
+                 "prompt-box recall, not a Transcript - the History carries "
+                 "Sessions, and this is neither part of one nor needed to resume"),
         Excluded(".claude/backups", "config backups", "belong to the old machine"),
     ),
     # Everything seen in a real ~/.claude on 2.1.220. Anything outside this list

@@ -52,7 +52,7 @@ def test_missing_optional_item_is_not_drift(tmp_path):
 
 
 def test_capture_still_succeeds_despite_drift(tmp_path):
-    """Drift is a warning, not a failure. The user may still want the bundle."""
+    """Drift is a warning, not a failure. The user may still want the capture."""
     home = build_home(tmp_path)
     (home / ".claude" / "settings.json").unlink()
 

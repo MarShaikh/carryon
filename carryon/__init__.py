@@ -1,11 +1,11 @@
-"""carryon - move an AI coding agent setup to a new machine.
+"""carryon - carry an AI coding agent's working life between machines.
 
-Captures config, capability and knowledge for every agent it finds, refuses to
-carry credentials, and records what it deliberately left behind.
-
-It does not move chats or sessions. That is a different problem - it needs path
-re-keying inside transcript bodies and a redaction pass - and entangle already
-solves it well: https://github.com/gowtham-sai-yadav/claude-teleport
+Two halves with opposite safety postures, kept apart on purpose. The Setup
+(config, capability, knowledge) is carried plaintext and carryon refuses to
+produce one containing a credential. The History (Sessions, with the paths
+inside them re-keyed) is always encrypted, and a credential found there is
+reported rather than blocked - it records something echoed to a terminal in
+the past, which no capture rule can fix. See CONTEXT.md and docs/adr/.
 """
 
 __version__ = "0.1.0"

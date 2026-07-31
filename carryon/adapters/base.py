@@ -10,7 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 CONFIG, CAPABILITY, KNOWLEDGE = "config", "capability", "knowledge"
-CATEGORIES = (CONFIG, CAPABILITY, KNOWLEDGE)
+HISTORY = "history"
+
+# The three categories that make up a Setup. HISTORY is the other half of a
+# Snapshot: declared here so adapters can name where it lives, but it never
+# moves through the capture engine - it is pushed, encrypted, by the history
+# pipeline.
+SETUP_CATEGORIES = (CONFIG, CAPABILITY, KNOWLEDGE)
+CATEGORIES = SETUP_CATEGORIES + (HISTORY,)
 
 # How the engine handles an item:
 #   file        copy one file
@@ -19,7 +26,10 @@ CATEGORIES = (CONFIG, CAPABILITY, KNOWLEDGE)
 #   skills      a skills directory where symlinks point into a shared store and
 #               re-resolve from a lock file, while real directories have no
 #               upstream and are the only thing a mistake destroys for good
-KINDS = ("file", "tree", "json-strip", "skills")
+#   chats       declarative only: names where an agent keeps its Sessions and
+#               which layout they follow. The capture engine never copies one;
+#               the history pipeline interprets the layout.
+KINDS = ("file", "tree", "json-strip", "skills", "chats")
 
 PLATFORMS = ("darwin", "linux", "win32")
 
@@ -29,7 +39,7 @@ class Item:
     """One thing worth carrying to the new machine."""
 
     src: str          # path relative to $HOME
-    dst: str          # path relative to the bundle root
+    dst: str          # path relative to the capture output root
     kind: str
     category: str
     note: str
@@ -52,11 +62,23 @@ class Item:
     have, like optional keybindings.
     """
 
+    layout: str = ""
+    """chats only: which on-disk shape the Sessions follow.
+
+    Names a strategy in the history engine (e.g. 'claude-projects',
+    'codex-rollouts'). The adapter stays declarative; a vendor reorganising
+    their sessions directory means a new layout name, not adapter logic.
+    """
+
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"{self.src}: unknown kind {self.kind!r}")
         if self.category not in CATEGORIES:
             raise ValueError(f"{self.src}: unknown category {self.category!r}")
+        if self.kind == "chats" and not self.layout:
+            raise ValueError(f"{self.src}: kind 'chats' requires a layout")
+        if self.kind != "chats" and self.layout:
+            raise ValueError(f"{self.src}: layout is only for kind 'chats'")
 
 
 @dataclass(frozen=True)
