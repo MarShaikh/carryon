@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import keyring  # noqa: E402
+from carryon import crypto, keyring  # noqa: E402
 
 KEY = bytes(range(32))
 
@@ -185,6 +185,39 @@ def test_corrupt_store_is_a_named_error_not_a_traceback(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         keyring.fetch_master(home=home, platform="linux")
     assert "master" in str(exc.value)
+
+
+# A truncated write is the failure `_corrupt` names as usual, and hex has no
+# length of its own: 62 digits decode as cleanly as 64 do. Without a length
+# check the caller gets a 31-byte key and every derivation built on it is
+# silently wrong - openssl takes any passphrase, so the Archive does not open
+# and nothing says why. The refusal must fire on the length, not on the hex.
+@pytest.mark.parametrize("digits, why", [
+    (62, "one byte short of a master key"),
+    (66, "one byte long"),
+    (0, "an empty file, which a torn write leaves behind"),
+])
+def test_a_key_of_the_wrong_length_is_refused_not_returned(
+        tmp_path, monkeypatch, digits, why):
+    no_tools(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    (home / ".carryon").mkdir(parents=True)
+    (home / ".carryon" / "master.key").write_text("ab" * (digits // 2))
+
+    with pytest.raises(SystemExit) as exc:
+        keyring.fetch_master(home=home, platform="linux")
+    assert "master" in str(exc.value), why
+
+
+def test_a_key_of_the_right_length_still_comes_back(tmp_path, monkeypatch):
+    """The control: the length check must not refuse an honest key."""
+    no_tools(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    (home / ".carryon").mkdir(parents=True)
+    key = bytes(range(crypto.MASTER_BYTES))
+    (home / ".carryon" / "master.key").write_text(key.hex())
+
+    assert keyring.fetch_master(home=home, platform="linux") == key
 
 
 # --- the fallback file, when it is there and will not read -------------------

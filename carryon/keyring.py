@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import sys
 
-from . import config
+from . import config, crypto
 
 HOME = pathlib.Path.home()
 SERVICE = "carryon"
@@ -62,10 +62,18 @@ def _corrupt(path=None) -> str:
 
 
 def _decode(text: str, path=None) -> bytes:
+    # Length is part of being the hex carryon wrote, not a separate question.
+    # Hex carries no length of its own, so a torn write - the cause _corrupt
+    # names as usual - decodes as cleanly as a whole one and hands back a
+    # short key. Nothing downstream would notice: openssl accepts any
+    # passphrase, so the Archive simply does not open and nothing says why.
     try:
-        return bytes.fromhex(text.strip())
+        key = bytes.fromhex(text.strip())
     except ValueError:
         raise SystemExit(_corrupt(path))
+    if len(key) != crypto.MASTER_BYTES:
+        raise SystemExit(_corrupt(path))
+    return key
 
 
 def _run(argv, secret_stdin=None):
