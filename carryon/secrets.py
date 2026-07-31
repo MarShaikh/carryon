@@ -1,8 +1,11 @@
 """Credential detection for captured files.
 
-This module does not mask, it REFUSES. A config bundle should contain no
+In a Setup this module does not mask, it REFUSES. A Setup should contain no
 credentials at all, so a hit means the capture list is wrong - not that the
-output needs cleaning up afterwards.
+output needs cleaning up afterwards. A History is the other posture: the same
+scan() runs there, but hits are reported and the Sessions carried encrypted,
+because a credential echoed to a terminal in the past cannot be un-echoed
+(see docs/adr/0001).
 
 Rule set follows entangle's internal/redact (MIT).
 """

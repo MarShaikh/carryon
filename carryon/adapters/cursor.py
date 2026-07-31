@@ -12,7 +12,13 @@ ADAPTER = Adapter(
     key="cursor",
     name="Cursor",
     detect=".cursor",
-    verified_against="macOS 15, ~/.cursor layout as of 2026-07",
+    # Checked read-only on 2026-07-31, names and structure only, never file
+    # contents: every top-level entry below is one this list accounts for,
+    # skills-cursor held .sync-manifest.json beside one directory per
+    # vendor-synced skill, and plugins held nothing but `local`. `rules` and
+    # `commands` were absent there, which is what leaving them not-required
+    # is for.
+    verified_against="macOS 15, ~/.cursor layout as of 2026-07-31",
     platforms=("darwin",),
     items=(
         Item(".cursor/cli-config.json", "cursor/cli-config.json",
@@ -35,8 +41,24 @@ ADAPTER = Adapter(
                  "Cursor re-syncs them; the manifest is kept to check against"),
         Excluded(".cursor/{ide_state.json,ai-tracking,blocklist}",
                  "machine-local", "regenerated"),
+        # Written down rather than left out. Both were in known_entries and
+        # in neither items nor exclude, which is the shape `doctor` cannot
+        # see - it reports what no adapter has heard of, and these are heard
+        # of and carried by nothing. An exclusion nobody wrote down reads as
+        # an oversight later (adapters/base.Excluded).
+        Excluded(".cursor/plugins/", "installed CLI plugins",
+                 "Cursor resolves these itself; a copied plugin tree pins a "
+                 "stale version and carries whatever it was built against"),
+        Excluded(".cursor/{argv.json,unified_repo_list.json}",
+                 "launcher flags and the local repo list",
+                 "both name paths and hardware on the old machine"),
         Excluded("~/Library/Application Support/Cursor/", "editor state",
                  "out of scope - editor config, not agent state"),
+        Excluded("~/Library/Application Support/Cursor/User/workspaceStorage/",
+                 "chat state",
+                 "lives in app storage as opaque per-workspace databases, not "
+                 "as transcripts under ~/.cursor - no History is carried for "
+                 "this agent"),
         Excluded(".cursor/.gitignore", "Cursor-managed ignore rules",
                  "Cursor rewrites it; note that its existence means Cursor "
                  "expects people to version-control ~/.cursor"),

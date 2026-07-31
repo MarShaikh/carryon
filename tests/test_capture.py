@@ -8,10 +8,13 @@ import json
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from carryon import capture  # noqa: E402
-from carryon.adapters import ADAPTERS, CATEGORIES  # noqa: E402
+from carryon.adapters import (ADAPTERS, CATEGORIES, CONFIG, HISTORY,  # noqa: E402
+                              SETUP_CATEGORIES, Item)
 
 
 def build_home(tmp_path) -> pathlib.Path:
@@ -84,7 +87,7 @@ def test_planted_credential_fails_closed(tmp_path):
     out = tmp_path / "bundle"
     code, _ = run(home, out)
 
-    assert code == 2, "a credential in the capture set must not produce a bundle"
+    assert code == 2, "a credential in the capture set must not produce a Setup"
     assert not (out / "MANIFEST.json").exists()
 
 
@@ -145,6 +148,111 @@ def test_every_adapter_declares_what_it_was_verified_against():
         assert adapter.items, f"{key} captures nothing"
         for item in adapter.items:
             assert item.category in CATEGORIES
+
+
+def add_fake_session(home) -> pathlib.Path:
+    """A synthetic Session tree under ~/.claude/projects. No real content."""
+    project = home / ".claude" / "projects" / "-Users-someone-proj"
+    project.mkdir(parents=True)
+    (project / "0000-fake-uuid.jsonl").write_text('{"cwd": "/Users/someone/proj"}\n')
+    return project
+
+
+def test_chats_are_not_part_of_a_default_capture(tmp_path):
+    home = build_home(tmp_path)
+    add_fake_session(home)
+    out = tmp_path / "bundle"
+    code, manifest = run(home, out)
+
+    assert code == 0
+    assert not (out / "history").exists(), "a Setup must not contain Sessions"
+    kinds = {i["kind"] for a in manifest["agents"].values() for i in a["items"]}
+    assert "chats" not in kinds
+    assert "history" not in manifest["categories"]
+    assert sorted(manifest["categories"]) == sorted(SETUP_CATEGORIES)
+
+
+def test_the_engine_skips_chats_even_when_history_is_in_the_wanted_set(tmp_path):
+    """The kind check is a second guard, independent of category filtering."""
+    home = build_home(tmp_path)
+    add_fake_session(home)
+    out = tmp_path / "bundle"
+    cap = capture.Capture(out, dry=False, home=home)
+
+    entry = capture._capture_agent(cap, ADAPTERS["claude-code"],
+                                   set(CATEGORIES))
+    assert all(i["kind"] != "chats" for i in entry["items"])
+    assert not (out / "history").exists()
+
+
+def test_requesting_history_from_capture_refuses_with_directions(tmp_path):
+    home = build_home(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        capture.run(out=tmp_path / "bundle", dry=True, home=home,
+                    want_categories={HISTORY})
+    assert "carryon push" in str(exc.value)
+
+
+def test_manifest_scope_names_the_setup_history_split(tmp_path):
+    home = build_home(tmp_path)
+    out = tmp_path / "bundle"
+    code, manifest = run(home, out)
+
+    assert code == 0
+    assert manifest["scope"] == ("A Setup: config + capability + knowledge. "
+                                 "History travels separately, encrypted.")
+    assert "history_handled_by" not in manifest
+
+
+def test_a_chats_item_requires_a_layout_and_nothing_else_may_have_one():
+    with pytest.raises(ValueError):
+        Item("x/chats", "y", "chats", HISTORY, "no layout named")
+    with pytest.raises(ValueError):
+        Item("x/file", "y", "file", CONFIG, "layout on a non-chats kind",
+             layout="claude-projects")
+    ok = Item("x/chats", "y", "chats", HISTORY, "fine",
+              layout="claude-projects")
+    assert ok.layout == "claude-projects"
+
+
+def test_claude_and_codex_declare_their_history():
+    claude = [i for i in ADAPTERS["claude-code"].items if i.kind == "chats"]
+    assert [(i.src, i.dst, i.layout, i.category) for i in claude] == \
+        [(".claude/projects", "history/claude-code", "claude-projects", HISTORY)]
+    assert not any(e.path.startswith(".claude/projects")
+                   for e in ADAPTERS["claude-code"].exclude), \
+        ".claude/projects is carried now, not excluded"
+
+    codex = [i for i in ADAPTERS["codex"].items if i.kind == "chats"]
+    assert [(i.src, i.dst, i.layout, i.category) for i in codex] == \
+        [(".codex/sessions", "history/codex", "codex-rollouts", HISTORY)]
+
+
+def test_success_output_keeps_setup_and_history_promises_apart(tmp_path, capsys):
+    """A Setup is clean; a History is encrypted by push. The closing message
+    must say exactly that - not send anyone to entangle or manual encryption,
+    and not use the retired word "bundle"."""
+    home = build_home(tmp_path)
+    out = tmp_path / "setup"
+    code, _ = run(home, out)
+
+    assert code == 0
+    text = capsys.readouterr().out
+    assert "entangle" not in text.lower()
+    assert "bundle" not in text.lower()
+    assert "carryon push" in text
+
+
+def test_refusal_output_says_setup_not_bundle(tmp_path, capsys):
+    home = build_home(tmp_path)
+    (home / ".claude" / "settings.json").write_text(
+        '{"apiKey": "sk-ant-api03-PLANTEDPLANTEDPLANTEDPLANTED"}')
+    code, _ = run(home, tmp_path / "setup")
+
+    assert code == 2
+    text = capsys.readouterr().out
+    assert "bundle" not in text.lower()
+    assert "Setup" in text
 
 
 def test_symlink_outside_the_lock_store_is_not_called_re_resolvable(tmp_path):

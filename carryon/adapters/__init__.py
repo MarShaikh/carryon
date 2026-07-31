@@ -14,8 +14,8 @@ from __future__ import annotations
 import importlib
 import pathlib
 
-from .base import (CAPABILITY, CATEGORIES, CONFIG, KNOWLEDGE, Adapter,
-                   Excluded, Item)
+from .base import (CAPABILITY, CATEGORIES, CONFIG, HISTORY, KNOWLEDGE,
+                   SETUP_CATEGORIES, Adapter, Excluded, Item)
 
 HOME = pathlib.Path.home()
 
@@ -41,8 +41,32 @@ def _load() -> dict:
 ADAPTERS = _load()
 
 
+def present(path) -> bool:
+    """Whether something is at `path`, for a caller that has no better answer
+    than no.
+
+    Path.exists() swallows exactly four errnos - ENOENT, ENOTDIR, EBADF,
+    ELOOP - and raises every other one, EACCES included. A mode-000 $HOME or
+    agent directory needs no attacker (a backup restored with the wrong owner,
+    an agent that once ran under sudo) and it came out of `carryon list` as a
+    PermissionError before a word had been printed, while `doctor` beside it
+    answered the same directory with a report line. layout.py's docstring
+    already spells this out for its own walk; this is the same sentence for
+    the two callers that were left holding the bare call.
+
+    A path this machine will not answer about is not installed and holds no
+    item: that is the fail-closed direction for a question about what to
+    CARRY, and the command whose job is to say what is wrong (`doctor`) has
+    its own walk that reports the reason rather than the answer.
+    """
+    try:
+        return pathlib.Path(path).exists()
+    except (OSError, ValueError):
+        return False
+
+
 def is_installed(key: str, home: pathlib.Path = HOME) -> bool:
-    return (home / ADAPTERS[key].detect).exists()
+    return present(pathlib.Path(home) / ADAPTERS[key].detect)
 
 
 def installed(home: pathlib.Path = HOME) -> list:
@@ -50,6 +74,7 @@ def installed(home: pathlib.Path = HOME) -> list:
 
 
 __all__ = [
-    "ADAPTERS", "Adapter", "Item", "Excluded", "CATEGORIES",
-    "CONFIG", "CAPABILITY", "KNOWLEDGE", "HOME", "is_installed", "installed",
+    "ADAPTERS", "Adapter", "Item", "Excluded", "CATEGORIES", "SETUP_CATEGORIES",
+    "CONFIG", "CAPABILITY", "KNOWLEDGE", "HISTORY", "HOME",
+    "is_installed", "installed", "present",
 ]

@@ -1,4 +1,4 @@
-"""Getting the bundle to the other machine.
+"""Getting a captured Setup to the other machine by hand.
 
 Two routes, and the difference matters:
 
@@ -6,9 +6,9 @@ Two routes, and the difference matters:
     scanner refuses to produce one containing a credential
   - a single .tar.gz, for a USB stick or AirDrop
 
-Neither is encrypted, and neither needs to be: the bundle holds config and
-skills, not secrets. The chat bundle from entangle is the opposite and must
-never take either route.
+Neither is encrypted, and neither needs to be: a Setup holds config and
+skills, not secrets. A History is the opposite - always encrypted - and
+travels via push/pull, never these routes.
 """
 
 import pathlib
