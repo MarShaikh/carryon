@@ -536,10 +536,16 @@ def cmd_capture(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="carryon",
+        # What a Setup carries is scanned against the credential shapes carryon
+        # knows and bounded in what it may read (ADR-0001, ADR-0008); neither
+        # proves it holds no secret, since a random token matches no rule. So
+        # this says what was checked, and that a Setup travels in the clear -
+        # which is what decides whether the storage needs to be private.
         description="Carry an AI coding agent's working life between "
                     "machines: the Setup that makes an agent yours, and the "
-                    "History of what you did with it - the Setup plaintext "
-                    "and credential-free, the History always encrypted.")
+                    "History of what you did with it - the Setup in the clear "
+                    "and checked for credentials, the History always "
+                    "encrypted.")
     parser.add_argument("--version", action="version",
                         version=f"carryon {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
