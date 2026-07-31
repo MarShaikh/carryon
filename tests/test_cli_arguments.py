@@ -968,3 +968,33 @@ def test_a_path_outside_the_home_is_judged_alone_and_not_by_its_ancestors(
 
     assert code == 0
     assert (elsewhere / "today" / "claude" / "settings.json").is_file()
+
+
+# --- what the help text is allowed to promise ---------------------------------
+#
+# `--help` is the only description most people read, and it reaches them before
+# any document does. ADR-0001 says what a Setup's guarantee actually is: the
+# scanner's verdict over the credential shapes it knows, plus a boundary on what
+# capture may read at all. A secret that announces nothing - a random token,
+# carryon's own fallback key as bare hex - matches no rule and never will. So
+# "credential-free" is a promise this package cannot keep, and the help text is
+# the last place still making it.
+#
+# Pinned as the claim rather than the sentence, so rewording cannot bring it
+# back by another spelling.
+
+def test_the_help_text_does_not_promise_a_setup_holds_no_credential():
+    description = cli.build_parser().description.lower()
+    for claim in ("credential-free", "credential free", "no credentials",
+                  "free of credentials", "contains no credential"):
+        assert claim not in description, (
+            f"--help promises {claim!r}; ADR-0001 says a Setup is scanned "
+            "against known shapes and bounded in what it may read, which is "
+            "not the same as proven to hold nothing")
+
+
+def test_the_help_text_still_says_the_two_halves_differ():
+    """The control: dropping the overclaim must not drop the distinction."""
+    description = cli.build_parser().description.lower()
+    assert "setup" in description and "history" in description
+    assert "encrypted" in description
