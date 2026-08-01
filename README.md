@@ -32,7 +32,7 @@ pip install git+https://github.com/MarShaikh/carryon
 
 | Command | Effect |
 | --- | --- |
-| `init` | set up this machine: Destination, recovery key, config; `--join CODE` pairs with an existing Archive instead |
+| `init` | set up this machine: Destination, recovery key, config. In a terminal it asks where the Archive should live; `--dest SPEC` says so outright, and `--join CODE` pairs with an existing Archive instead |
 | `push` | push this machine's Snapshot: the Setup plaintext, the History encrypted, changed Sessions only — never one the Archive is ahead on |
 | `pull` | lay the Archive down here: union the History, replace the Setup after a backup |
 | `pair` | mint a one-time code that hands another machine the master key, via the Destination |
@@ -42,7 +42,7 @@ pip install git+https://github.com/MarShaikh/carryon
 | `encrypt` / `decrypt` | encrypt any file with a passphrase — a standalone cipher, nothing to do with an Archive |
 
 ```bash
-carryon init --dest ~/Sync/carryon
+carryon init --dest ~/Sync/carryon    # or plain `carryon init`, which asks
 carryon push --apply
 # on the new machine
 carryon init --dest ~/Sync/carryon --join XXXX-XXXX-XXXX-XXXX
@@ -80,6 +80,26 @@ edited at the Destination. A push without a key writes no tag and says so.
 | `/path`, `~/path`, `dir:PATH` | a directory — including a synced one (Dropbox, Drive, Syncthing) |
 | `git:URL`, `git@...`, `ssh://...`, anything ending `.git` | a private git remote |
 | `rclone:remote:path` | anything rclone reaches: S3, R2, B2, ... |
+
+With a terminal on both ends, `init` offers what it found here — synced
+folders, git if it can already authenticate, rclone remotes you already have —
+and a short list of services it can set one up for: Cloudflare R2, Amazon S3,
+Google Cloud Storage, SFTP. It asks that service's few fields, hands them to
+`rclone config create`, and offers to create the bucket, asking first because
+that is a billable resource in a region and under a name carryon has no
+business choosing. The credential passes through to rclone and is never kept.
+Without a terminal — over SSH with no tty, in CI — `init` prints the
+candidates and exits, so nothing scriptable has changed.
+
+Then it asks the Destination two questions. Whether an Archive is already
+there: setting up over one without `--join` would mint a second recovery key
+that does not open what is already stored, and nothing afterwards tells the two
+keys apart — so it refuses and says how to pair instead. And whether
+write, read and delete really work, using a probe of random bytes under a
+random name that it reads back and deletes. Both happen before a key is minted
+or a config written, so a refusal costs nothing and can be re-run. Neither says
+whether the storage is private — no check can, which is why that stays your
+call.
 
 ## Adding an agent
 
@@ -136,8 +156,10 @@ its file backend with the real keychain pinned out, so `security(1)` and
 `secret-tool` are covered by the arguments carryon builds for them rather than
 by use. `openssl` and `git` are the real binaries, and a full journey — init,
 push, pair, join, pull, push back — runs against both a directory Destination
-and a bare git repository; `rclone` is a stand-in. Two carryon runs against one
-Archive at the same time is not tested.
+and a bare git repository; `rclone` is a stand-in, for setting a Remote up as
+well as for reaching one, so the Provider flow is checked against the argv
+carryon builds and against rclone's own backend source — never against a live
+bucket. Two carryon runs against one Archive at the same time is not tested.
 
 ## Licence
 
