@@ -42,6 +42,8 @@ MODULES = (
     "tests.test_highwater_once",
     "tests.test_write_chokepoint",
     "tests.test_keyring",
+    "tests.test_prompting",
+    "tests.test_provider_setup",
     "tests.test_destinations",
     "tests.test_destinations_security",
     "tests.test_destinations_hostile",
