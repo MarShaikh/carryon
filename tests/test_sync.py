@@ -443,7 +443,10 @@ def test_push_dry_run_writes_nothing(tmp_path, capsys):
 
     assert sync.push(ns(apply=False), home) == 0
 
-    assert not dest_root.exists(), "a dry-run push writes nothing anywhere"
+    # tree_state, not exists(): init's reachability probe (ADR-0011) leaves
+    # the Archive's own empty directory behind, and what a dry run must not
+    # do is put CONTENT anywhere.
+    assert tree_state(dest_root) == {}, "a dry-run push writes nothing anywhere"
     assert tree_state(home) == home_before
 
 

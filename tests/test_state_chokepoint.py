@@ -920,6 +920,10 @@ ALLOWED_WRITES = {
         "Destination.write, the Archive chokepoint", ("write",)),
     ("archive.py", "put_pairing"): (
         "Destination.write, the Archive chokepoint", ("write",)),
+    ("archive.py", "reachable"): (
+        "Destination.write, the Archive chokepoint - the reachability "
+        "probe's random bytes under a random name (ADR-0011), read back and "
+        "deleted by the same function", ("write",)),
     ("setup_out.py", "_neutralise_staged_setup"): (
         "carryon's own staging tree, under a staging root config."
         "state_write_path answered for", ("write_bytes", "write_text",

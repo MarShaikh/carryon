@@ -87,6 +87,15 @@ _Avoid_: using "remote" for the Destination — a Destination names a Remote and
 path within it, and the same Remote can hold Archives that are nothing to do
 with each other
 
+**Probe**:
+The random bytes under a random name `init` writes, reads back and deletes to
+prove a Destination works before anything is minted. It lands in the
+plaintext half of untrusted storage before any master key exists, so it
+carries no machine name, no home path and no timestamp. Passing it means
+write, read and delete work - nothing about whether the storage is private,
+which no probe can answer.
+_Avoid_: health check, ping (a Probe moves real bytes through the real verbs)
+
 **Re-keying**:
 Rewriting the absolute paths recorded inside a History so they do not belong to
 the machine that wrote them. Happens on the way out, leaving the Archive

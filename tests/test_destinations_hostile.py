@@ -1165,7 +1165,8 @@ elif verb == "cat":
                             + (base64.b64decode(extra) if extra else b""))
 elif verb == "deletefile":
     target = resolve(rest[0])
-    if ctl.get("deletefile_noop"):
+    noop = ctl.get("deletefile_noop")
+    if noop and (noop is True or noop in rest[0]):
         raise SystemExit(0)          # "deleted", removed nothing
     if not target.is_file():
         sys.stderr.write("object not found\n")
@@ -1212,11 +1213,18 @@ class RcloneStore:
     def copyto_writes_nothing(self, on=True):
         self._set(copyto_noop=bool(on))
 
-    def deletefile_removes_nothing(self, on=True):
+    def deletefile_removes_nothing(self, on=True, only=None):
         """A delete that exits 0 and removes nothing - RCLONE_DRY_RUN in this
         machine's environment, or a filter rule of the user's own. No local
-        filesystem can spell it, which is why it is a knob."""
-        self._set(deletefile_noop=bool(on))
+        filesystem can spell it, which is why it is a knob.
+
+        `only` limits the lie to targets containing that text, which is a
+        SELECTIVE store - one no rclone.conf produces and any hostile remote
+        can. The blanket spelling now meets ADR-0011's reachability probe
+        before it meets anything else, so the selective one is what still
+        reaches the legs downstream of `init`.
+        """
+        self._set(deletefile_noop=(only if on and only else bool(on)))
 
     def also_a_prefix(self, key: str, appended: bytes):
         """Make `key` an object AND a prefix, the way S3, B2 and GCS allow.
@@ -1951,8 +1959,13 @@ def test_a_join_over_an_undeletable_pairing_blob_says_the_code_is_still_live(
 
     `join` printed "paired as 'box-b'" at rc 0 with the wrapped master key
     still sitting in the Archive, and carryon's own `pair` output says the
-    code "works once". The joining machine has performed no write at that
-    point, so nothing upstream of the delete could have caught it.
+    code "works once". The ordinary spellings of an undeletable store -
+    RCLONE_DRY_RUN in the joining machine's environment, a filter rule - are
+    now met by ADR-0011's reachability probe, which refuses the join before
+    the code is spent. What still reaches this leg is a store that lies
+    SELECTIVELY: probes deleted honestly, the pairing blob kept. That is
+    nobody's rclone.conf and any hostile remote, and the warning is the one
+    thing standing between it and a code that quietly works twice.
     """
     store = install_rclone_store(tmp_path, monkeypatch)
     spec = "rclone:fakeremote:archive"
@@ -1962,7 +1975,7 @@ def test_a_join_over_an_undeletable_pairing_blob_says_the_code_is_still_live(
     sync.pair(ns(), home_a)
     code = re.search(PAIR_CODE, capsys.readouterr().out).group(1)
 
-    store.deletefile_removes_nothing()
+    store.deletefile_removes_nothing(only="/pair/")
     home_b = build_claude_home(tmp_path, "home_b")
     assert sync.init(ns(dest=spec, join=code, machine="box-b"), home_b) == 0
     out = capsys.readouterr().out

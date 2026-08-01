@@ -48,8 +48,8 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-from . import (archive, capture, config, crypto, destinations, external,
-               history, keyring, rekey)
+from . import (archive, capture, choosing, config, crypto, destinations,
+               external, history, keyring, prompting, rekey)
 from .adapters import ADAPTERS, CATEGORIES, HISTORY, SETUP_CATEGORIES
 from .destinations.base import printable
 
@@ -198,12 +198,13 @@ def init(args, home) -> int:
 
     spec = args.dest
     if not spec:
+        # With a terminal on both ends, init asks; without one it prints the
+        # candidates and exits exactly as it always did (ADR-0011). The old
+        # third way - taking a lone candidate silently - is gone: nothing is
+        # decided for the user, including the case with one obvious answer.
         candidates = destinations.detect_candidates(home)
-        usable = [c for c in candidates if "<" not in c[0]]
-        if len(usable) == 1:
-            spec, label = usable[0]
-            print(f"one Destination found: {label} ({spec}) - using it; "
-                  "pass --dest to choose differently")
+        if prompting.available():
+            spec = choosing.choose_destination(home, candidates)
         else:
             lines = [f"  {s:<44} {label}" for s, label in candidates]
             listing = "\n".join(lines) if lines else "  (none found)"
@@ -212,6 +213,11 @@ def init(args, home) -> int:
                 "machine:\n" + listing
                 + f"\nA spec is {destinations.SPEC_FORMS}.")
     dest = destinations.from_spec(spec, home)  # validates the spec early
+    # Both checks before anything is minted (ADR-0011). A refusal here has to
+    # cost neither a key nor a config, for the same reason a refused machine
+    # name does: `init` stores a master key before it saves anything else, so
+    # the next run of the command it tells the user to make would refuse.
+    choosing.confirm_fresh(dest)
 
     display, master = crypto.new_recovery_key()
     keyring.store_master(master, home=home)
@@ -220,6 +226,7 @@ def init(args, home) -> int:
     cfg["machine"] = machine
     path = config.save(cfg, home)
 
+    choosing.report(dest)
     print(f"initialised: machine {machine!r}, Destination {dest.describe()}")
     print(f"config written to {path}")
     print()
@@ -234,10 +241,18 @@ def init(args, home) -> int:
 
 def _join(args, home, machine) -> int:
     if not args.dest:
-        raise SystemExit(
-            "--join needs --dest: a pairing code travels through the "
-            "Destination (ADR-0005), so name the same one the paired "
-            "machine uses")
+        # The same prompts as the other leg, then the code is spent
+        # (ADR-0011): the second machine is the one that ADR is about, and
+        # leaving it as the only path still needing --dest typed by hand
+        # would put the friction exactly where it hurts.
+        if prompting.available():
+            args.dest = choosing.choose_destination(
+                home, destinations.detect_candidates(home))
+        else:
+            raise SystemExit(
+                "--join needs --dest: a pairing code travels through the "
+                "Destination (ADR-0005), so name the same one the paired "
+                "machine uses")
     code = parse_pairing_code(args.join)
     dest = destinations.from_spec(args.dest, home)
 
@@ -257,6 +272,12 @@ def _join(args, home, machine) -> int:
             "no pairing blob for that code - mistyped, already used, or "
             "never minted. Run `carryon pair` on a paired machine for a "
             "fresh one.")
+    # The blob answered the join leg's occupancy question, so what is left
+    # is reachability (ADR-0011) - and it runs BEFORE the unwrap because the
+    # delete below is one-time: a code spent against a Destination this
+    # machine cannot write to costs the code and leaves the machine unable
+    # to push. A probe that fails here leaves the blob in place.
+    choosing.confirm_joining(dest)
     try:
         raw = crypto.unwrap_key(blob, code.secret)
     except crypto.CryptoError:
@@ -295,6 +316,7 @@ def _join(args, home, machine) -> int:
     # the Destination could not have written it, and from here on an Archive
     # serving no Index is a removal rather than a fresh one (ADR-0009).
     _record_revision(home, args.dest, payload["index_revision"])
+    choosing.report(dest)
     print(f"paired as {machine!r}: this machine now opens the Archive at "
           f"{dest.describe()}")
     if not burnt:

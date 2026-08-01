@@ -564,7 +564,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"the Destination: {SPEC_FORMS}")
     ini.add_argument("--join", metavar="CODE",
                      help="pairing code from `carryon pair` on an "
-                          "already-paired machine (needs --dest too)")
+                          "already-paired machine (in a terminal carryon "
+                          "asks for the Destination; scripts pass --dest)")
     ini.add_argument("--machine", metavar="NAME",
                      help="this machine's name in the Archive (default: hostname)")
     ini.set_defaults(func=cmd_init)
