@@ -40,8 +40,12 @@ MODULES = (
     "tests.test_state_chokepoint",
     "tests.test_state_files",
     "tests.test_highwater_once",
+    "tests.test_init_checks",
     "tests.test_write_chokepoint",
     "tests.test_keyring",
+    "tests.test_prompting",
+    "tests.test_provider_setup",
+    "tests.test_init_dialogue",
     "tests.test_destinations",
     "tests.test_destinations_security",
     "tests.test_destinations_hostile",
@@ -296,16 +300,23 @@ class _FixtureRequest:
 def _run_test(fn, fixtures, params):
     out, err = io.StringIO(), io.StringIO()
     request = _FixtureRequest(fixtures, _Capsys(out, err))
-    try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    # Teardown runs INSIDE the redirect, matching pytest. The other order
+    # swallowed the rest of the run: redirect exit restored the real stdout,
+    # then a monkeypatch.undo of a test that had patched sys.stdout put the
+    # redirect's own dead StringIO back - and every later PASS line and the
+    # final summary went into it, at exit 0. The runner looked finished two
+    # lines into a module, which is this file's docstring's own failure mode
+    # (a run that reports nothing looks like nothing to report).
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
             for name, (_fx, autouse) in fixtures.items():
                 if autouse:
                     request.get(name)
             args = [params[p] if p in params else request.get(p)
                     for p in _params_of(fn)]
             fn(*args)
-    finally:
-        request.teardown()
+        finally:
+            request.teardown()
 
 
 def main() -> int:

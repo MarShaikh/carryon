@@ -30,6 +30,7 @@ import hashlib
 import io
 import json
 import pathlib
+import secrets as stdlib_secrets  # carryon.secrets is the scanner, not this
 import string
 import tarfile
 from typing import NamedTuple
@@ -43,9 +44,17 @@ SESSIONS_PREFIX = PREFIX + "/sessions/"
 PROJECTS_PREFIX = PREFIX + "/projects/"
 SETUPS_PREFIX = PREFIX + "/setups/"
 PAIR_PREFIX = PREFIX + "/pair/"
+# Directly under the Archive's own prefix rather than in a probe/ directory:
+# on a Destination whose store is a filesystem, deleting the probe cannot
+# take its directories with it (a pull never deletes, and the removal
+# scanner holds that line for carryon's own writes too), so the residue of
+# one probe must be a directory the first push creates anyway.
+PROBE_PREFIX = PREFIX + "/probe-"
 
 INDEX_VERSION = 1
 INDEX_LABEL = "index"
+
+PROBE_BYTES = 32
 
 _LOCATOR_CHARS = set(string.ascii_uppercase + string.digits)
 
@@ -64,6 +73,110 @@ class ObjectRefused(SystemExit):
     The Index is the one object with no such option, and load_index raises a
     plain SystemExit for it: there is nothing to skip on to.
     """
+
+
+# --- what `init` asks a Destination before it finishes (ADR-0011) ------------
+#
+# Two questions, and they are here rather than on the Destination base class
+# because both are asked about an ARCHIVE at a Destination: one reads a key
+# this module names, the other writes one, and a key nothing else in the
+# package spells is how a second spelling of 'carryon/' gets written.
+
+
+def occupied(dest) -> bool:
+    """Whether an Archive is already at this Destination.
+
+    A read of one known key and no write at all, which is what makes it safe
+    to ask before anything has been decided. It is the check that catches the
+    mistake costing most: `init` without `--join` against an Archive that
+    already exists mints a SECOND recovery key, prints it as though it were
+    the one that mattered, and fails only at the first push - by which point
+    the user holds two keys, cannot tell them apart, and `init` refuses to run
+    again because this machine already holds a master key.
+
+    The Index rather than a listing: a listing answers "is there anything
+    under carryon/", which a half-finished push, a stray probe or somebody
+    else's object all satisfy. The Index is the one object that is there if
+    and only if a push has completed, and a Destination that will not serve it
+    answers False - the same way a fresh Archive does, because carryon cannot
+    tell those apart here and the reachability probe below is what finds a
+    Destination that is not answering.
+    """
+    return dest.read(INDEX_KEY) is not None
+
+
+def probe_key() -> str:
+    """A name for one reachability probe, belonging to no machine.
+
+    Random, and that is the whole specification: the probe lands in the
+    plaintext half of untrusted storage before any master key exists, so it
+    must carry no machine name, no home path and no timestamp. A random name
+    also keeps two machines probing the same Archive at the same moment from
+    taking each other's object for their own.
+    """
+    return PROBE_PREFIX + stdlib_secrets.token_hex(16)
+
+
+def reachable(dest):
+    """None if write, read and delete all work here, else the sentence why.
+
+    The other half of what `init` asks, and the half that needs a write. A
+    Destination that authenticates is not a Destination that works: rclone
+    exits 0 for a transfer it decided not to make, a git remote can accept a
+    connection and refuse a push, and a synced folder can be read-only. Each
+    of those is a first `push` that fails after the user has been told this
+    machine is set up.
+
+    The three verbs in order, because a later one proves nothing without the
+    earlier: bytes are written, read back and compared - a store serving the
+    version that was there before is the rclone type's whole subject and is
+    not a working Destination - and then deleted, which is the one this
+    function must answer for even when it has nothing to do with the user's
+    credentials. An object carryon put in somebody's storage and cannot take
+    back is a line they are entitled to.
+
+    A sentence rather than an exception, because the caller is `init` and what
+    it does with a no is refuse before it has minted anything. SystemExit is
+    caught for the same reason: it is how every type in the Destination layer
+    says a write did not land, and here it is an answer rather than the end of
+    the command.
+    """
+    key = probe_key()
+    payload = stdlib_secrets.token_bytes(PROBE_BYTES)
+    try:
+        dest.write(key, payload)
+    except SystemExit as exc:
+        return f"the probe's write did not land - {exc}"
+    except OSError as exc:
+        return f"the probe's write did not land - {exc}"
+
+    try:
+        served = dest.read(key)
+    except SystemExit as exc:
+        return f"the probe was written and the read back failed - {exc}"
+    except OSError as exc:
+        return f"the probe was written and the read back failed - {exc}"
+    if served != payload:
+        _try_delete(dest, key)
+        return ("the probe was written and the read back served "
+                + ("nothing at all" if served is None
+                   else "something other than what went up"))
+
+    if not _try_delete(dest, key):
+        return (f"the probe was written and read back, and the delete of "
+                f"{printable(key)} did not go through - that object is still "
+                "in the Archive and carryon cannot remove it")
+    return None
+
+
+def _try_delete(dest, key: str) -> bool:
+    """Whether the store has stopped serving the probe. Never raises: the
+    write and the read have already answered, and a delete that fails is a
+    fact this function reports rather than a second way to crash."""
+    try:
+        return bool(dest.delete(key))
+    except (OSError, SystemExit):
+        return False
 
 
 # --- the Index ---------------------------------------------------------------
