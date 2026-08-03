@@ -142,6 +142,41 @@ def test_a_destination_that_serves_back_other_bytes_says_so(tmp_path,
     assert "read" in why
 
 
+def test_a_probe_that_cannot_be_read_back_is_still_deleted(tmp_path,
+                                                           monkeypatch):
+    """Every way out after the write attempts the delete. The read failing
+    is the case where carryon's own object is most likely to be left in
+    somebody's storage - a token with write and no read is an ordinary
+    scoped credential - and a stray probe under carryon/ is also what makes
+    `init --join` misdiagnose a Destination that has never held an Archive."""
+    root = tmp_path / "archive"
+    dest = DirectoryDestination(root)
+    monkeypatch.setattr(DirectoryDestination, "read",
+                        lambda self, key: (_ for _ in ()).throw(
+                            SystemExit("the remote would not serve it")))
+
+    why = archive.reachable(dest)
+
+    assert why is not None and "read" in why
+    assert objects(root) == [], "the probe was left in the Archive"
+
+
+def test_a_probe_that_can_be_neither_read_nor_deleted_names_the_key(
+        tmp_path, monkeypatch):
+    """And when the delete does not go through either, the sentence names
+    the object, because that is the one carryon cannot take back."""
+    dest = DirectoryDestination(tmp_path / "archive")
+    monkeypatch.setattr(DirectoryDestination, "read",
+                        lambda self, key: b"somebody else's bytes")
+    monkeypatch.setattr(DirectoryDestination, "delete",
+                        lambda self, key: False)
+
+    why = archive.reachable(dest)
+
+    assert why is not None
+    assert archive.PROBE_PREFIX in why, "the stranded object is not named"
+
+
 def test_a_destination_that_will_not_delete_says_so(tmp_path, monkeypatch):
     """Named, because what a probe leaves behind is an object in somebody's
     storage that carryon put there and cannot take back."""

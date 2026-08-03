@@ -219,9 +219,16 @@ class FakeRclone:
                       for p in self.root.rglob("*") if p.is_file())
 
 
-def install_fake_rclone(tmp_path, monkeypatch) -> FakeRclone:
+def install_fake_rclone(tmp_path, monkeypatch, container="archive"
+                        ) -> FakeRclone:
+    """The store, with `container` already present - see the note on
+    test_destinations_hostile.install_rclone_store. On an object store the
+    first component of a path is a bucket, and ADR-0011's probe will not
+    write into one that is not there."""
     root = tmp_path / "rclone-store"
     root.mkdir(exist_ok=True)
+    if container:
+        (root / container).mkdir(exist_ok=True)
     bin_dir = tmp_path / "fake-bin"
     bin_dir.mkdir(exist_ok=True)
     control = tmp_path / "rclone-control.json"
@@ -1387,3 +1394,77 @@ def test_capture_refuses_a_path_shaped_argument_with_a_sentence(
 
     assert not isinstance(exc.value, OSError)
     assert str(exc.value), "SystemExit with no sentence in it"
+
+
+# --- the probe must not conjure a bucket (ADR-0011) --------------------------
+#
+# rclone's UPLOAD path creates a missing bucket - s3's prepareUpload and gcs's
+# Update both reach makeBucket - so before this rule the reachability probe
+# was the first write to a Destination and could create a billable resource
+# with nobody asked. The Remotes the Provider flow writes pin
+# no_check_bucket; a Remote the user already had, or one named in --dest, does
+# not and never will. So the question is asked of the store instead, of the
+# ONE component whose creation is not carryon's to make: the first one after
+# the colon, which on an object store is the bucket.
+
+
+def test_a_probe_refuses_to_write_into_a_bucket_that_is_not_there(
+        tmp_path, monkeypatch, capsys):
+    install_fake_rclone(tmp_path, monkeypatch, container=None)
+    home = build_claude_home(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(dest=SPEC, machine="box-a"), home)
+
+    message = str(exc.value)
+    assert "archive" in message, "the refusal does not name the container"
+    assert "rclone mkdir" in message, "nothing says how to make one"
+    assert keyring.fetch_master(home=home) is None
+    assert not (tmp_path / "rclone-store" / "archive").exists(), \
+        "the probe created the bucket it was refusing to write into"
+
+
+def test_a_detected_remote_with_no_path_is_refused_by_name(tmp_path,
+                                                           monkeypatch):
+    """`detect_candidates` spells a configured remote 'rclone:mine:' - the
+    trailing colon is rclone's, and the path half is EMPTY. The probe's key
+    then starts with carryon's own prefix, so on S3 the bucket it would have
+    created is one literally named 'carryon', in the user's account, for
+    pressing 1 at a menu."""
+    install_fake_rclone(tmp_path, monkeypatch, container=None)
+    home = build_claude_home(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(dest="rclone:fakeremote:", machine="box-a"), home)
+
+    assert "'carryon'" in str(exc.value), \
+        "the refusal does not name the bucket that would have been created"
+    assert not (tmp_path / "rclone-store" / "carryon").exists()
+
+
+def test_an_existing_bucket_is_probed_and_the_init_completes(tmp_path,
+                                                             monkeypatch):
+    """The control: the rule refuses a container that is absent, not every
+    rclone Destination."""
+    fake = install_fake_rclone(tmp_path, monkeypatch)
+    home = build_claude_home(tmp_path)
+
+    assert sync.init(ns(dest=SPEC, machine="box-a"), home) == 0
+
+    assert keyring.fetch_master(home=home) is not None
+    assert fake.objects() == [], "the probe was left in the Archive"
+
+
+def test_a_remote_that_will_not_say_is_not_written_to(tmp_path, monkeypatch):
+    """Told from an absent container, and refused the same way: carryon
+    cannot tell a remote that is refusing from an Archive that is empty, and
+    guessing here is guessing about somebody's bill."""
+    fake = install_fake_rclone(tmp_path, monkeypatch)
+    home = build_claude_home(tmp_path)
+    fake.fail("lsf", code=1)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(dest=SPEC, machine="box-a"), home)
+
+    assert "refused" in str(exc.value) or "would not" in str(exc.value)
+    assert keyring.fetch_master(home=home) is None

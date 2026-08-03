@@ -60,7 +60,10 @@ def test_no_bucket_holding_provider_lets_a_write_conjure_the_bucket():
     a billable resource, silently. So every bucket-holding Provider pins
     no_check_bucket in the Remote's config, and switches it back on for
     exactly one call: the offered creation the user said yes to. B2 is
-    absent from the table because its upload has no such switch."""
+    absent from the table because its upload has no such switch, so no
+    setting here would stop a later push re-creating a deleted bucket
+    (RcloneDestination.missing_container covers the probe, not every write
+    after it)."""
     for p in providers.PROVIDERS:
         if not p.place_costs:
             continue

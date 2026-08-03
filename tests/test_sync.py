@@ -205,8 +205,11 @@ def test_init_without_dest_and_no_candidates_asks_for_dest(tmp_path):
 def test_join_requires_dest(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
+    # Well-formed, because the code is parsed before the Destination is
+    # settled now (ADR-0011: the dialogue must not run for a typo), and
+    # what this pins is the --dest refusal rather than the code check.
     with pytest.raises(SystemExit) as exc:
-        sync.init(ns(join="AAAA-AAAA"), home)
+        sync.init(ns(join="AAAAAA-AAAAAAAAAA"), home)
     assert "--dest" in str(exc.value)
 
 
