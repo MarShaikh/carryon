@@ -25,9 +25,19 @@ declined to create. So the S3-family and GCS entries pin
 `no_check_bucket=true` in the Remote's config - an upload to a missing
 bucket then fails, which the probe reports as the refusal it is - and their
 `mkdir_flags` switch the check back on for the one call that IS the offered
-creation. Backblaze B2's upload creates the bucket unconditionally and has
-no such option, so B2 is not in this table: it would ship with "never
-create a billable resource silently" quietly false.
+creation.
+
+That is the Remote's own setting and holds for every write it will ever
+carry. `RcloneDestination.missing_container` is the other half and covers
+the Remotes this table did not write - a detected one, or one named in
+--dest - by refusing before the probe writes at all.
+
+Backblaze B2 is absent because it has neither: its upload creates the
+bucket unconditionally with no option to turn that off, so while the probe
+would now stop at a missing bucket, nothing would stop a later `push` from
+re-creating one the user had deleted. Adding it means deciding that is
+acceptable and saying so, rather than shipping "never creates a billable
+resource silently" quietly weaker for one Provider than for the rest.
 """
 
 from __future__ import annotations

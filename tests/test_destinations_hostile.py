@@ -1245,9 +1245,21 @@ class RcloneStore:
                       for p in self.root.rglob("*") if p.is_file())
 
 
-def install_rclone_store(tmp_path, monkeypatch) -> RcloneStore:
+def install_rclone_store(tmp_path, monkeypatch, container="archive"
+                         ) -> RcloneStore:
+    """The store, with `container` already present.
+
+    Present because on an object store the first component of a path IS a
+    bucket, and ADR-0011's probe refuses to write into one that is not
+    there rather than let rclone's upload conjure it. Every caller here
+    drives a Destination that a user has already got, so the bucket
+    existing is the state they are all in; `container=None` is the other
+    one, and the probe's refusal is its own test.
+    """
     root = tmp_path / "rclone-store"
     root.mkdir(exist_ok=True)
+    if container:
+        (root / container).mkdir(exist_ok=True)
     bin_dir = tmp_path / "fake-bin"
     bin_dir.mkdir(exist_ok=True)
     control = tmp_path / "rclone-control.json"

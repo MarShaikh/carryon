@@ -66,6 +66,23 @@ def test_the_suite_itself_is_not_a_terminal():
     assert prompting.available() is False
 
 
+def test_a_closed_or_answerless_stream_is_not_a_terminal(monkeypatch):
+    """CPython sets sys.stdin to None when fd 0 is closed at startup, which
+    is what `carryon init 0<&-`, a launchd job and a cron entry all look
+    like - and asking None whether it is a tty is an AttributeError out of
+    the one branch this module exists to protect. A closed file object
+    raises ValueError from isatty() for the same reason."""
+    class Closed:
+        def isatty(self):
+            raise ValueError("I/O operation on closed file")
+
+    for stdin, stdout in ((None, sys.stdout), (sys.stdin, None),
+                          (Closed(), sys.stdout), (sys.stdin, Closed())):
+        monkeypatch.setattr(sys, "stdin", stdin)
+        monkeypatch.setattr(sys, "stdout", stdout)
+        assert prompting.available() is False
+
+
 # --- ask ----------------------------------------------------------------------
 
 
@@ -115,6 +132,19 @@ def test_choose_re_asks_on_garbage_and_out_of_range(monkeypatch):
     assert prompting.choose("Pick", ["a", "b", "c"]) == 2
 
 
+def test_choose_re_asks_on_a_digit_int_will_not_take(monkeypatch):
+    """str.isdigit() is True for characters int() rejects - '²' is the
+    dedicated key beside '1' on an AZERTY layout - and a menu that calls
+    int() behind an isdigit() guard answers one keypress with a traceback
+    out of `carryon init`. isdecimal() is the predicate that matches int(),
+    and it still admits the digits int() does take."""
+    wire(monkeypatch, "²", "①", "1" * 4301, "2")
+    assert prompting.choose("Pick", ["a", "b"]) == 1
+
+    wire(monkeypatch, "۲")  # ARABIC-INDIC TWO: int() takes this one
+    assert prompting.choose("Pick", ["a", "b"]) == 1
+
+
 # --- confirm -------------------------------------------------------------------
 
 
@@ -154,6 +184,16 @@ def test_secret_passes_through_untouched(monkeypatch):
     whitespace in one is the service's business, not carryon's."""
     wire(monkeypatch, " s3cr3t ")
     assert prompting.secret("Secret access key") == " s3cr3t "
+
+
+def test_secret_re_asks_on_an_empty_answer(monkeypatch):
+    """A paste that did not take is one Return away from a Remote written
+    with no credential in it - which rclone accepts, stores permanently,
+    and fails on ever after, under a line saying the credential was stored.
+    ask() has always re-asked; the unechoed twin must too, and it is the
+    one answer nothing downstream can see to check."""
+    wire(monkeypatch, "", "   ", "AKIAREAL")
+    assert prompting.secret("Secret access key") == "AKIAREAL"
 
 
 # --- the way out ----------------------------------------------------------------

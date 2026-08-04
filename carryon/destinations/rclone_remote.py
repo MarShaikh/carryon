@@ -286,6 +286,51 @@ class RcloneDestination(Destination):
             return None, why
         return leaf in names, None
 
+    def missing_container(self, key: str):
+        """Why writing `key` would create a bucket first, or None.
+
+        The base class says why this is asked at all. What this type adds is
+        which component the question is about: everything after the colon is
+        a path, and its FIRST component is a bucket on every object store
+        rclone speaks. `mine:photos/x` writes into bucket 'photos';
+        `mine:` - which is exactly how `detect_candidates` spells a
+        configured remote, trailing colon and all - has no path at all, so
+        the first component comes from the key, and the bucket rclone would
+        have made is one named after carryon's own prefix.
+
+        Asked with `lsf`, whose exit taxonomy already tells this module the
+        one thing it needs: DIR_NOT_FOUND is a container that is not there,
+        a clean exit is one that is (an empty bucket lists as empty, not as
+        missing), and anything else is the remote declining to say - which
+        is refused too, because the alternative is guessing about somebody's
+        bill.
+
+        It cannot tell a bucket from a directory, and does not try: on sftp
+        or WebDAV this refuses a path that is merely absent, which costs one
+        `rclone mkdir` and is the same answer the Provider flow offers to
+        make for you. Erring that way is deliberate - the other way round is
+        a resource in an account, created by a tool that said it never would.
+        """
+        remote, _, path = self.target.partition(":")
+        parts = [part for part in (path.strip("/") + "/" + key).split("/")
+                 if part]
+        first = parts[0]
+        result = self._run("lsf", f"{remote}:{first}", binary=True)
+        if result.returncode == 0:
+            return None
+        if result.returncode == DIR_NOT_FOUND:
+            return (
+                f"{printable(remote)}: has no {printable(first)!r} in it. On "
+                "an object store that first component is a BUCKET, and "
+                "rclone's upload would create one - so carryon stops here "
+                "rather than put a billable resource in your account without "
+                "asking. Make it yourself (`rclone mkdir "
+                f"{printable(remote)}:{printable(first)}`), or run `carryon "
+                "init` with no --dest and pick a cloud service, where "
+                "carryon offers to create it after asking.")
+        return (f"the remote would not say whether {printable(first)!r} is "
+                "there: " + (_tail(result.stderr, 1) or "no reason given"))
+
     def _unreachable(self, what: str, why: str) -> SystemExit:
         return SystemExit(
             f"{self.describe()} would not {what}: {why}\n"

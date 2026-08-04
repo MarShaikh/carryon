@@ -355,6 +355,28 @@ class Destination:
         """
         return None
 
+    def missing_container(self, key: str):
+        """Why writing `key` here would first CREATE something that is not
+        carryon's to create, or None.
+
+        Asked before the reachability probe (ADR-0011), and it exists
+        because one type's write is not only a write. On an object store the
+        first component of a path is a bucket, and rclone's upload path
+        makes a missing one - s3's prepareUpload and gcs's Update both reach
+        makeBucket - so the probe, which is the first thing `init` writes,
+        could create a billable resource in an account with nobody asked.
+        That is the one promise ADR-0011 makes about what carryon does on
+        your behalf, and a write is the wrong place to discover it.
+
+        None here, because for every other type the components under the
+        root are ordinary directories and making one costs nothing. The
+        question is on the base class rather than asked of a type by name
+        for the reason `_confirm_write` and `_confirm_delete` are: a
+        question each caller has to remember to ask about one particular
+        type is the shape every defect in this package has had.
+        """
+        return None
+
     def delete(self, key: str) -> bool:
         """Remove key, answering whether the store has stopped serving it.
 

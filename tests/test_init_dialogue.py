@@ -24,7 +24,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import choosing, config, keyring, prompting, sync  # noqa: E402
+from carryon import choosing, config, destinations, keyring  # noqa: E402
+from carryon import prompting, sync  # noqa: E402
 from carryon.destinations import rclone_setup  # noqa: E402
 
 RECOVERY_KEY = r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){7}"
@@ -43,6 +44,22 @@ def ns(**kw) -> argparse.Namespace:
     base["map"] = []
     base.update(kw)
     return argparse.Namespace(**base)
+
+
+def found(monkeypatch, *candidates):
+    """Pin what this machine detects, so a menu position means one thing.
+
+    Detection reads the ambient environment, not the fake home:
+    `_has_credential_helper` runs `git config --get credential.helper` with
+    HOME pointed at the fake and XDG_CONFIG_HOME left alone, so on any
+    machine with an XDG-configured helper an empty home still offers "a
+    private git repository" - and every queued answer below it shifts by
+    one. Three tests here failed that way under XDG_CONFIG_HOME while
+    passing on the machine they were written on, which is the same class of
+    leak as a test reading the real ~/.claude.
+    """
+    monkeypatch.setattr(destinations, "detect_candidates",
+                        lambda home=None: list(candidates))
 
 
 def a_terminal(monkeypatch, *answers):
@@ -84,6 +101,7 @@ class RcloneCalls:
 def test_one_candidate_is_offered_not_taken(tmp_path, monkeypatch, capsys):
     home = tmp_path / "home"
     (home / "Dropbox").mkdir(parents=True)
+    found(monkeypatch, ("~/Dropbox", "Dropbox"))
     prompts = a_terminal(monkeypatch, "1")
 
     assert sync.init(ns(machine="laptop"), home) == 0
@@ -102,6 +120,7 @@ def test_without_a_terminal_one_candidate_is_a_listing_and_an_exit(
     what it found and exits - it no longer chooses for the machine."""
     home = tmp_path / "home"
     (home / "Dropbox").mkdir(parents=True)
+    found(monkeypatch, ("~/Dropbox", "Dropbox"))
     monkeypatch.setattr(prompting, "available", lambda: False)
 
     with pytest.raises(SystemExit) as exc:
@@ -121,7 +140,8 @@ def test_a_typed_spec_reaches_init_like_a_dest_argument(tmp_path, monkeypatch,
     home = tmp_path / "home"
     home.mkdir()
     dest = tmp_path / "archive"
-    # no candidates at all -> the menu is providers-or-spec
+    # nothing detected -> the menu is a cloud service, or a typed spec
+    found(monkeypatch)
     a_terminal(monkeypatch, "2", str(dest))
 
     assert sync.init(ns(machine="laptop"), home) == 0
@@ -136,6 +156,7 @@ def test_a_typed_spec_with_a_nul_is_refused_at_the_question(tmp_path,
     a NUL stored now is a ValueError out of a push two commands later."""
     home = tmp_path / "home"
     home.mkdir()
+    found(monkeypatch)
     a_terminal(monkeypatch, "2", "/tmp/a\x00b", str(tmp_path / "archive"))
 
     assert sync.init(ns(machine="laptop"), home) == 0, \
@@ -146,6 +167,7 @@ def test_a_typed_spec_with_a_nul_is_refused_at_the_question(tmp_path,
 def test_cancelling_the_dialogue_costs_nothing(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / "Dropbox").mkdir(parents=True)
+    found(monkeypatch, ("~/Dropbox", "Dropbox"))
     a_terminal(monkeypatch)  # ^D at the first question
 
     with pytest.raises(SystemExit) as exc:
@@ -265,6 +287,7 @@ def test_join_without_dest_runs_the_dialogue_then_spends_the_code(
 
     home_b = tmp_path / "home_b"
     home_b.mkdir()
+    found(monkeypatch)
     a_terminal(monkeypatch, "2", dest_spec)  # somewhere else -> the spec
 
     assert sync.init(ns(join=code, machine="machine-b"), home_b) == 0
@@ -272,6 +295,28 @@ def test_join_without_dest_runs_the_dialogue_then_spends_the_code(
     assert keyring.fetch_master(home=home_b) == \
         keyring.fetch_master(home=home_a)
     assert config.load(home_b)["destination"] == dest_spec
+
+
+def test_a_mangled_code_is_refused_before_a_single_question(tmp_path,
+                                                            monkeypatch):
+    """`parse_pairing_code` is a pure string check whose whole purpose is
+    that a mangled code fails before anything reaches the Destination. Asked
+    after the dialogue, it let a typo walk the user through the Provider
+    menu, write their live credential into rclone.conf and create a billable
+    bucket - and only then say the code was never a code."""
+    home = tmp_path / "home"
+    home.mkdir()
+    calls = RcloneCalls(monkeypatch)
+    found(monkeypatch)
+    prompts = a_terminal(monkeypatch, "1", provider_menu_position("s3"),
+                         "", "AK", "SK", "us-east-1", "bucket", "y")
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(join="NOT-A-REAL-CODE", machine="machine-b"), home)
+
+    assert "pairing code" in str(exc.value)
+    assert prompts == [], "the dialogue ran before the code was even parsed"
+    assert calls.created == [] and calls.made == []
 
 
 def test_join_without_dest_and_without_a_terminal_still_refuses(tmp_path,
@@ -282,7 +327,9 @@ def test_join_without_dest_and_without_a_terminal_still_refuses(tmp_path,
     home.mkdir()
     monkeypatch.setattr(prompting, "available", lambda: False)
 
+    # A well-formed code, so what this pins is the --dest refusal and not
+    # the code check that now runs in front of it.
     with pytest.raises(SystemExit) as exc:
-        sync.init(ns(join="AAAA-AAAA"), home)
+        sync.init(ns(join="AAAAAA-AAAAAAAAAA"), home)
 
     assert "--dest" in str(exc.value)

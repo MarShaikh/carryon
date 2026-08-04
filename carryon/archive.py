@@ -142,31 +142,58 @@ def reachable(dest):
     the command.
     """
     key = probe_key()
+    # Before the write, because for one type the write is not only a write:
+    # on an object store rclone's upload creates a missing bucket, so the
+    # probe could have put a billable resource in somebody's account while
+    # checking whether it could write to it. Every other type answers None.
+    absent = dest.missing_container(key)
+    if absent is not None:
+        return absent
+
     payload = stdlib_secrets.token_bytes(PROBE_BYTES)
     try:
         dest.write(key, payload)
-    except SystemExit as exc:
-        return f"the probe's write did not land - {exc}"
-    except OSError as exc:
+    except (OSError, SystemExit) as exc:
+        # Nothing to clean up that this call knows of: a write that raised
+        # is a write the layer says did not land.
         return f"the probe's write did not land - {exc}"
 
     try:
         served = dest.read(key)
-    except SystemExit as exc:
-        return f"the probe was written and the read back failed - {exc}"
-    except OSError as exc:
-        return f"the probe was written and the read back failed - {exc}"
+    except (OSError, SystemExit) as exc:
+        return _stranded(dest, key,
+                         f"the probe was written and the read back failed "
+                         f"- {exc}")
     if served != payload:
-        _try_delete(dest, key)
-        return ("the probe was written and the read back served "
-                + ("nothing at all" if served is None
-                   else "something other than what went up"))
+        return _stranded(dest, key,
+                         "the probe was written and the read back served "
+                         + ("nothing at all" if served is None
+                            else "something other than what went up"))
 
     if not _try_delete(dest, key):
-        return (f"the probe was written and read back, and the delete of "
-                f"{printable(key)} did not go through - that object is still "
-                "in the Archive and carryon cannot remove it")
+        return _left_behind(key, "the probe was written and read back")
     return None
+
+
+def _stranded(dest, key: str, why: str) -> str:
+    """`why`, plus what became of the probe.
+
+    Every way out after a successful write comes through here, because the
+    object is carryon's and it is in somebody else's storage: the two paths
+    that returned without trying the delete left it there for good, and on
+    a git Destination that is a commit, on an object store a line of the
+    bill. A stray probe is also read as an Archive by the one listing that
+    asks whether a Destination holds anything at all, so it turns `init
+    --join` against an empty Destination into "no pairing blob for that
+    code" - a user sent to burn a fresh code over carryon's own litter.
+    """
+    return why if _try_delete(dest, key) else _left_behind(key, why)
+
+
+def _left_behind(key: str, why: str) -> str:
+    return (f"{why}, and the delete of {printable(key)} did not go through "
+            "- that object is still in the Archive and carryon cannot "
+            "remove it")
 
 
 def _try_delete(dest, key: str) -> bool:

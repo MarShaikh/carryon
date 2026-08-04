@@ -33,8 +33,24 @@ def available() -> bool:
     stdin because an answer must come from a person rather than from a pipe
     that never planned to give one; stdout because a question nobody sees is
     a command that hangs - a redirected `init` is being parsed, not read.
+
+    A stream that cannot answer the question is not a terminal, which is the
+    fail-safe direction and needs saying because the unanswerable cases are
+    exactly the ones this function exists for. CPython sets `sys.stdin` to
+    None when fd 0 is closed at startup - `carryon init 0<&-`, a launchd job,
+    a cron entry - so asking None whether it is a tty was an AttributeError
+    out of the non-tty branch itself; a closed file object raises ValueError
+    from isatty() for the same reason. Both now read as "no terminal", which
+    is what they are.
     """
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    return _is_tty(sys.stdin) and _is_tty(sys.stdout)
+
+
+def _is_tty(stream) -> bool:
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError):
+        return False
 
 
 def _read_line(prompt: str) -> str:
@@ -86,8 +102,20 @@ def choose(intro: str, labels) -> int:
         print(f"  {n}) {label}")
     while True:
         answer = _next(_read_line, f"[1-{len(labels)}]: ").strip()
-        if answer.isdigit() and 1 <= int(answer) <= len(labels):
-            return int(answer) - 1
+        # int() itself decides what a number is, rather than a predicate
+        # asked in front of it. `str.isdigit` is True for characters int()
+        # refuses - '²' is the dedicated key beside '1' on an AZERTY
+        # layout - so one keypress was a ValueError traceback out of
+        # `init` instead of a re-ask; `str.isdecimal` fixes that one and
+        # not 4301 digits, which int() refuses for a different reason
+        # again. A guard that has to keep up with int()'s exceptions is a
+        # guard that will fall behind one of them.
+        try:
+            picked = int(answer)
+        except ValueError:
+            continue
+        if 1 <= picked <= len(labels):
+            return picked - 1
 
 
 def confirm(question: str, default: bool = False) -> bool:
@@ -107,5 +135,19 @@ def secret(question: str) -> str:
     """One secret, unechoed and untouched - no strip, because a credential is
     whatever the service issued and its whitespace is the service's business.
     It passes through carryon on its way to rclone's config and is never
-    kept (ADR-0011)."""
-    return _next(_read_secret, f"{question}: ")
+    kept (ADR-0011).
+
+    Re-asked when empty, like `ask`, and this is the answer where it matters
+    most: nothing downstream can see an unechoed field, so a paste that did
+    not take became a Remote written with no credential in it - accepted by
+    rclone, stored permanently, failing on every use afterwards, under a
+    line saying the credential had been stored. Whitespace-only counts as
+    empty for the question and never for the value: what comes back is what
+    was typed.
+    """
+    while True:
+        answer = _next(_read_secret, f"{question}: ")
+        if answer.strip():
+            return answer
+        print("nothing was entered - a paste that did not take would be "
+              "stored as a remote with no credential in it")

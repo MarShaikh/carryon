@@ -240,6 +240,13 @@ def init(args, home) -> int:
 
 
 def _join(args, home, machine) -> int:
+    # First, and before the dialogue below: parse_pairing_code is a pure
+    # string check whose whole purpose is that a mangled code fails without
+    # reaching the Destination. Asked after the prompts, it let a typo walk
+    # the user through the Provider menu, put a live credential in
+    # rclone.conf and create a billable bucket - and only then say the code
+    # was never a code.
+    code = parse_pairing_code(args.join)
     if not args.dest:
         # The same prompts as the other leg, then the code is spent
         # (ADR-0011): the second machine is the one that ADR is about, and
@@ -253,7 +260,6 @@ def _join(args, home, machine) -> int:
                 "--join needs --dest: a pairing code travels through the "
                 "Destination (ADR-0005), so name the same one the paired "
                 "machine uses")
-    code = parse_pairing_code(args.join)
     dest = destinations.from_spec(args.dest, home)
 
     # Read and delete are two steps, deliberately: the blob must survive a
