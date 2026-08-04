@@ -550,7 +550,8 @@ def test_second_pull_is_a_no_op_on_the_agent_trees(joined, capsys):
     assert "0 new, 0 replaced" in out
 
 
-def test_a_session_served_at_another_sessions_key_stops_the_pull(joined):
+def test_a_session_served_at_another_sessions_key_is_withheld_and_flagged(
+        joined, capsys):
     """The Destination decides what comes back from a key; the label decides
     whether the pull believes it.
 
@@ -559,7 +560,10 @@ def test_a_session_served_at_another_sessions_key_stops_the_pull(joined):
     Here it answers U2's key with U1's bytes, which every layer below the
     seal accepts: the blob is authentic, it decrypts, it unpacks. Only the
     label check knows it is the wrong Session, and it has to fire before any
-    of it reaches the agent's tree.
+    of it reaches the agent's tree. The pull FINISHES - one planted object
+    is never a reason to abandon an Archive (ADR-0009) - and flags the
+    shortfall in its exit code rather than a raise, so under sync the push
+    half still runs (ADR-0012).
     """
     dest = joined.dest
     master = keyring.fetch_master(home=joined.home_b)
@@ -567,9 +571,9 @@ def test_a_session_served_at_another_sessions_key_stops_the_pull(joined):
     dest.write(index["sessions"][U2]["object"],
                dest.read(index["sessions"][U1]["object"]))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), joined.home_b)
-    assert "does not authenticate" in str(exc.value)
+    assert sync.pull(ns(apply=True), joined.home_b) == 2
+    out = capsys.readouterr().out
+    assert "does not authenticate" in out
     landed = list((joined.home_b / ".claude").rglob(U2 + ".jsonl"))
     assert landed == [], \
         "a Session served under another Session's key reached the tree"
@@ -738,8 +742,11 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
     cwd_app_b = str(home_b / PROJ_APP)
     cwd_web_b = str(home_b / PROJ_WEB)
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), home_b)
+    # 2, not a raise: by the end of a pull everything that could land has
+    # landed, so an unopenable object is a thing-to-look-at (a code), not a
+    # refusal (a raise) - and under sync the old SystemExit meant one
+    # corrupt stored object stopped the push half forever (ADR-0012).
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     # -- it finished: the report reached its summary, and said so ------------
@@ -751,7 +758,7 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
         "1 divergent (kept aside)" in out
     assert "Project residue: 1 file(s) written" in out
     assert "Setup: 3 file(s) written, 1 externally owned and skipped" in out
-    assert "object(s) the Archive would not open" in str(exc.value)
+    assert "object(s) the Archive would not open" in out
 
     # -- all three named, none of them silently dropped ----------------------
     assert STOLEN_KEY in out and "symlink" in out, \
@@ -760,7 +767,8 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
         "the invented machine went unmentioned, or its timestamp won"
     assert U1 in out and "integrity check" in out, \
         "the corrupted Session was dropped without a word"
-    assert U1 in str(exc.value)
+    assert U1 in out.split("pull finished with")[1], \
+        "the closing sentence stopped naming the unopenable object"
 
     # The attacker names the object AND the report line is the safety
     # property, so the name may not author one: no raw CR, no CSI.
@@ -804,15 +812,14 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
     #    pull must not move it on the tenth either. Only an end-to-end run can
     #    ask this: it is a statement about two pulls, not about either one.
     claude_before = tree_state(home_b / ".claude")
-    with pytest.raises(SystemExit) as again:
-        sync.pull(ns(apply=True), home_b)
+    assert sync.pull(ns(apply=True), home_b) == 2, \
+        "the second pull stopped flagging the same damage (ADR-0012's code)"
     second = capsys.readouterr().out
     assert tree_state(home_b / ".claude") == claude_before, \
         "a second pull against the same planted Archive moved the agent tree"
     assert "Sessions: 0 new, 0 replaced" in second
     assert STOLEN_KEY in second and "rogue" in second and U1 in second, \
         "the second pull stopped naming what the first one named"
-    assert U1 in str(again.value)
 
     # -- neither the secret nor the attacker's file moved --------------------
     assert not (home_b / ".ssh" / "authorized_keys").exists(), \
@@ -1716,8 +1723,9 @@ def test_a_damaged_archive_lands_everything_undamaged_and_names_the_rest(
     cwd_app_b = str(home_b / PROJ_APP)
     cwd_web_b = str(home_b / PROJ_WEB)
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), home_b)
+    # 2, not a raise: the shortfall is flagged in the code once everything
+    # else has landed (ADR-0012) - the raise starved sync's push half.
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     # -- it finished: the report reached its summary -------------------------
@@ -1732,8 +1740,9 @@ def test_a_damaged_archive_lands_everything_undamaged_and_names_the_rest(
         "the damaged Session object was dropped without a word"
     assert U2 in out and "sessions" in out, \
         "the Index entry this machine could not use went unmentioned"
-    assert U1 in str(exc.value) and U2 in str(exc.value), \
-        "the exit status does not say what was left behind"
+    closing = out.split("pull finished with")[1]
+    assert U1 in closing and U2 in closing, \
+        "the closing sentence does not say what was left behind"
     # The key is a string this machine cannot encode, and the report line is
     # the whole of what the user gets: printing it raw is UnicodeEncodeError
     # out of the report about it.
@@ -1764,14 +1773,13 @@ def test_a_damaged_archive_lands_everything_undamaged_and_names_the_rest(
 
     # -- a second pull says the same, and moves nothing ----------------------
     claude_before = tree_state(home_b / ".claude")
-    with pytest.raises(SystemExit) as again:
-        sync.pull(ns(apply=True), home_b)
+    assert sync.pull(ns(apply=True), home_b) == 2, \
+        "the second pull stopped flagging the same damage (ADR-0012's code)"
     second = capsys.readouterr().out
     assert tree_state(home_b / ".claude") == claude_before, \
         "a second pull against the same damaged Archive moved the agent tree"
     assert U1 in second and U2 in second, \
         "the second pull stopped naming what the first one named"
-    assert U1 in str(again.value) and U2 in str(again.value)
 
 
 def test_a_push_over_a_damaged_archive_carries_the_rest_and_keeps_the_damage(
@@ -1793,9 +1801,10 @@ def test_a_push_over_a_damaged_archive_carries_the_rest_and_keeps_the_damage(
     master = keyring.fetch_master(home=home_b)
 
     # B pulls first, so it holds what the Archive could still give it, then
-    # pushes its own Session on top of the damaged catalogue.
-    with pytest.raises(SystemExit):
-        sync.pull(ns(apply=True), home_b)
+    # pushes its own Session on top of the damaged catalogue. The 2 is the
+    # damage flagged (ADR-0012's code, not a raise) - which is exactly what
+    # lets the push below happen at all under sync.
+    assert sync.pull(ns(apply=True), home_b) == 2
     capsys.readouterr()
 
     assert sync.push(ns(apply=True), home_b) == 0
@@ -1824,14 +1833,17 @@ def test_a_push_over_a_damaged_archive_carries_the_rest_and_keeps_the_damage(
     healed = archive.load_index(joined.dest, master)
     assert U2 in healed["sessions"], \
         "the machine that still held the Session could not re-mint its key"
-    # Still a SystemExit: a damaged OBJECT is not something a push can heal -
+    # Still flagged: a damaged OBJECT is not something a push can heal -
     # push refuses to overwrite an Archive copy it could not read - and the
     # unreadable record is still there to be named, since re-minting the key
-    # is not the same as repairing the entry that carried the old one.
-    with pytest.raises(SystemExit) as final:
-        sync.pull(ns(apply=True), home_b)
-    assert U1 in str(final.value) and U2 + r"\udcff" in str(final.value), \
-        "the exit status stopped naming the record no push could repair"
+    # is not the same as repairing the entry that carried the old one. A
+    # code rather than a raise, like every shortfall a finished pull reports
+    # (ADR-0012).
+    capsys.readouterr()
+    assert sync.pull(ns(apply=True), home_b) == 2
+    closing = capsys.readouterr().out.split("pull finished with")[1]
+    assert U1 in closing and U2 + r"\udcff" in closing, \
+        "the closing sentence stopped naming the record no push could repair"
     assert list((home_b / ".claude").rglob(U2 + ".jsonl")), \
         "the healed entry did not restore the Session it names"
 

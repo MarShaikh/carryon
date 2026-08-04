@@ -351,12 +351,14 @@ def test_an_index_entry_with_no_object_field_is_a_report_line(tmp_path,
     link_home(home_b, str(dest_root), "machine-b", master_from=home_a)
     capsys.readouterr()
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), home_b)
+    # A flagged return, not a raise: everything that could land already
+    # has by this point, and a raise here starved sync's push half for good
+    # (ADR-0012 - a refusal raises, a thing-to-look-at comes back as a code).
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert "Sessions:" in out, "the pull ended before its report"
-    assert "would not open" in str(exc.value)
+    assert "would not open" in out
 
 
 def test_an_index_setup_entry_with_a_numeric_time_is_a_report_line(tmp_path,
@@ -395,10 +397,13 @@ def test_an_index_setup_entry_that_is_not_an_object_is_a_report_line(
 
     home_b = build_home_b(tmp_path)
     link_home(home_b, str(dest_root), "machine-b", master_from=home_a)
+    capsys.readouterr()
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), home_b)
-    assert "Index" in str(exc.value)
+    # Flagged, not raised: a setups entry starves the Setup leg, which ran,
+    # so it counts - as a code, once everything else landed (ADR-0012).
+    assert sync.pull(ns(apply=True), home_b) == 2
+    out = capsys.readouterr().out
+    assert "Index this machine could not read" in out
 
 
 def test_the_pairing_payload_still_hands_over_a_usable_anchor(tmp_path,

@@ -65,20 +65,12 @@ from .destinations import SPEC_FORMS
 from .destinations.base import printable
 
 
-def _parse_subset(value: str, known, label: str) -> set:
-    """The flag's comma-separated values as a validated set.
-
-    `all` is a value too, and means the full set: taught here, to the shared
-    parser, rather than to any one command, so it means the same thing to
-    push, pull, capture and sync alike (ADR-0012).
-    """
-    chosen = {v.strip() for v in value.split(",") if v.strip()}
-    unknown = chosen - set(known) - {"all"}
-    if unknown:
-        raise SystemExit(
-            f"unknown {label}: {', '.join(sorted(unknown))}\n"
-            f"known {label}s: {', '.join(known)}")
-    return set(known) if "all" in chosen else chosen
+# Subset flags (--agent, --category) are parsed by sync._subset, the one
+# parser. A near-twin lived here and the two disagreed about what 'all'
+# expands to - the full set including history, which capture rightly
+# refuses - so `capture --category all` raised over a category the user
+# never typed while push accepted the same flag. One question, one answer
+# (ADR-0010); the parser's own docstring carries the rest.
 
 
 # --- the door every path-valued argument goes through ------------------------
@@ -528,10 +520,12 @@ def cmd_capture(args) -> int:
     archive = _named_path(args.archive, "--archive", FILE_TO_MAKE, home)
     cfg = config.load(home)
     with sync._swapped_registry(sync._effective_adapters(cfg, home)):
-        agents = (_parse_subset(args.agent, ADAPTERS, "agent")
-                  if args.agent else None)
-        categories = (_parse_subset(args.category, CATEGORIES, "category")
-                      if args.category else None)
+        # None means every category capture takes (the Setup ones - the
+        # engine refuses history by name), which is exactly why 'all' maps
+        # to None in the parser: `capture --category all` captures a whole
+        # Setup instead of raising over a category the user never typed.
+        agents = sync._subset(args.agent, ADAPTERS, "agent")
+        categories = sync._subset(args.category, CATEGORIES, "category")
         code, _ = capture.run(
             out=out,
             dry=not args.apply,

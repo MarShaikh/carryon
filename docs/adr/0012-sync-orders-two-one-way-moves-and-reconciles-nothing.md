@@ -73,7 +73,14 @@ scheduled runs `sync` invites next: a report nobody reads is not a report.
 So a landed divergence makes `pull` non-zero, and `sync` inherits it by
 propagation rather than by inventing a channel of its own. The exit code's
 meaning does not change — it has always been "something landed that a person
-has to deal with" — only the set of things that qualify. The cost is a
+has to deal with" — only the set of things that qualify. On a dry run the
+flag is as good as the plan's sight: a main Transcript's divergence is
+visible from the Index alone and flags it, while one buried in a Session's
+members or a residue file is only discovered by the bytes, which a plan does
+not download — so an apply can return 2 where its dry run said 0. That
+asymmetry is the dry run's documented shape (it reads catalogues, not
+objects), accepted rather than closed, because closing it means downloading
+the Archive to plan against it. The cost is a
 user-visible contract change and every assertion that pinned `pull(...) == 0`
 while meaning "the pull worked"; each had to say which it meant - the ones in
 divergence scenarios now assert the new code, and the union-only ones keep
@@ -101,6 +108,15 @@ Requiring an Archive to pre-exist was considered and rejected: the first
 name survives on the other, for ever. `sync` runs the union more often, so it
 reaches that state sooner. The cure remains `--mirror`, still deferred by
 ADR-0002 and still gated behind ADR-0010's removal scanner.
+
+**Composition is paid for twice.** Each half opens the Destination, fetches
+the master key and reads the Index for itself, and a Session that moved is
+downloaded by the pull and downloaded again by the push that republishes the
+merged tree — over a git Destination each extra read is its own
+fetch-reset-clean cycle. Accepted, for now, because sync's whole claim is
+that it adds no machinery to the halves; threading one opened
+(config, Destination, Index) through both is internal plumbing that can come
+when the cost is felt, without touching this decision.
 
 **Automation is now the obvious next request and is not this decision.**
 Running unattended raises questions this ADR does not settle — what may run

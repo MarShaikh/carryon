@@ -565,8 +565,9 @@ def test_a_tampered_session_costs_that_session_and_not_the_pull(tmp_path,
     master = keyring.fetch_master(home=home_a)
     flip_last_byte(dest, archive.session_key(master, UUID_ONE))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     landed = landed_project(home_b)
@@ -580,7 +581,7 @@ def test_a_tampered_session_costs_that_session_and_not_the_pull(tmp_path,
     assert "Sessions:" in out, "the pull ended before it printed its report"
     assert (home_b / ".claude" / "settings.json").is_file(), \
         "the Setup half never ran"
-    assert UUID_ONE in str(exc.value)
+    assert UUID_ONE in out
 
 
 def test_a_tampered_project_residue_is_skipped_the_same_way(tmp_path, capsys):
@@ -592,8 +593,9 @@ def test_a_tampered_project_residue_is_skipped_the_same_way(tmp_path, capsys):
     assert len(objects) == 1, "the fixture should push exactly one residue"
     flip_last_byte(dest, objects[0])
 
-    with pytest.raises(SystemExit):
-        sync.pull(ns(apply=True), home_b)
+    # Flagged, not raised: a finished pull reports its shortfall in the
+    # exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert (landed_project(home_b) / (UUID_ONE + ".jsonl")).is_file()

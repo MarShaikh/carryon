@@ -35,6 +35,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import archive, cli, config, keyring, rekey, sync  # noqa: E402
 from carryon.adapters import CATEGORIES  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
+# Shared helpers imported rather than re-copied: this file was born as
+# roughly the fifteenth copy of ns/file_keyring, and a lagging copy is how a
+# namespace that grew a flag quietly exercises commands through getattr
+# defaults instead of the flag under test (hostile_archive's own warning).
+from tests.hostile_archive import (author_setup, file_keyring,  # noqa: E402,F401
+                                   link_home, ns)
+from tests.test_sync import tree_state  # noqa: E402
 
 UUID_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"   # shared between machines
 UUID_D = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"   # local to machine-b only
@@ -48,22 +55,8 @@ SHARED = "subagents/journal.jsonl"
 LOCAL_ONLY = "local-only.jsonl"
 
 
-@pytest.fixture(autouse=True)
-def file_keyring(monkeypatch):
-    """Never let a test near the real OS keychain."""
-    monkeypatch.setattr(keyring, "_backend", lambda platform=None: "file")
-
-
 def jline(obj) -> str:
     return json.dumps(obj, separators=(",", ":")) + "\n"
-
-
-def ns(**kw) -> argparse.Namespace:
-    base = dict(dest=None, join=None, machine=None, apply=False, agent=None,
-                category=None, force=False)
-    base["map"] = []
-    base.update(kw)
-    return argparse.Namespace(**base)
 
 
 def main_lines(cwd, n) -> str:
@@ -121,30 +114,6 @@ def build_home_b(tmp_path) -> pathlib.Path:
     write(project_root(home) / (UUID_D + ".jsonl"),
           jline({"cwd": cwd, "type": "meta", "tag": "d"}))
     return home
-
-
-def link_home(home, dest_spec, machine, master_from) -> None:
-    """Give a second fake home the same master key and Destination, without
-    the pairing theatre (that flow has its own test)."""
-    keyring.store_master(keyring.fetch_master(home=master_from), home=home)
-    cfg = config.default_config()
-    cfg["destination"] = dest_spec
-    cfg["machine"] = machine
-    config.save(cfg, home)
-
-
-def tree_state(root) -> dict:
-    root = pathlib.Path(root)
-    if not root.exists():
-        return {}
-    state = {}
-    for path in sorted(root.rglob("*")):
-        rel = str(path.relative_to(root))
-        if path.is_symlink():
-            state[rel] = ("link", os.readlink(str(path)))
-        elif path.is_file():
-            state[rel] = ("file", path.read_bytes())
-    return state
 
 
 def stored_session_members(dest, master, uuid) -> dict:
@@ -359,18 +328,54 @@ def test_push_understands_category_all_as_push_with_no_flag(
         "--category all left the History half behind"
 
 
-def test_the_shared_subset_parsers_understand_all(capsys):
-    """`all` is taught to the shared parsers rather than to sync, so it means
-    the full set to push, pull, capture and sync alike and sync grows no
-    vocabulary of its own (ADR-0012).
+def test_the_one_subset_parser_understands_all_for_categories_alone(
+        tmp_path, capsys, monkeypatch):
+    """ONE parser (sync._subset - cli.py's twin is gone, because the two
+    expanded 'all' differently and `capture --category all` refused a
+    category the user never typed while push accepted the same flag), and
+    `all` belongs to the category vocabulary alone: ADR-0012 teaches it to
+    --category, and an agent registry key spelled 'all' must stay
+    selectable the day an adapter claims it.
     """
-    full = set(CATEGORIES)
-    assert cli._parse_subset("all", CATEGORIES, "category") == full
-    got = sync._subset("all", CATEGORIES, "category")
-    # None is _subset's existing spelling of 'everything'; the full set is
-    # the other honest answer. Either way every caller behaves as if no
-    # subset had been asked for.
-    assert got is None or got == full
+    assert sync._subset("all", CATEGORIES, "category") is None, \
+        "None is the one spelling of 'everything' every gate already reads"
+    assert not hasattr(cli, "_parse_subset"), \
+        "the twin parser is back, and two parsers is how 'all' broke once"
+
+    with pytest.raises(SystemExit) as exc:
+        sync._subset("all", {"claude-code": None}, "agent")
+    assert "unknown agent" in str(exc.value), \
+        "--agent all was quietly rewritten from a refusal into everything"
+
+    # `capture --category all` captures a whole Setup - the caller that had
+    # the broken answer under the twin (history is pushed, not captured).
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text('{"model": "opus"}')
+    monkeypatch.setattr(pathlib.Path, "home", staticmethod(lambda: home))
+    out = tmp_path / "captured"
+    assert cli.main(["capture", "--out", str(out), "--category", "all",
+                     "--apply"]) == 0
+    assert (out / "claude" / "settings.json").is_file()
+    capsys.readouterr()
+
+
+def test_a_subset_that_names_nothing_is_refused_not_read(tmp_path):
+    """'' and ',' are what an unset shell variable joins to. Empty used to
+    mean everything to one parser and an empty SET to the other - every leg
+    gated off, exit 0, nothing carried in either direction - and a wrapper
+    deserves a sentence, not whichever of those the command consulted."""
+    for value in ("", ",", "  ,  "):
+        with pytest.raises(SystemExit) as exc:
+            sync._subset(value, CATEGORIES, "category")
+        assert "names nothing" in str(exc.value)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        sync.sync(ns(apply=False, category=""), home)
+    assert "names nothing" in str(exc.value), \
+        "an empty --category on sync silently became the history default"
 
 
 # --- R10: a landed divergence does not stop the push half ----------------------
@@ -507,3 +512,136 @@ def test_pull_category_knowledge_restores_only_knowledge_items(
         "a config item was restored under --category knowledge"
     assert not (project_root(partner) / (UUID_F + ".jsonl")).exists(), \
         "the Session legs ran although history was not chosen"
+
+
+# --- what the review of this branch found, pinned -----------------------------
+#
+# Each of these is a defect the first review round confirmed by driving the
+# code; the fix and the test arrived together, so a revert fails by name.
+
+
+def test_sync_publishes_past_a_pull_that_finished_short(partner, tmp_path,
+                                                        capsys):
+    """One corrupt stored object used to be a SystemExit at the END of pull -
+    after everything else had landed - and under sync that raise meant the
+    push half never ran, on every run, so this machine's own Sessions were
+    never published again. A finished pull now flags the shortfall in its
+    exit code instead, and sync carries on past a RETURN (ADR-0012)."""
+    dest = DirectoryDestination(tmp_path / "archive")
+    session_key = dest.list("carryon/sessions/")[0]
+    dest.write(session_key, b"not what a key holder sealed")
+    capsys.readouterr()
+
+    assert sync.sync(ns(apply=True), partner) == 2
+    out = capsys.readouterr().out
+
+    assert "pull finished with 1 object(s) the Archive would not open" in out
+    assert "PUSHING" in out, \
+        "the push half never ran past the finished-short pull"
+    index = archive.load_index(dest, keyring.fetch_master(home=partner))
+    assert UUID_D in index["sessions"], \
+        "this machine's own Session was never published"
+
+
+def test_a_setup_only_pull_ignores_history_catalogue_damage(pushed, tmp_path,
+                                                            capsys):
+    """Index refusals count towards the exit status only when the leg they
+    starve actually ran: a --category knowledge pull was told to ignore the
+    session catalogues, and an exit status over entries it was told to
+    ignore is a status a script learns to ignore - and, under sync, one
+    that used to stop the push half over a leg nobody asked for."""
+    home_a, dest_spec = pushed
+    from tests.test_index_replay import open_index, seal_index
+    dest_root = tmp_path / "archive"
+    index = open_index(home_a, dest_root)
+    index["sessions"]["bad-entry-no-machine-can-read"] = 42
+    seal_index(home_a, dest_root, index)
+    home_b = build_home_b(tmp_path)
+    link_home(home_b, dest_spec, "machine-b", master_from=home_a)
+    capsys.readouterr()
+
+    assert sync.pull(ns(apply=True, category="knowledge"), home_b) == 0, \
+        "a Setup-only pull flagged damage in a catalogue it was told to skip"
+    assert "could not read" not in capsys.readouterr().out
+
+    assert sync.pull(ns(apply=True), home_b) == 2, \
+        "the default pull stopped flagging the same damage"
+    assert "could not read" in capsys.readouterr().out
+
+
+def test_a_manifest_category_is_validated_before_it_filters(tmp_path, capsys):
+    """The category field comes off the stored MANIFEST - attacker-reachable
+    like src and dst beside it, and reachable exactly through the one door
+    authentication leaves open: a sole UNVOUCHED Setup (a keyless push looks
+    like this, and so does a planted one), whose manifest is read as-is.
+    Unhashable was a raw TypeError out of a pull whose History had already
+    landed; malformed-but-hashable was an item silently dropped, and a
+    silently missing settings file is the exact outcome the refused list
+    exists to prevent.
+
+    With an Index present the source chooser already refuses a tree the
+    Index does not vouch for, so the reachable spelling is ADR-0004's: an
+    Archive whose Index is ABSENT (no key holder ever pushed) restores its
+    sole unvouched Setup, flagged - and reads that manifest as-is."""
+    home_b = build_home_b(tmp_path)
+    dest_spec = str(tmp_path / "archive")
+    sync.init(ns(dest=dest_spec, machine="machine-b"), home_b)  # no push
+    author_setup(
+        tmp_path / "archive", "planted",
+        [dict(src=".claude/settings.local.json",
+              dst="claude/settings.local.json", kind="file",
+              category=["config"], note="unhashable"),
+         dict(src=".claude/CLAUDE.md", dst="claude/CLAUDE.md", kind="file",
+              category="Config", note="wrong case"),
+         dict(src=".claude/keybindings.json", dst="claude/keybindings.json",
+              kind="file", category="config", note="honest")],
+        files={"claude/settings.local.json": "{}\n",
+               "claude/CLAUDE.md": "planted\n",
+               "claude/keybindings.json": '{"ok": true}\n'})
+    capsys.readouterr()
+
+    code = sync.pull(ns(apply=True, category="config"), home_b)
+    out = capsys.readouterr().out
+
+    assert isinstance(code, int), "the pull crashed instead of finishing"
+    assert "not a category carryon knows" in out, \
+        "a malformed category was dropped without a word"
+    assert out.count("not a category carryon knows") == 2, \
+        "one of the two malformed spellings was silently dropped"
+    assert (home_b / ".claude" / "keybindings.json").read_text() == \
+        '{"ok": true}\n', \
+        "the honest item beside the malformed ones did not restore"
+
+
+def test_a_default_sync_names_the_skipped_setup_leg_in_both_halves(
+        partner, capsys):
+    """The same line, twice, because the reasoning cuts both ways: a leg
+    that merely vanishes reads as a half that quietly carried the Setup -
+    and it used to print in the pull half only."""
+    capsys.readouterr()
+    assert sync.sync(ns(apply=True), partner) == 0
+    out = capsys.readouterr().out
+
+    assert out.count("Setup: skipped - the chosen categories name no part "
+                     "of a Setup") == 2, \
+        "one of the two halves skipped its Setup leg without a word"
+
+
+def test_the_dry_run_caveat_is_honest_when_the_setup_travels(partner, capsys):
+    """'a real pull can only make it push more, never less' is TRUE of a
+    History union and FALSE under --category all: the pull's Setup leg
+    replaces same-named local files before the push half captures the disk,
+    so the real push can publish different Setup content than the plan
+    showed. Each half-set gets the sentence that is true of it."""
+    capsys.readouterr()
+    assert sync.sync(ns(apply=False), partner) in (0, 1)
+    history_only = capsys.readouterr().out
+    assert "never less" in history_only
+    assert "replaces same-named" not in history_only
+
+    assert sync.sync(ns(apply=False, category="all"), partner) in (0, 1, 2)
+    widened = capsys.readouterr().out
+    assert "replaces same-named" in widened, \
+        "the widened dry run kept the History-only reassurance"
+    assert "never less" not in widened.split("sync dry run")[1].split(
+        "PUSH")[0]
