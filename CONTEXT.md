@@ -96,6 +96,16 @@ write, read and delete work - nothing about whether the storage is private,
 which no probe can answer.
 _Avoid_: health check, ping (a Probe moves real bytes through the real verbs)
 
+**Sync**:
+Carrying a History both ways in one step: what the Archive holds and this
+machine does not is laid down, what this machine holds and the Archive does not
+is published. It converges two machines that take turns, because a Session
+belongs to one machine at a time — there is nothing to reconcile, only things
+to carry. It never deletes, and it does not merge a Session two machines
+extended at once; that divergence is filed, reported, and stays.
+_Avoid_: "sync state" for the High-water mark; "two-way sync" for the
+per-machine Setup merge ADR-0002 puts out of scope
+
 **Re-keying**:
 Rewriting the absolute paths recorded inside a History so they do not belong to
 the machine that wrote them. Happens on the way out, leaving the Archive
@@ -199,6 +209,17 @@ named in the report while the rest of the run carries on. Both are the same
 posture, fail closed and say so, and the unit is the whole difference between a
 pull that skips a Session and a pull that abandons an Archive, so say which one
 is meant.
+
+**"Memory"** names things in both halves, with opposite safety properties. The
+per-project notes that accrete beside a project's Transcripts are a History:
+unioned per file, never deleted, and a divergence is filed rather than
+resolved. An agent that keeps its memories in one install-wide tree instead —
+partitioned by a path recorded inside each file rather than by directory — has
+them in its Setup, where a pull overwrites any file of the same name from
+whichever machine's Setup was chosen and leaves the rest. The word says nothing
+about which, so say the per-project ones or the install-wide ones, and never
+"memories" unqualified when the difference decides whether something can be
+lost.
 
 **"Replace"** is a word about one file and gets read as a word about a
 directory. A pull replaces a Transcript; it does not replace a Session tree,
