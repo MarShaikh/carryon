@@ -89,17 +89,26 @@ Google Cloud Storage, SFTP. It asks that service's few fields, hands them to
 that is a billable resource in a region and under a name carryon has no
 business choosing. The credential passes through to rclone and is never kept.
 Without a terminal — over SSH with no tty, in CI — `init` prints the
-candidates and exits, so nothing scriptable has changed.
+candidates and exits. One scripted behaviour is gone on purpose: `init` with
+no `--dest` no longer adopts a lone detected candidate silently. A script
+names its Destination with `--dest`.
 
 Then it asks the Destination two questions. Whether an Archive is already
 there: setting up over one without `--join` would mint a second recovery key
 that does not open what is already stored, and nothing afterwards tells the two
 keys apart — so it refuses and says how to pair instead. And whether
 write, read and delete really work, using a probe of random bytes under a
-random name that it reads back and deletes. Both happen before a key is minted
-or a config written, so a refusal costs nothing and can be re-run. Neither says
-whether the storage is private — no check can, which is why that stays your
-call.
+random name that it reads back and deletes. On an rclone Destination the probe
+refuses to write into a bucket that is not there rather than let the upload
+create one. A directory Destination that does not exist yet is created, the
+way the first push always created it — so the spelling of `--dest ~/Dropbox`
+is yours to get right; a typo is a working Archive in a folder no sync client
+watches. A git Destination is not probed at all: every write there is a commit
+that stays in history, and git refuses a push that does not land, so the first
+`carryon push` is its write test. Both questions come before a key is minted
+or a config written, so a refusal costs nothing and can be re-run. Neither
+says whether the storage is private — no check can, which is why that stays
+your call.
 
 ## Adding an agent
 

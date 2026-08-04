@@ -4,8 +4,10 @@
 user retype one as `--dest`; detection led nowhere, so the friction it existed
 to remove stayed. This module is the other half of ADR-0011: with a terminal
 on both ends it offers what it found and a short list of Providers when it
-found nothing, and without one it prints the candidates and exits exactly as
-it did, so nothing that used to be scriptable stopped being scriptable.
+found nothing, and without one it prints the candidates and exits - a script
+names its Destination with --dest, and the one scripted spelling the ADR
+removed is the silent adoption of a lone candidate, which was a decision and
+not an answer.
 
 It is a module rather than a stretch of `sync.init` because what it holds are
 decisions - which Destination, whose Provider, what a green tick means - and
@@ -163,31 +165,59 @@ def confirm_joining(dest) -> None:
     before the unwrap, so a Destination that fails it leaves the blob in
     place and the code still good.
     """
-    _confirm_reachable(dest)
+    _confirm_reachable(dest, joining=True)
 
 
-def _confirm_reachable(dest) -> None:
+def _confirm_reachable(dest, joining: bool = False) -> None:
+    """The probe, unless this type answers that probing it costs something
+    a probe has no business spending - a git Destination, where every write
+    is a commit that stays in history (the type says so itself, and the
+    report repeats it rather than printing a tick over a delete git's own
+    record contradicts).
+
+    The refusal's last line depends on the leg, because what a user must
+    know differs: on a join, that the one-time code was NOT spent; on a
+    fresh init, that nothing was minted - and that an rclone remote this
+    dialogue created is not nothing, it survives in rclone's config and a
+    re-run will offer it.
+    """
+    if dest.skips_probe() is not None:
+        return
     why = archive.reachable(dest)
-    if why is not None:
-        raise SystemExit(
-            f"{dest.describe()} did not pass the reachability probe: {why}.\n"
-            "carryon writes a few random bytes, reads them back and deletes "
-            "them, because a Destination that authenticates is not "
-            "necessarily one that works - and finding that out at the first "
-            "`push` costs a recovery key that was already printed. Nothing "
-            "was set up on this machine; fix the Destination and run `init` "
-            "again.")
+    if why is None:
+        return
+    tail = (
+        "The pairing code was NOT spent: the blob is still in the Archive, "
+        "and the same code works once the Destination is fixed - run the "
+        "same `carryon init --join` again."
+        if joining else
+        "No key was minted and no config was written on this machine. If "
+        "this init created an rclone remote, that remote is saved in "
+        "rclone's config and a re-run of `carryon init` will offer it as a "
+        "candidate. Fix the Destination and run `init` again.")
+    raise SystemExit(
+        f"{dest.describe()} did not pass the reachability probe: {why}.\n"
+        "carryon writes a few random bytes, reads them back and deletes "
+        "them, because a Destination that authenticates is not necessarily "
+        "one that works.\n" + tail)
 
 
 def report(dest) -> None:
     """What a green tick means, in the words the ADR settles on.
 
-    It says what was checked rather than implying what was not. Neither check
-    answers the question that matters most for a Setup - whether the storage
-    is private - and no probe can, so the line that would be read as "this is
-    safe" is the one thing this must not print.
+    It says what was checked rather than implying what was not - which is
+    also why a Destination whose probe was skipped gets the reason printed
+    instead of a tick. Neither check answers the question that matters most
+    for a Setup - whether the storage is private - and no probe can, so the
+    line that would be read as "this is safe" is the one thing this must
+    not print.
     """
-    print(f"Destination checked: write, read and delete work at "
-          f"{dest.describe()}.")
-    print("That is all it says. Nothing here can tell whether the storage is "
-          "private, and a Setup travels in the clear.")
+    skipped = dest.skips_probe()
+    if skipped is not None:
+        print(f"Destination not probed: {skipped}.")
+    else:
+        print(f"Destination checked: write, read and delete work at "
+              f"{dest.describe()}.")
+        print("That is all it says.", end=" ")
+    print("Nothing here can tell whether the storage is private, and a "
+          "Setup travels in the clear.")

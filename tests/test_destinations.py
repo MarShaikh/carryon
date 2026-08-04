@@ -551,3 +551,48 @@ def test_an_absolute_directory_spec_still_parses(tmp_path):
     assert from_spec("dir:~", home).root == home
     assert from_spec("dir:~/archive", home).root == home / "archive"
     assert from_spec("~", home).root == home
+
+
+# --- a delete is confirmed, on the type whose store is this machine ----------
+#
+# The rclone type learned this first: an exit code is the remote's word about
+# what it did, and `_confirm_delete` exists because ADR-0005's pairing blob is
+# burnt on first successful read - "burnt" IS the one-time property. The local
+# type answered the same question by accident: `_local_delete` swallowed every
+# OSError as "absent is not an error", EACCES included, and the base default
+# said True. A directory whose ACL grants create and denies delete - an SMB or
+# NFS share, a read-only remount, a macOS uchg flag - therefore reported a
+# delete it did not make, and a pairing code stayed live under a run that
+# printed nothing.
+
+
+def test_a_delete_the_filesystem_refuses_is_reported_and_answered_false(
+        tmp_path, capsys):
+    dest = DirectoryDestination(tmp_path / "archive")
+    dest.write("carryon/pair/ABCDEF.enc", b"wrapped-master-key")
+    capsys.readouterr()
+    (tmp_path / "archive" / "carryon" / "pair").chmod(0o500)
+
+    try:
+        gone = dest.delete("carryon/pair/ABCDEF.enc")
+        out = capsys.readouterr().out
+    finally:
+        (tmp_path / "archive" / "carryon" / "pair").chmod(0o700)
+
+    assert gone is False, \
+        "the filesystem refused the unlink and carryon said the blob was gone"
+    assert "ABCDEF" in out and "skipping" in out, \
+        f"a delete that removed nothing said nothing: {out!r}"
+    assert (tmp_path / "archive" / "carryon" / "pair" / "ABCDEF.enc").is_file()
+
+
+def test_an_honest_local_delete_stays_quiet_and_true(tmp_path, capsys):
+    """The control, so the confirmation cannot pass by refusing everything."""
+    dest = DirectoryDestination(tmp_path / "archive")
+    dest.write("carryon/pair/ABCDEF.enc", b"wrapped-master-key")
+    capsys.readouterr()
+
+    assert dest.delete("carryon/pair/ABCDEF.enc") is True
+    assert capsys.readouterr().out == ""
+    assert dest.delete("carryon/pair/ABCDEF.enc") is True, \
+        "deleting an absent key is not a failure"

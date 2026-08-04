@@ -298,11 +298,12 @@ def _join(args, home, machine) -> int:
     # One-time (ADR-0005): burnt on first successful read. `delete` answers
     # whether the store really stopped serving it, because on a Destination
     # whose verbs are another program's exit code it can report a delete it
-    # did not make - and "burnt" is the whole of the one-time property. This
-    # machine has performed no write at this point, so nothing upstream could
-    # have noticed. Said here rather than left to the report line the layer
-    # already prints, because what it MEANS is this leg's: the code the user
-    # is holding still opens the Archive.
+    # did not make - and "burnt" is the whole of the one-time property. The
+    # probe above wrote and deleted its own object, and confirmed only its
+    # own delete: a store that lies selectively about THIS key is exactly
+    # what nothing upstream can have noticed. Said here rather than left to
+    # the report line the layer already prints, because what it MEANS is
+    # this leg's: the code the user is holding still opens the Archive.
     burnt = dest.delete(key)
     # created_at is a finite float by now, checked above the delete: an
     # expired code is a real code and is burnt, a payload carryon did not

@@ -118,8 +118,11 @@ the one-time property. With a delete that exits 0 and removes nothing - which
 is `RCLONE_DRY_RUN` in the joining machine's own environment, or a filter rule
 of its own - `carryon init --join` printed "paired as ..." at exit 0 with the
 wrapped master key still in the Archive, and a third machine joined with the
-same code and derived the same key. The joining machine has performed no write
-at that point, so `_confirm_write` never got a chance to notice.
+same code and derived the same key. The joining machine had performed no write
+at that point, so `_confirm_write` never got a chance to notice. (ADR-0011's
+probe now writes and deletes first, which turns the blanket spellings above
+into a refusal before the code is spent - and changes nothing about a store
+that lies selectively, which is why the confirmation below still exists.)
 
 So `_confirm_delete` sits beside it on the base class, `deletefile`'s exit
 code decides nothing on its own, and what a delete that did not happen MEANS

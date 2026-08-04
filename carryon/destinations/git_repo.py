@@ -474,6 +474,25 @@ class GitDestination(LocalTreeDestination):
                 found[path] = fields[2]
         return found
 
+    def skips_probe(self):
+        """Every write here is a commit, and a pushed commit stays in the
+        remote's history for good - the delete that ends a probe removes
+        the object from the tree and not from the repository, so ADR-0011's
+        "write, read back, delete" would leave two junk commits and an
+        irremovable blob in a repository carryon does not own, on every
+        init. On an empty remote the probe would even author the
+        repository's first commit. What the probe exists to catch - a write
+        another program reports and does not make - this type already
+        answers at every real write: `_confirm_write` asks the commit for
+        git's own object id, and a push that does not land is a refusal by
+        name. So the first push is this type's write test, and `init` says
+        that instead of printing a tick over a delete git's history
+        contradicts."""
+        return ("every write to a git repository is a commit that stays in "
+                "its history for good, so the probe would leave junk there; "
+                "a git push either lands or refuses by name, and the first "
+                "`carryon push` is the write test")
+
     def _confirm_write(self, key: str, data: bytes) -> None:
         """Stop unless the COMMIT holds the bytes this call just wrote.
 

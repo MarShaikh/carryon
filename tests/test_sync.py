@@ -261,6 +261,37 @@ def test_join_rejects_an_expired_pairing_code(tmp_path, capsys, monkeypatch):
         "an expired code hands over nothing"
 
 
+def test_a_join_whose_blob_the_filesystem_keeps_says_the_code_is_still_live(
+        tmp_path, capsys):
+    """ADR-0005's one-time property through the directory type, with the
+    refusal spelled the way a real machine spells it - an ACL that grants
+    create and denies delete. The join must succeed (the key arrived) and
+    must say the code still works, because a warning is the only thing
+    standing between that state and a code that quietly works twice."""
+    home_a = tmp_path / "home_a"
+    home_a.mkdir()
+    dest_spec = str(tmp_path / "archive")
+    sync.init(ns(dest=dest_spec, machine="machine-a"), home_a)
+    sync.pair(ns(), home_a)
+    code = re.search(PAIR_CODE, capsys.readouterr().out).group(1)
+    pair_dir = tmp_path / "archive" / "carryon" / "pair"
+    pair_dir.chmod(0o500)
+
+    home_b = tmp_path / "home_b"
+    home_b.mkdir()
+    try:
+        assert sync.init(ns(dest=dest_spec, join=code, machine="machine-b"),
+                         home_b) == 0
+        out = capsys.readouterr().out
+    finally:
+        pair_dir.chmod(0o700)
+
+    assert keyring.fetch_master(home=home_b) == \
+        keyring.fetch_master(home=home_a), "the join itself must still land"
+    assert "STILL LIVE" in out, \
+        f"the blob outlived its delete and the run said nothing:\n{out}"
+
+
 # --- push --------------------------------------------------------------------
 
 
