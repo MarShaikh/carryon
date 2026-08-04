@@ -35,6 +35,7 @@ pip install git+https://github.com/MarShaikh/carryon
 | `init` | set up this machine: Destination, recovery key, config. In a terminal it asks where the Archive should live; `--dest SPEC` says so outright, and `--join CODE` pairs with an existing Archive instead |
 | `push` | push this machine's Snapshot: the Setup plaintext, the History encrypted, changed Sessions only — never one the Archive is ahead on |
 | `pull` | lay the Archive down here: union the History, replace the Setup after a backup |
+| `sync` | carry the History both ways in one pass: pull what the Archive has, then push what it lacks — pull first, on purpose, and it never merges a Session two machines extended at once |
 | `pair` | mint a one-time code that hands another machine the master key, via the Destination |
 | `list` | show detected agents and what would be captured |
 | `doctor` | check for layout changes: entries no adapter recognises |
@@ -47,7 +48,12 @@ carryon push --apply
 # on the new machine
 carryon init --dest ~/Sync/carryon --join XXXX-XXXX-XXXX-XXXX
 carryon pull --apply
+# from then on, on whichever machine you sit down at
+carryon sync --apply
 ```
+
+That loop converges only because both machines are on the same Archive —
+`init --join` (with a code from `pair`) is what puts the second one there.
 
 Write down the recovery key `init` prints: it is shown once, it is never
 stored, and the master key that opens the Archive is derived from it. Adding a

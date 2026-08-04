@@ -539,7 +539,9 @@ def test_pull_unions_restores_new_and_never_deletes_local(
     c_before = c_local.read_bytes()
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2, not 0: C lands divergent below, and a landed divergence is
+    # ADR-0012's exit code (`2 if apply else 1`).
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     # new: F restored, expanded against home_b
@@ -583,7 +585,9 @@ def test_pull_backs_up_the_setup_and_skips_externally_owned(
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2: home_b's codex rollout diverges, and a landed divergence is
+    # ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     # replaced, with the old file backed up first
@@ -606,7 +610,8 @@ def test_pull_force_writes_through_an_externally_owned_path(tmp_path, pushed):
     home_b = build_home_b(tmp_path, dotfiles=True)
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
 
-    assert sync.pull(ns(apply=True, force=True), home_b) == 0
+    # 2: the codex rollout still lands divergent - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True, force=True), home_b) == 2
 
     assert (home_b / ".claude" / "CLAUDE.md").is_symlink(), \
         "--force writes through the link, it does not replace it"
@@ -626,7 +631,9 @@ def test_pull_reports_rather_than_dies_when_chats_are_excluded(
     config.save(cfg, home_b)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2: the codex Session below still lands divergent - ADR-0012's exit
+    # code - while the excluded chats item stays a report line, not a raise.
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert "carries no History" in out
@@ -648,7 +655,9 @@ def test_pull_dry_run_writes_nothing(tmp_path, pushed, capsys):
     dest_before = {k: dest.read(k) for k in dest.list("")}
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=False), home_b) == 0
+    # 1: the plan below shows "1 divergent", and a PLANNED divergence is
+    # ADR-0012's dry-run exit code (`2 if apply else 1`).
+    assert sync.pull(ns(apply=False), home_b) == 1
     out = capsys.readouterr().out
 
     assert tree_state(home_b) == home_before

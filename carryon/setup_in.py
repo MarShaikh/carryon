@@ -28,6 +28,7 @@ from __future__ import annotations
 import pathlib
 
 from . import archive, config, external, history, rekey
+from .adapters import CATEGORIES
 from .destinations.base import printable
 
 
@@ -262,7 +263,8 @@ def _tree_members(packed, staging) -> tuple:
     return files, refused
 
 
-def _setup_writes(manifest: dict, staging, home, declared) -> tuple:
+def _setup_writes(manifest: dict, staging, home, declared,
+                  categories=None) -> tuple:
     """(writes, refused): (target, source) pairs mapping the stored Setup
     back onto $HOME, driven by the MANIFEST the capture engine wrote, plus
     the items refused before a byte moved in either direction.
@@ -270,7 +272,15 @@ def _setup_writes(manifest: dict, staging, home, declared) -> tuple:
     Both fields are validated up front because both are attacker-reachable
     (see _setup_target). A refused item comes back named rather than dropped:
     silently skipping one reads as a successful restore that is quietly
-    missing a file."""
+    missing a file.
+
+    `categories` is `pull --category`'s slice of the Setup leg (ADR-0012 /
+    R6): every MANIFEST item carries the category it was captured under, and
+    an item whose category was not chosen is not part of this pull at all -
+    not validated, not refused, not written - the same silence push's capture
+    engine answers an unchosen category with. None means no flag was given
+    and is the pre-flag behaviour exactly, malformed category fields
+    included."""
     writes, refused = [], []
     agents = manifest.get("agents")
     if not isinstance(agents, dict):
@@ -286,6 +296,28 @@ def _setup_writes(manifest: dict, staging, home, declared) -> tuple:
                                 f"declares a malformed item: "
                                 f"{printable(repr(item))}"))
                 continue
+            if categories is not None:
+                # The field is validated before it is compared, because it
+                # comes off the stored MANIFEST - attacker-reachable like
+                # src and dst beside it - and `x not in categories` raises
+                # on an unhashable value, a raw TypeError out of a pull
+                # whose History half had already landed. A value that is
+                # not one of the category names is refused BY NAME rather
+                # than dropped: this function's own rule is that a skipped
+                # item comes back named, and a silently missing settings
+                # file is the exact outcome the refused list exists to
+                # prevent. Only a category that is real and simply not
+                # chosen is skipped silently - that is the filter working.
+                cat = item.get("category")
+                if not isinstance(cat, str) or cat not in CATEGORIES:
+                    refused.append((
+                        f"{printable(key)} category="
+                        f"{printable(repr(cat))}",
+                        "not a category carryon knows, so no --category "
+                        "set can honestly include or exclude it"))
+                    continue
+                if cat not in categories:
+                    continue
             src, dst = item.get("src"), item.get("dst")
             # Both fields in the label, whichever one was refused: the pair is
             # the attempt, and half of it reads as an ordinary item.

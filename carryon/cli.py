@@ -65,14 +65,12 @@ from .destinations import SPEC_FORMS
 from .destinations.base import printable
 
 
-def _parse_subset(value: str, known, label: str) -> set:
-    chosen = {v.strip() for v in value.split(",") if v.strip()}
-    unknown = chosen - set(known)
-    if unknown:
-        raise SystemExit(
-            f"unknown {label}: {', '.join(sorted(unknown))}\n"
-            f"known {label}s: {', '.join(known)}")
-    return chosen
+# Subset flags (--agent, --category) are parsed by sync._subset, the one
+# parser. A near-twin lived here and the two disagreed about what 'all'
+# expands to - the full set including history, which capture rightly
+# refuses - so `capture --category all` raised over a category the user
+# never typed while push accepted the same flag. One question, one answer
+# (ADR-0010); the parser's own docstring carries the rest.
 
 
 # --- the door every path-valued argument goes through ------------------------
@@ -486,6 +484,10 @@ def cmd_pair(args) -> int:
     return sync.pair(args, pathlib.Path.home())
 
 
+def cmd_sync(args) -> int:
+    return sync.sync(args, pathlib.Path.home())
+
+
 def cmd_capture(args) -> int:
     """Capture into a directory, with no Destination and no key involved.
 
@@ -518,10 +520,12 @@ def cmd_capture(args) -> int:
     archive = _named_path(args.archive, "--archive", FILE_TO_MAKE, home)
     cfg = config.load(home)
     with sync._swapped_registry(sync._effective_adapters(cfg, home)):
-        agents = (_parse_subset(args.agent, ADAPTERS, "agent")
-                  if args.agent else None)
-        categories = (_parse_subset(args.category, CATEGORIES, "category")
-                      if args.category else None)
+        # None means every category capture takes (the Setup ones - the
+        # engine refuses history by name), which is exactly why 'all' maps
+        # to None in the parser: `capture --category all` captures a whole
+        # Setup instead of raising over a category the user never typed.
+        agents = sync._subset(args.agent, ADAPTERS, "agent")
+        categories = sync._subset(args.category, CATEGORIES, "category")
         code, _ = capture.run(
             out=out,
             dry=not args.apply,
@@ -596,7 +600,32 @@ def build_parser() -> argparse.ArgumentParser:
     pul.add_argument("--force", action="store_true",
                      help="write through externally owned paths "
                           "(dotfiles symlinks) instead of skipping them")
+    pul.add_argument("--category", metavar="A,B",
+                     help=f"subset of: {', '.join(CATEGORIES)}")
     pul.set_defaults(func=cmd_pull)
+
+    syn = sub.add_parser(
+        "sync",
+        help="carry the History both ways: pull what the Archive has, "
+             "then push what it lacks",
+        # What it does NOT do belongs in the help (ADR-0012): a command
+        # called sync that quietly fails to converge is worse than none.
+        description="Pull first, then push, in one pass: pushing first "
+                    "would leave the Archive a round stale, so the order "
+                    "is fixed. By default only the History moves; widening "
+                    "it is something you type (--category all). What sync "
+                    "does not do: a Session extended on two machines at "
+                    "once is never merged - the pull half keeps the local "
+                    "copy and files the Archive's under "
+                    "~/.carryon/conflicts/, the push half skips it as "
+                    "divergent, and running sync again changes nothing "
+                    "until a person decides.")
+    syn.add_argument("--apply", action="store_true",
+                     help="actually carry both halves (default: dry run)")
+    syn.add_argument("--category", metavar="A,B",
+                     help=f"subset of: {', '.join(CATEGORIES)}, or all "
+                          "(default: history)")
+    syn.set_defaults(func=cmd_sync)
 
     par = sub.add_parser(
         "pair", help="mint a one-time code that hands another machine the "

@@ -290,11 +290,12 @@ def test_a_session_key_this_machine_cannot_spell_is_refused_by_name(
     tamper_index(archived, lambda index: index["sessions"].update(
         {bad: dict(index["sessions"][U1])}))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
-    assert "sessions" in str(exc.value), \
+    assert "sessions" in out, \
         "the refusal does not name the catalogue"
     assert LONE_SURROGATE not in out and r"\udcff" in out, \
         "the key this machine cannot encode was printed rather than escaped"
@@ -312,10 +313,12 @@ def test_a_project_key_this_machine_cannot_spell_is_refused_by_name(
     tamper_index(archived, lambda index: index["projects"].update(
         {bad: dict(index["projects"][sorted(index["projects"])[0]])}))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
+    out = capsys.readouterr().out
 
-    assert "projects" in str(exc.value), \
+    assert "projects" in out, \
         "the refusal does not name the catalogue"
     assert restored_sessions(archived.home_b) == {U1, U2}, \
         "an unusable residue key took the Session half of the pull with it"
@@ -422,11 +425,12 @@ def test_a_stored_session_that_is_not_a_tar_is_refused_on_the_pull_leg(
     report, no summary, and the Setup half never reached."""
     key = damage_object(archived, "sessions", U2)
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
-    assert key in str(exc.value), "the refusal does not name the object"
+    assert key in out, "the refusal does not name the object"
     assert restored_sessions(archived.home_b) == {U1}, \
         "the rest of the pull did not carry on past the damaged object"
     assert "Setup:" in out, "the pull ended before the Setup half"
@@ -441,10 +445,12 @@ def test_a_stored_session_that_is_not_a_tar_is_refused_where_the_main_is_read(
     line here."""
     key = damage_object(archived, "sessions", U2, keep_main=True)
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
+    out = capsys.readouterr().out
 
-    assert key in str(exc.value), "the refusal does not name the object"
+    assert key in out, "the refusal does not name the object"
     assert restored_sessions(archived.home_b) == {U1}, \
         "the rest of the pull did not carry on past the damaged object"
 
@@ -481,11 +487,12 @@ def test_a_stored_residue_that_is_not_a_tar_is_refused_on_the_pull_leg(
     cwd = project_key(archived)
     key = damage_object(archived, "projects", cwd)
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
-    assert key in str(exc.value), "the refusal does not name the object"
+    assert key in out, "the refusal does not name the object"
     assert restored_sessions(archived.home_b) == {U1, U2}, \
         "the Sessions did not land before the residue was refused"
     assert "Setup:" in out, "the pull ended before the Setup half"
@@ -526,10 +533,12 @@ def test_every_way_a_plaintext_fails_to_be_a_tar_takes_the_same_refusal(
     """
     key = damage_object(archived, "sessions", U2, plaintext=plaintext)
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
+    out = capsys.readouterr().out
 
-    assert key in str(exc.value), f"{what} was not refused by name"
+    assert key in out, f"{what} was not refused by name"
     assert restored_sessions(archived.home_b) == {U1}, \
         f"{what} stopped the rest of the pull"
 
@@ -555,10 +564,12 @@ def test_a_tar_that_stops_mid_walk_lays_down_none_of_its_members(
     key = damage_object(archived, "sessions", U2,
                         plaintext=buf.getvalue()[:3000])
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
+    out = capsys.readouterr().out
 
-    assert key in str(exc.value), "the truncated tar was not refused by name"
+    assert key in out, "the truncated tar was not refused by name"
     assert restored_sessions(archived.home_b) == {U1}, \
         "a member of a tar that will not finish the walk was written anyway"
 
@@ -869,14 +880,15 @@ def test_a_stored_member_that_escapes_its_root_is_refused_before_it_writes(
                   plaintext=tar_of((good, b'{"type":"user"}\n'),
                                    (escaping, b"planted\n")))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
     assert restored_sessions(archived.home_b) == {U1}, \
         "a member of a tar carryon refuses was written anyway"
     assert "Setup:" in out, "the pull ended before the Setup half"
-    assert U2 in str(exc.value) or U2 in out, \
+    assert U2 in out or U2 in out, \
         "the Session that was skipped went unnamed"
     assert not (archived.home_b / "tmp" / "carryon-escape.txt").exists()
 
@@ -891,14 +903,15 @@ def test_a_stored_residue_member_that_escapes_its_root_is_refused(
                   plaintext=tar_of(("memory/MEMORY.md", b"ordinary\n"),
                                    ("../../escape.md", b"planted\n")))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
     assert restored_sessions(archived.home_b) == {U1, U2}, \
         "the Sessions did not land before the residue was refused"
     assert "Setup:" in out, "the pull ended before the Setup half"
-    assert "escape" in str(exc.value) or "escape" in out, \
+    assert "escape" in out or "escape" in out, \
         "the refusal does not say which member it was"
     assert not (archived.home_b / "escape.md").exists()
 
@@ -996,14 +1009,15 @@ def test_a_stored_member_whose_name_holds_a_nul_is_refused(archived, capsys):
     damage_object(archived, "sessions", U2,
                   plaintext=tar_with_a_nul_in_a_member_name(U2))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
     assert restored_sessions(archived.home_b) == {U1}, \
         "a member of a tar carryon refuses was written anyway"
     assert "Setup:" in out, "the pull ended before the Setup half"
-    assert "NUL" in str(exc.value) or "NUL" in out, \
+    assert "NUL" in out or "NUL" in out, \
         "the refusal does not say what was wrong with the name"
 
 

@@ -107,13 +107,16 @@ MEANS_SOMETHING_ELSE = [
 # Neither: settled entirely by a door of its own, which is already a sentence.
 ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("capture", "apply"): "a flag",
-    ("capture", "agent"): "a subset of a known set - cli._parse_subset",
-    ("capture", "category"): "a subset of a known set - cli._parse_subset",
+    ("capture", "agent"): "a subset of a known set - sync._subset, the one parser",
+    ("capture", "category"): "a subset of a known set - sync._subset, the one parser",
     ("push", "apply"): "a flag",
-    ("push", "agent"): "a subset of a known set - cli._parse_subset",
-    ("push", "category"): "a subset of a known set - cli._parse_subset",
+    ("push", "agent"): "a subset of a known set - sync._subset, the one parser",
+    ("push", "category"): "a subset of a known set - sync._subset, the one parser",
     ("pull", "apply"): "a flag",
     ("pull", "force"): "a flag",
+    ("pull", "category"): "a subset of a known set - sync._subset, the one parser",
+    ("sync", "apply"): "a flag",
+    ("sync", "category"): "a subset of a known set - sync._subset, the one parser",
     ("init", "join"): "a pairing code - sync.parse_pairing_code, which admits "
                       "16 characters from one alphabet and is a stricter door "
                       "than this one",

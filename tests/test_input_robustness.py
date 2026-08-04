@@ -297,12 +297,13 @@ def test_an_index_cwd_that_is_not_a_string_is_refused_before_the_pull_writes(
     tamper_index(archived, lambda index: index["sessions"][U2].update(
         {"cwd": ["not", "a", "string"]}))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
     out = capsys.readouterr().out
 
-    assert "cwd" in str(exc.value), "the refusal does not name the field"
-    assert U2 in str(exc.value), "the refusal does not name the entry"
+    assert "cwd" in out, "the refusal does not name the field"
+    assert U2 in out, "the refusal does not name the entry"
     assert "-" * 74 in out, "the pull stopped before it printed its summary"
     assert restored_sessions(archived.home_b) == {U1}, \
         "one entry with an unreadable field took the whole Archive with it"
@@ -330,11 +331,13 @@ def test_an_index_main_path_that_is_not_a_string_is_refused_on_the_pull_leg(
     tamper_index(archived, lambda index: index["sessions"][U2].update(
         {"main_path": 17}))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
+    out = capsys.readouterr().out
 
-    assert "main_path" in str(exc.value), "the refusal does not name the field"
-    assert U2 in str(exc.value), "the refusal does not name the entry"
+    assert "main_path" in out, "the refusal does not name the field"
+    assert U2 in out, "the refusal does not name the entry"
     assert restored_sessions(archived.home_b) == {U1}, \
         "one entry with an unreadable field took the whole Archive with it"
 
@@ -383,11 +386,13 @@ def test_an_index_agent_that_is_not_a_string_is_refused_rather_than_raised(
     tamper_index(archived, lambda index: index["sessions"][U2].update(
         {"agent": ["claude-code"]}))
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), archived.home_b)
+        # Flagged, not raised: a finished pull reports its shortfall
+    # in the exit code (ADR-0012) so sync's push half still runs.
+    assert sync.pull(ns(apply=True), archived.home_b) == 2
+    out = capsys.readouterr().out
 
-    assert "agent" in str(exc.value), "the refusal does not name the field"
-    assert U2 in str(exc.value), "the refusal does not name the entry"
+    assert "agent" in out, "the refusal does not name the field"
+    assert U2 in out, "the refusal does not name the entry"
     assert restored_sessions(archived.home_b) == {U1}, \
         "one entry with an unreadable field took the whole Archive with it"
 

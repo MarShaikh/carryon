@@ -39,6 +39,7 @@ for the first of them on this module.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import hashlib
 import json
@@ -103,16 +104,45 @@ def _utc_now() -> str:
 
 
 def _subset(value, known, label):
-    """A comma-separated flag value as a validated set, or None for 'all'."""
-    if not value:
+    """A comma-separated flag value as a validated set, or None for 'all'.
+
+    THE subset parser - cli.py's commands call this one too. It had a
+    near-identical twin there, and two spellings of one rule is how
+    `capture --category all` came to refuse a category the user never typed
+    while push accepted the same flag: the twin expanded 'all' to the full
+    set, history included, and capture rightly refuses history. One parser,
+    and 'all' means None, because None is what every gate downstream
+    already reads as "everything" - including the one that decides whether
+    a push writes the Setup MAC - and a second spelling of "everything" is
+    a fork nothing can pin (ADR-0010's shape, one flag over).
+
+    `all` belongs to the CATEGORY vocabulary alone (ADR-0012 teaches it to
+    the category flag, not to this function in general). An agent named on
+    --agent is a key in a registry, and a registry key spelled 'all' must
+    stay selectable the day an adapter claims it - so on that axis the word
+    remains what it always was: an unknown name, refused with the list.
+
+    An argument that names nothing - '', or the ',' an empty shell variable
+    joins to - is refused rather than read. Empty used to mean everything
+    here and an empty SET in cli.py's twin (every leg gated off, exit 0,
+    nothing carried in either direction), and a wrapper with an unset
+    variable deserves a sentence, not whichever of those the command it ran
+    happened to consult.
+    """
+    if value is None:
         return None
     chosen = {v.strip() for v in value.split(",") if v.strip()}
-    unknown = chosen - set(known)
+    if not chosen:
+        raise SystemExit(
+            f"--{label} names nothing - leave the flag out to mean "
+            f"everything, or give it one of: {', '.join(known)}")
+    all_ok = label == "category"
+    unknown = chosen - set(known) - ({"all"} if all_ok else set())
     if unknown:
         raise SystemExit(
             f"unknown {label}: {', '.join(sorted(unknown))}\n"
             f"known {label}s: {', '.join(known)}")
-    return chosen
+    return None if all_ok and "all" in chosen else chosen
 
 
 @contextlib.contextmanager
@@ -780,6 +810,14 @@ def push(args, home) -> int:
                       "carries no authentication tag and cannot be verified "
                       "by the machines that pull it (ADR-0004; the encrypted "
                       "Index was not touched)")
+    else:
+        # The same line pull prints for the same skip, because the reasoning
+        # cuts both ways: a leg that merely vanishes reads as a push that
+        # quietly carried the Setup, and a default `sync --apply` would
+        # otherwise explain the skip in its pull half and say nothing in the
+        # half that publishes.
+        print("Setup: skipped - the chosen categories name no part of a "
+              "Setup, so nothing here was captured or published")
     if not apply:
         print("\nDry run. Re-run with --apply to push.")
     return setup_code
@@ -854,11 +892,37 @@ def _backup_root(home) -> pathlib.Path:
 
 
 def pull(args, home) -> int:
+    """Lay the Archive down here: union the History, replace the Setup
+    (ADR-0002), restricted to `--category` where one was given (R6).
+
+    The exit code means "something landed - or, on a dry run, was planned -
+    that a person has to deal with", on one convention: `2 if apply else 1`,
+    0 otherwise. Two things qualify (ADR-0012). A stored Setup carryon was
+    offered and would not use (`setup_denied` below), which has been the code
+    since the authentication rounds. And now a divergence - a Session whose
+    mains have forked, a member inside one, or a residue file, wherever
+    neither copy extends the other and the incoming one is filed under
+    ~/.carryon/conflicts/. A divergence always printed a line and exited 0,
+    which was survivable while pull was something you watched and is not
+    survivable under `sync`, a command built to be run in a loop: a report
+    nobody reads is not a report. An object the Archive would not open still
+    ends in the SystemExit above the return, its own channel.
+    """
     home = pathlib.Path(home)
     _begin_command()
     apply = bool(getattr(args, "apply", False))
     force = bool(getattr(args, "force", False))
     maps = _parse_maps(getattr(args, "map", []))
+    # The same three lines push derives, because `--category` means the same
+    # thing on both legs (R6): `history` gates the Session AND residue legs -
+    # a residue is part of a History - and the Setup leg restores only the
+    # stored items whose category was chosen. No flag is everything, exactly
+    # as before the flag existed.
+    want_categories = _subset(getattr(args, "category", None), CATEGORIES,
+                              "category")
+    setup_categories = (set(SETUP_CATEGORIES) if want_categories is None
+                        else want_categories & set(SETUP_CATEGORIES))
+    do_history = want_categories is None or HISTORY in want_categories
     cfg, dest = _open_destination(home)
     master = _require_master(home)
     index = archive.load_index(dest, master)
@@ -879,13 +943,18 @@ def pull(args, home) -> int:
                          archive.index_revision(index))
 
     effective = _effective_adapters(cfg, home)
-    local = history.discover(home, list(effective.values()))
+    # A pull not asked for the History reads none of it, here or from the
+    # Destination: the walk exists to feed the union rule, and the loops the
+    # rule runs in are gated on the same flag below.
+    local = (history.discover(home, list(effective.values()))
+             if do_history else None)
     # Every copy per UUID, not one: a machine can hold the same Session in two
     # project dirs, and which of them the incoming tree lands on is a question
     # about the recorded cwd rather than about discovery order.
     local_by_uuid = {}
-    for session in local.sessions:
-        local_by_uuid.setdefault(session.uuid, []).append(session)
+    if local is not None:
+        for session in local.sessions:
+            local_by_uuid.setdefault(session.uuid, []).append(session)
 
     restored = replaced = ahead = unchanged = conflicts = 0
     # Members of a Session where neither copy of a Transcript extends the
@@ -921,9 +990,17 @@ def pull(args, home) -> int:
     # pull restored nothing for them, which is the same shortfall an
     # unopenable object is, so they are named in the report and counted
     # towards the exit status rather than left for the user to notice by a
-    # Session that never arrived.
-    unreadable_entries = [(refusal.key, refusal.why)
-                          for refusal in archive.index_refusals(index)]
+    # Session that never arrived. Counted only when the leg they starve
+    # actually ran: a `--category knowledge` pull was told to ignore the
+    # session and project catalogues, and an exit status over entries it
+    # was told to ignore is a status a script learns to ignore - and, under
+    # sync, one that used to stop the push half over a leg nobody asked for.
+    _history_catalogues = ("sessions", "projects")
+    unreadable_entries = [
+        (refusal.key, refusal.why)
+        for refusal in archive.index_refusals(index)
+        if (do_history if refusal.catalogue in _history_catalogues
+            else bool(setup_categories))]
     unrestorable += unreadable_entries
 
     def account(landed) -> None:
@@ -941,7 +1018,7 @@ def pull(args, home) -> int:
         rk_bare += landed.bare
         rk_non_utf8 += landed.non_utf8
 
-    for uuid in sorted(index.get("sessions", {})):
+    for uuid in sorted(index.get("sessions", {}) if do_history else ()):
         meta = index["sessions"][uuid]
         agent = meta.get("agent", "")
         if agent not in effective:
@@ -1143,8 +1220,9 @@ def pull(args, home) -> int:
     # Transcripts - so it is part of a History and accumulates like one.
     residue_written = residue_kept = residue_conflicts = 0
     local_residues = {_canon_home(r.cwd, home): r
-                      for r in local.residues if r.cwd}
-    for cwd in sorted(index.get("projects", {})):
+                      for r in (local.residues if local is not None else ())
+                      if r.cwd}
+    for cwd in sorted(index.get("projects", {}) if do_history else ()):
         meta = index["projects"][cwd]
         agent = meta.get("agent", "")
         if agent not in effective:
@@ -1236,271 +1314,303 @@ def pull(args, home) -> int:
     # which ADR-0002 and ADR-0007 both call the right answer rather than a
     # failure. A status that fired on those is one a script learns to ignore.
     setup_denied = False
-    setups, unusable, setups_unreachable = {}, [], None
-    try:
-        setups, unusable = _setup_catalogue(dest, index)
-    except SystemExit as exc:
-        # The catalogue is read from the Destination, and a transport that
-        # syncs on the READ path answers a dead or hostile remote with
-        # SystemExit (GitDestination's _git_or_die) - here, AFTER the
-        # Session loop has written to $HOME. Same rule as everything else on
-        # this layer (ADR-0009): a Destination failure once work has landed
-        # is reported and skipped, never a raise that eats the report.
-        setups_unreachable = str(exc)
-    index_names = _index_setup_names(index)
-    index_absent = archive.index_is_absent(index)
-    source, unvouched, ignored = _choose_setup_source(setups, index_names,
-                                                      index_absent)
-    if setups_unreachable is not None:
-        source = None
-        setup_refused += 1
-        setup_denied = True
-        print("\nSetup: none restored - the Destination failed while the "
-              f"stored Setups were being read: {setups_unreachable}\n"
-              "  The History above landed; pull again once the Destination "
-              "is reachable.")
-    elif rolled_back is not None:
-        # A rollback only WARNED, and the Setup half of a pull is executable
-        # content. Replay a superseded Index, its tree and its SETUP.mac
-        # together and every check downstream agrees - the tag verifies, the
-        # stamp matches the Index, the tree matches the manifest - so a hook
-        # the user removed between two pushes comes back at exit 0. Nothing in
-        # the Archive can tell that from the current state; the one party that
-        # can is this machine's own high-water mark, and a printed line is not
-        # an answer to code.
-        #
-        # The History half above is deliberately not refused with it. A
-        # History is an accumulation (ADR-0002): a stale catalogue hides
-        # Sessions and lays down no wrong answer, and refusing there would
-        # strand a user whose Destination really did lose a write. A Setup is
-        # a replacement, and a replacement out of a catalogue this machine has
-        # already seen past is a rollback of whatever the last push tightened.
-        source = None
-        setup_refused += 1
-        # Only if there was one to refuse. A rollback is a fact about the
-        # Index, and an Archive whose Setup half is empty had nothing for this
-        # branch to withhold - saying otherwise would fail a pull over a
-        # Setup that does not exist, which is the "cries wolf" objection
-        # _seen_revision already records against the rollback signal itself.
-        setup_denied = bool(setups)
-        print("\nSetup: none restored - the Archive's Index has been rolled "
-              "back (see the warning above), and a Setup is replaced whole "
-              "rather than unioned. Every superseded tree a key holder ever "
-              "pushed still verifies against the Index that was current when "
-              "they pushed it, so restoring from a rolled-back one would undo "
-              "whatever the last push tightened - a removed hook, a revoked "
-              "skill - with nothing downstream able to notice.\n"
-              "  The History above landed. Sort the Destination out (restore "
-              f"the newer Index), or if the rollback was deliberate, drop "
-              f"this Destination's entry from {_state_path(home)} to accept "
-              "it.")
-    elif not setups:
-        print("\nSetup: none in the Archive" if not unusable
-              else "\nSetup: nothing under setups/ that carryon can use")
-    elif source is None:
-        # The Archive holds Setups and carryon will use none of them - a
-        # vouched tree deleted and an unvouched one left under another name is
-        # the shape that gets here. Nothing was restored and something was
-        # offered, which is the same fact as a refusal further down.
-        setup_denied = True
-        print(_no_setup_source_note(setups, index_names, index_absent))
+    if not setup_categories:
+        # R6 / ADR-0012: no Setup category was chosen, so the whole leg is
+        # skipped - the stored catalogue is never read, no backup is taken,
+        # nothing is restored - and one line says so, because a leg that
+        # merely vanishes reads as a restore quietly short its Setup. The
+        # else below IS the leg, whole: nothing of it leaks past this if,
+        # so no name bound in there can be reached for on the skip path.
+        print("\nSetup: skipped - the chosen categories name no part of a "
+              "Setup, so the Archive's stored Setups were not read and "
+              "nothing here was backed up or replaced")
     else:
-        print(f"\nSetup: from machine '{printable(source)}' "
-              f"(pushed {printable(setups[source]['pushed_at'])})")
-    # Printed whichever branch ran, and before the restore: a directory under
-    # setups/ that carryon cannot treat as a machine at all is the user's to
-    # sort out at the Destination, and dropping it silently hides the fact
-    # that the Archive holds something carryon would not touch.
-    for name, why in unusable:
-        setup_refused += 1
-        # repr, because the names that get here are the ones with something
-        # unprintable or unexpected in them.
-        print(f"  refuse   a stored Setup named '{printable(name)}': {why}")
-    if source is not None:
-        if unvouched:
-            print(f"  note     nothing in the encrypted Index vouches for "
-                  f"'{printable(source)}' - a keyless Setup push (ADR-0004) "
-                  "looks like "
-                  "this, and so does a planted one")
-            if archive.index_is_absent(index):
-                # The residue nothing can decide, said out loud rather than
-                # left implicit in the line above. This machine has never
-                # read an Index here - or _refuse_on_index_removal would
-                # have stopped the pull - so a deleted Index and an Archive
-                # that never had one are the same two objects on the same
-                # Destination, and the user is the only party who knows
-                # which of the two they are looking at.
-                #
-                # 'Nothing left to check against' is the accurate reading only
-                # once the stored Setup's own tag has been asked, which
-                # happens below: a tag is a key holder's statement and a
-                # keyless Archive carries none, so the two ARE separable when
-                # one is there. This line prints before that read, so it says
-                # what is left rather than claiming nothing is.
-                print("  note     and the Archive serves no Index at all, so "
-                      "there is no master key holder's record here to check "
-                      "any of it against. This machine has never read one at "
-                      "this Destination either, which would have settled it; "
-                      "what is left is whatever authentication tag the stored "
-                      "Setup carries, and a keyless Archive (ADR-0004) "
-                      "carries none")
-        for other in ignored:
-            print(f"  ignored  a stored Setup named '{printable(other)}' - "
-                  "no master key holder ever pushed a Setup under that name, "
-                  "so its timestamp cannot win")
-        with tempfile.TemporaryDirectory(prefix="carryon-setup-") as staging_s:
-            staging = pathlib.Path(staging_s)
-            manifest = why = refusal = None
-            try:
-                archive.get_setup(dest, source, staging)
-            except archive.ObjectRefused as exc:
-                why = str(exc)
-            else:
-                # Authentication runs on the materialised tree, before a byte
-                # moves towards $HOME - the staging dir is carryon's own and
-                # is discarded with the refusal.
-                refusal, note = _setup_authentication(staging, master,
-                                                      source, setups[source])
-                if note:
-                    print(f"  note     {note}")
-                if refusal is None:
-                    manifest, why = _stored_manifest(staging)
-            if refusal is not None:
-                # One refused Setup, however many lines explain it: the
-                # counter feeds the summary's 'refused and not written'.
-                setup_refused += 1
-                setup_denied = True
-                print(f"  refuse   {refusal[0]}")
-                for line in refusal[1:]:
-                    print(f"           {line}")
-            elif why is not None:
-                # An object the Archive would not serve, or a stored MANIFEST
-                # that will not parse: the Setup carryon chose did not land,
-                # which is the same answer to the same question as the
-                # authentication refusal above.
-                setup_denied = True
-                print(f"  {why}")
-            else:
-                writes, refused = _setup_writes(manifest, staging, home,
-                                                _declared_paths(effective))
-                for label, reason in refused:
+        setups, unusable, setups_unreachable = {}, [], None
+        try:
+            setups, unusable = _setup_catalogue(dest, index)
+        except SystemExit as exc:
+            # The catalogue is read from the Destination, and a transport
+            # that syncs on the READ path answers a dead or hostile remote
+            # with SystemExit (GitDestination's _git_or_die) - here, AFTER
+            # the Session loop has written to $HOME. Same rule as everything
+            # else on this layer (ADR-0009): a Destination failure once work
+            # has landed is reported and skipped, never a raise that eats
+            # the report.
+            setups_unreachable = str(exc)
+        index_names = _index_setup_names(index)
+        index_absent = archive.index_is_absent(index)
+        source, unvouched, ignored = _choose_setup_source(setups, index_names,
+                                                          index_absent)
+        if setups_unreachable is not None:
+            source = None
+            setup_refused += 1
+            setup_denied = True
+            print("\nSetup: none restored - the Destination failed while the "
+                  f"stored Setups were being read: {setups_unreachable}\n"
+                  "  The History above landed; pull again once the "
+                  "Destination is reachable.")
+        elif rolled_back is not None:
+            # A rollback only WARNED, and the Setup half of a pull is
+            # executable content. Replay a superseded Index, its tree and its
+            # SETUP.mac together and every check downstream agrees - the tag
+            # verifies, the stamp matches the Index, the tree matches the
+            # manifest - so a hook the user removed between two pushes comes
+            # back at exit 0. Nothing in the Archive can tell that from the
+            # current state; the one party that can is this machine's own
+            # high-water mark, and a printed line is not an answer to code.
+            #
+            # The History half above is deliberately not refused with it. A
+            # History is an accumulation (ADR-0002): a stale catalogue hides
+            # Sessions and lays down no wrong answer, and refusing there
+            # would strand a user whose Destination really did lose a write.
+            # A Setup is a replacement, and a replacement out of a catalogue
+            # this machine has already seen past is a rollback of whatever
+            # the last push tightened.
+            source = None
+            setup_refused += 1
+            # Only if there was one to refuse. A rollback is a fact about the
+            # Index, and an Archive whose Setup half is empty had nothing for
+            # this branch to withhold - saying otherwise would fail a pull
+            # over a Setup that does not exist, which is the "cries wolf"
+            # objection _seen_revision already records against the rollback
+            # signal itself.
+            setup_denied = bool(setups)
+            print("\nSetup: none restored - the Archive's Index has been "
+                  "rolled back (see the warning above), and a Setup is "
+                  "replaced whole rather than unioned. Every superseded tree "
+                  "a key holder ever pushed still verifies against the Index "
+                  "that was current when they pushed it, so restoring from a "
+                  "rolled-back one would undo whatever the last push "
+                  "tightened - a removed hook, a revoked skill - with "
+                  "nothing downstream able to notice.\n"
+                  "  The History above landed. Sort the Destination out "
+                  "(restore the newer Index), or if the rollback was "
+                  f"deliberate, drop this Destination's entry from "
+                  f"{_state_path(home)} to accept it.")
+        elif not setups:
+            print("\nSetup: none in the Archive" if not unusable
+                  else "\nSetup: nothing under setups/ that carryon can use")
+        elif source is None:
+            # The Archive holds Setups and carryon will use none of them - a
+            # vouched tree deleted and an unvouched one left under another
+            # name is the shape that gets here. Nothing was restored and
+            # something was offered, which is the same fact as a refusal
+            # further down.
+            setup_denied = True
+            print(_no_setup_source_note(setups, index_names, index_absent))
+        else:
+            print(f"\nSetup: from machine '{printable(source)}' "
+                  f"(pushed {printable(setups[source]['pushed_at'])})")
+        # Printed whichever branch ran, and before the restore: a directory under
+        # setups/ that carryon cannot treat as a machine at all is the user's to
+        # sort out at the Destination, and dropping it silently hides the fact
+        # that the Archive holds something carryon would not touch.
+        for name, why in unusable:
+            setup_refused += 1
+            # repr, because the names that get here are the ones with something
+            # unprintable or unexpected in them.
+            print(f"  refuse   a stored Setup named '{printable(name)}': {why}")
+        if source is not None:
+            if unvouched:
+                print(f"  note     nothing in the encrypted Index vouches for "
+                      f"'{printable(source)}' - a keyless Setup push (ADR-0004) "
+                      "looks like "
+                      "this, and so does a planted one")
+                if archive.index_is_absent(index):
+                    # The residue nothing can decide, said out loud rather than
+                    # left implicit in the line above. This machine has never
+                    # read an Index here - or _refuse_on_index_removal would
+                    # have stopped the pull - so a deleted Index and an Archive
+                    # that never had one are the same two objects on the same
+                    # Destination, and the user is the only party who knows
+                    # which of the two they are looking at.
+                    #
+                    # 'Nothing left to check against' is the accurate reading only
+                    # once the stored Setup's own tag has been asked, which
+                    # happens below: a tag is a key holder's statement and a
+                    # keyless Archive carries none, so the two ARE separable when
+                    # one is there. This line prints before that read, so it says
+                    # what is left rather than claiming nothing is.
+                    print("  note     and the Archive serves no Index at all, so "
+                          "there is no master key holder's record here to check "
+                          "any of it against. This machine has never read one at "
+                          "this Destination either, which would have settled it; "
+                          "what is left is whatever authentication tag the stored "
+                          "Setup carries, and a keyless Archive (ADR-0004) "
+                          "carries none")
+            for other in ignored:
+                print(f"  ignored  a stored Setup named '{printable(other)}' - "
+                      "no master key holder ever pushed a Setup under that name, "
+                      "so its timestamp cannot win")
+            with tempfile.TemporaryDirectory(prefix="carryon-setup-") as staging_s:
+                staging = pathlib.Path(staging_s)
+                manifest = why = refusal = None
+                try:
+                    archive.get_setup(dest, source, staging)
+                except archive.ObjectRefused as exc:
+                    why = str(exc)
+                else:
+                    # Authentication runs on the materialised tree, before a byte
+                    # moves towards $HOME - the staging dir is carryon's own and
+                    # is discarded with the refusal.
+                    refusal, note = _setup_authentication(staging, master,
+                                                          source, setups[source])
+                    if note:
+                        print(f"  note     {note}")
+                    if refusal is None:
+                        manifest, why = _stored_manifest(staging)
+                if refusal is not None:
+                    # One refused Setup, however many lines explain it: the
+                    # counter feeds the summary's 'refused and not written'.
                     setup_refused += 1
-                    print(f"  refuse   {label}: {reason}")
-                do, skip = external.plan(writes, home, force=force)
-                # One directory per pull, minted here rather than per item so
-                # every file this run replaces is recoverable from one place
-                # (ADR-0002), and named through a helper so the same run never
-                # writes into a directory an earlier run made.
-                backup_root = _backup_root(home)
-                state_ids = config.state_identities(home)
-                prefix = archive.setup_prefix(source)
-                for target, source_path in do:
-                    rel = _rel_to_home(target, home)
-                    packed_rel = source_path.relative_to(staging).as_posix()
-                    # Both sides, always: a write reading from somewhere other
-                    # than this machine's stored Setup is only visible in the
-                    # dry run if the dry run says where it reads from.
-                    print(f"  write    ~/{printable(rel)}  <- "
-                          f"{printable(prefix)}/{printable(packed_rel)}")
-                    if not apply:
-                        continue
-                    stats, is_utf8, reason = _restore_setup_item(
-                        target, source_path, backup_root / rel, home, maps,
-                        state_ids, force=force)
-                    if reason is not None:
+                    setup_denied = True
+                    print(f"  refuse   {refusal[0]}")
+                    for line in refusal[1:]:
+                        print(f"           {line}")
+                elif why is not None:
+                    # An object the Archive would not serve, or a stored MANIFEST
+                    # that will not parse: the Setup carryon chose did not land,
+                    # which is the same answer to the same question as the
+                    # authentication refusal above.
+                    setup_denied = True
+                    print(f"  {why}")
+                else:
+                    # None when no flag was given, so the default is the pre-flag
+                    # behaviour byte for byte; a chosen set restores only the
+                    # stored items captured under it (R6, ADR-0012).
+                    writes, refused = _setup_writes(
+                        manifest, staging, home, _declared_paths(effective),
+                        categories=(None if want_categories is None
+                                    else setup_categories))
+                    for label, reason in refused:
                         setup_refused += 1
-                        print(f"  refuse   ~/{printable(rel)}: {reason}")
-                        continue
-                    rk_near += stats.near_misses if stats else 0
-                    rk_bare += stats.bare_tokens if stats else 0
-                    rk_non_utf8 += 0 if is_utf8 else 1
-                    setup_written += 1
-                for target, source_path, owner in skip:
-                    setup_skipped += 1
-                    packed_rel = source_path.relative_to(staging).as_posix()
-                    print(f"  skip     ~/"
-                          f"{printable(_rel_to_home(target, home))}  <- "
-                          f"{printable(prefix)}/{printable(packed_rel)} - "
-                          f"externally owned; {printable(str(owner))} holds "
-                          "it (--force writes through)")
+                        print(f"  refuse   {label}: {reason}")
+                    do, skip = external.plan(writes, home, force=force)
+                    # One directory per pull, minted here rather than per item so
+                    # every file this run replaces is recoverable from one place
+                    # (ADR-0002), and named through a helper so the same run never
+                    # writes into a directory an earlier run made.
+                    backup_root = _backup_root(home)
+                    state_ids = config.state_identities(home)
+                    prefix = archive.setup_prefix(source)
+                    for target, source_path in do:
+                        rel = _rel_to_home(target, home)
+                        packed_rel = source_path.relative_to(staging).as_posix()
+                        # Both sides, always: a write reading from somewhere other
+                        # than this machine's stored Setup is only visible in the
+                        # dry run if the dry run says where it reads from.
+                        print(f"  write    ~/{printable(rel)}  <- "
+                              f"{printable(prefix)}/{printable(packed_rel)}")
+                        if not apply:
+                            continue
+                        stats, is_utf8, reason = _restore_setup_item(
+                            target, source_path, backup_root / rel, home, maps,
+                            state_ids, force=force)
+                        if reason is not None:
+                            setup_refused += 1
+                            print(f"  refuse   ~/{printable(rel)}: {reason}")
+                            continue
+                        rk_near += stats.near_misses if stats else 0
+                        rk_bare += stats.bare_tokens if stats else 0
+                        rk_non_utf8 += 0 if is_utf8 else 1
+                        setup_written += 1
+                    for target, source_path, owner in skip:
+                        setup_skipped += 1
+                        packed_rel = source_path.relative_to(staging).as_posix()
+                        print(f"  skip     ~/"
+                              f"{printable(_rel_to_home(target, home))}  <- "
+                              f"{printable(prefix)}/{printable(packed_rel)} - "
+                              f"externally owned; {printable(str(owner))} holds "
+                              "it (--force writes through)")
 
     print()
     print("-" * 74)
-    print(f"Sessions: {restored} new, {replaced} replaced, "
-          f"{unchanged} unchanged, {ahead} ahead locally, "
-          f"{conflicts} divergent (kept aside)")
-    if conflicts:
-        print("Divergent incoming copies land under "
-              "~/.carryon/conflicts/<uuid>/ - a local Session is never "
-              "deleted")
-    if member_conflicts:
-        # Counted apart from the Sessions above because the Session itself was
-        # not divergent: these are Transcripts INSIDE it that neither copy
-        # extends, and a user reading '1 replaced' or '1 unchanged' has no
-        # other way to learn that one of their files did not go with it.
-        print(f"Sessions: {member_conflicts} file(s) inside a restored "
-              "Session were divergent - the local copy is kept and the "
-              "Archive's is under ~/.carryon/conflicts/<uuid>/ (ADR-0002); "
-              "neither copy overwrote the other")
-    if session_union:
-        # Not "no local file was replaced", which was the old line and was
-        # only true because this branch never applied the rule: a member the
-        # Archive's copy EXTENDS is replaced, which is the append-only case
-        # ADR-0002 names, and is what makes 'pull first' work.
-        print(f"Sessions: {session_union} file(s) written into Sessions this "
-              "machine already had - the Archive held members it did not, or "
-              "a copy extending one it had (ADR-0002); nothing this machine "
-              "was ahead on was touched")
-    if session_kept:
-        # Deliberately not "the Archive did not hold them": that is true of
-        # the ordinary case and not of the --map one, where the Archive's copy
-        # landed in another directory. What both have in common is that the
-        # incoming tree did not supersede them, and the lines above say which.
-        print(f"Sessions: {session_kept} local file(s) kept in Sessions the "
-              "incoming tree landed on (named above) - nothing superseded "
-              "them and a pull never deletes (ADR-0002). A stale member goes "
-              "only under --mirror, which is deliberately not built")
-    print(f"Project residue: {residue_written} file(s) written, "
-          f"{residue_kept} kept (this machine's copy is ahead)")
-    if residue_conflicts:
-        print(f"Project residue: {residue_conflicts} memory file(s) were "
-              "divergent - the local copy is kept and the Archive's is under "
-              "~/.carryon/conflicts/<project>/ (ADR-0002); neither copy "
-              "overwrote the other")
-    if history_refused:
-        print(f"History: {history_refused} file(s) NOT written - this machine "
-              "would not take the write (named above); something else is "
-              "standing where those members land")
-    if history_deferred:
-        # Its own line rather than a number folded into the two above: those
-        # count Sessions and files carryon decided about, and this counts the
-        # ones it declined to decide about because something else owns them.
-        print(f"History: {history_deferred} file(s) externally owned and "
-              "skipped (named above) - a link already holds each of those "
-              "paths, and writing through one edits a tree carryon does not "
-              "own (ADR-0007)")
-    if local.unreadable:
-        # The walk that answers "what does this machine already have" is the
-        # one the union rule is decided against, so a directory it could not
-        # list is a Session pull may take for new. Said out loud for that
-        # reason rather than for the walk's own sake.
-        print(f"History: {len(local.unreadable)} local path(s) this machine "
-              "would not read while looking for what it already has - "
-              "anything the Archive holds under one of them was compared "
-              "against nothing:")
-        for rel, why in local.unreadable:
-            print(f"  !! ~/{printable(rel)} - {printable(why)}")
+    if do_history:
+        print(f"Sessions: {restored} new, {replaced} replaced, "
+              f"{unchanged} unchanged, {ahead} ahead locally, "
+              f"{conflicts} divergent (kept aside)")
+        if conflicts:
+            print("Divergent incoming copies land under "
+                  "~/.carryon/conflicts/<uuid>/ - a local Session is never "
+                  "deleted")
+        if member_conflicts:
+            # Counted apart from the Sessions above because the Session
+            # itself was not divergent: these are Transcripts INSIDE it that
+            # neither copy extends, and a user reading '1 replaced' or
+            # '1 unchanged' has no other way to learn that one of their
+            # files did not go with it.
+            print(f"Sessions: {member_conflicts} file(s) inside a restored "
+                  "Session were divergent - the local copy is kept and the "
+                  "Archive's is under ~/.carryon/conflicts/<uuid>/ "
+                  "(ADR-0002); neither copy overwrote the other")
+        if session_union:
+            # Not "no local file was replaced", which was the old line and
+            # was only true because this branch never applied the rule: a
+            # member the Archive's copy EXTENDS is replaced, which is the
+            # append-only case ADR-0002 names, and is what makes 'pull
+            # first' work.
+            print(f"Sessions: {session_union} file(s) written into Sessions "
+                  "this machine already had - the Archive held members it "
+                  "did not, or a copy extending one it had (ADR-0002); "
+                  "nothing this machine was ahead on was touched")
+        if session_kept:
+            # Deliberately not "the Archive did not hold them": that is true
+            # of the ordinary case and not of the --map one, where the
+            # Archive's copy landed in another directory. What both have in
+            # common is that the incoming tree did not supersede them, and
+            # the lines above say which.
+            print(f"Sessions: {session_kept} local file(s) kept in Sessions "
+                  "the incoming tree landed on (named above) - nothing "
+                  "superseded them and a pull never deletes (ADR-0002). A "
+                  "stale member goes only under --mirror, which is "
+                  "deliberately not built")
+        print(f"Project residue: {residue_written} file(s) written, "
+              f"{residue_kept} kept (this machine's copy is ahead)")
+        if residue_conflicts:
+            print(f"Project residue: {residue_conflicts} memory file(s) "
+                  "were divergent - the local copy is kept and the "
+                  "Archive's is under ~/.carryon/conflicts/<project>/ "
+                  "(ADR-0002); neither copy overwrote the other")
+        if history_refused:
+            print(f"History: {history_refused} file(s) NOT written - this "
+                  "machine would not take the write (named above); "
+                  "something else is standing where those members land")
+        if history_deferred:
+            # Its own line rather than a number folded into the two above:
+            # those count Sessions and files carryon decided about, and this
+            # counts the ones it declined to decide about because something
+            # else owns them.
+            print(f"History: {history_deferred} file(s) externally owned "
+                  "and skipped (named above) - a link already holds each of "
+                  "those paths, and writing through one edits a tree "
+                  "carryon does not own (ADR-0007)")
+        if local.unreadable:
+            # The walk that answers "what does this machine already have" is
+            # the one the union rule is decided against, so a directory it
+            # could not list is a Session pull may take for new. Said out
+            # loud for that reason rather than for the walk's own sake.
+            print(f"History: {len(local.unreadable)} local path(s) this "
+                  "machine would not read while looking for what it already "
+                  "has - anything the Archive holds under one of them was "
+                  "compared against nothing:")
+            for rel, why in local.unreadable:
+                print(f"  !! ~/{printable(rel)} - {printable(why)}")
     _print_rekey_notes(rk_near, rk_bare, rk_non_utf8)
-    setup_line = (f"Setup: {setup_written} file(s) written, "
-                  f"{setup_skipped} externally owned and skipped")
-    if setup_refused:
-        # One counter for two kinds of refusal - an item a stored MANIFEST
-        # should not have named, and a stored Setup this machine cannot use -
-        # because the user's question is the same either way: what did the
-        # Archive hold that did not land here, and why.
-        setup_line += (f", {setup_refused} refused and not written (named "
-                       "above)")
-    print(setup_line)
+    if setup_categories:
+        # No summary line for a leg that was skipped whole: the one line
+        # above already said so, and 'Setup: 0 file(s) written' would read
+        # as a restore that found nothing rather than one never asked for.
+        setup_line = (f"Setup: {setup_written} file(s) written, "
+                      f"{setup_skipped} externally owned and skipped")
+        if setup_refused:
+            # One counter for two kinds of refusal - an item a stored
+            # MANIFEST should not have named, and a stored Setup this
+            # machine cannot use - because the user's question is the same
+            # either way: what did the Archive hold that did not land here,
+            # and why.
+            setup_line += (f", {setup_refused} refused and not written "
+                           "(named above)")
+        print(setup_line)
     if setup_denied:
         # Said out loud beside the number, because the exit status below is
         # the thing that changed and a status nobody can see explained is one
@@ -1519,7 +1629,8 @@ def pull(args, home) -> int:
         print(f"  ?? {printable(label)}: {why}")
     if not apply:
         print("\nDry run. Re-run with --apply to lay this down.")
-    if unopenable or unreadable_entries:
+    unfinished = bool(unopenable or unreadable_entries)
+    if unfinished:
         # Last, and only after everything else has landed and been reported.
         # An encrypted object this machine cannot open, or an Index entry it
         # could not read, is not the ordinary refusal ADR-0009 made a report
@@ -1527,6 +1638,16 @@ def pull(args, home) -> int:
         # holds something a key holder did not write, or wrote wrong. That is
         # worth an exit status - but not worth losing the rest of a pull
         # over, which is why it fires here and not where it was found.
+        #
+        # A printed sentence and the flagged code, NOT a raise. This used to
+        # be SystemExit, and the distinction it broke is the one the package
+        # leans on everywhere: a refusal raises, a thing-to-look-at comes
+        # back as a code - and by this line every thing that could land has
+        # landed. Under sync the raise was fatal in the quiet way: one
+        # corrupt stored object meant the push half never ran, on every run,
+        # so the machine's own Sessions were never published again - the
+        # exact starvation ADR-0012's carry-on-past-a-return rule exists to
+        # prevent, defeated by the one leg that raised instead of returning.
         #
         # Both counted in one sentence, and separately, because the cures
         # differ: an object is re-pushed from a machine that still holds the
@@ -1539,21 +1660,109 @@ def pull(args, home) -> int:
         if count:
             parts.append(f"{count} entr{'y' if count == 1 else 'ies'} in its "
                          "Index this machine could not read")
-        raise SystemExit(
-            f"pull finished with {' and '.join(parts)}. Everything else "
-            "above landed; these were skipped, not written:\n"
-            + "\n".join(f"  {printable(label)}: {why}"
-                        for label, why in unopenable + unreadable_entries))
+        print(f"\npull finished with {' and '.join(parts)}. Everything else "
+              "above landed; these were skipped, not written:\n"
+              + "\n".join(f"  {printable(label)}: {why}"
+                          for label, why in unopenable + unreadable_entries))
     # The same two numbers push uses for a Setup it refused, and for the same
     # reason: an exit status answers "did all of what you asked for happen".
     # A Setup is a replacement - it lands or it does not - so a stored Setup
     # carryon would not use is a pull that did less than it was asked, and
     # every check that catches one (a forged tag, a replayed tree, a Setup
-    # nothing vouches for) used to print its refusal and report success. What
-    # stays 0 is what ADR-0002 and ADR-0007 call the right answer: an Archive
-    # with no Setup in it refused nothing, and a path deferred to whatever
-    # already owns it is carryon working as documented.
-    return (2 if apply else 1) if setup_denied else 0
+    # nothing vouches for) used to print its refusal and report success. A
+    # divergence joins it on the same convention (ADR-0012): a Session, a
+    # member of one, or a residue file where neither copy extends the other
+    # is the one outcome that genuinely needs a person - only they can say
+    # what two transcripts of one conversation mean - and it is exactly what
+    # a loop over `sync` would otherwise scroll past. The counters are the
+    # ones the report lines above were printed from, so the code and the
+    # report cannot disagree about what was filed. What stays 0 is what
+    # ADR-0002 and ADR-0007 call the right answer: an Archive with no Setup
+    # in it refused nothing, a path deferred to whatever already owns it is
+    # carryon working as documented, and a member merely kept - local copy
+    # ahead, or only held here - conflicted with nothing.
+    #
+    # On a dry run the divergence half of this is as good as the plan's
+    # sight: a main Transcript's divergence is visible from the Index and
+    # flags the 1, while a divergence buried in a Session's members or in a
+    # residue file is only discovered by the bytes, which a plan does not
+    # download - so an apply can return 2 where its dry run said 0. The
+    # asymmetry is the dry run's documented shape (it reads catalogues, not
+    # objects), not a counter someone forgot.
+    divergence = bool(conflicts or member_conflicts or residue_conflicts)
+    flagged = setup_denied or divergence or unfinished
+    return (2 if apply else 1) if flagged else 0
+
+
+# --- sync --------------------------------------------------------------------
+
+
+def sync(args, home) -> int:
+    """Carry the History both ways in one step: the pull half first, then
+    the push half, and the order is the point rather than a convenience
+    (ADR-0012). Push first and a Session the Archive is ahead on is skipped
+    as BEHIND; the pull that follows unions it, and the merged copy this
+    machine now holds does not reach the Archive until the NEXT push - so
+    push-then-pull leaves the Archive a round stale, silently, at exit 0,
+    for a user who typed both commands and has every reason to think they
+    are done. Pull-first is that order made not-a-choice.
+
+    Composition and nothing else. Each half runs as if typed - same config,
+    same preconditions (_open_destination and _require_master already refuse
+    with the sentences a user needs, and R8 adds none) - and sync differs
+    from its halves in exactly one respect: its default category is
+    `history`, the loop that is safe to run ten times a day, because a Setup
+    carried both ways in a loop is the two-way sync ADR-0002 rules out of
+    scope. The default lives here rather than in any parser, so the halves'
+    own no-flag default (everything) is untouched.
+
+    Between the halves a non-zero RETURN does not stop the run and a RAISE
+    ends it, untouched - the distinction is load-bearing package-wide: a
+    refusal raises SystemExit, a thing-to-look-at comes back as a code, and
+    stopping on a landed divergence would let one divergent Session block
+    the publication of everything else. The exit code is the max of the
+    halves', so it keeps the meaning both already have: something landed
+    that a person has to deal with.
+    """
+    apply = bool(getattr(args, "apply", False))
+    # `is None`, never `or`: an empty --category must reach the parser and
+    # be refused there like it is on the halves, not silently become the
+    # default - a wrapper with an unset shell variable deserves the same
+    # sentence from all three commands.
+    category = getattr(args, "category", None)
+    if category is None:
+        category = HISTORY
+    # Parsed here as well as in each half, for the two things only this
+    # level can do with the answer: refuse a bad category BEFORE the pull
+    # half opens the Destination, and know whether the Setup travels - which
+    # decides which caveat the dry run below may honestly print.
+    wanted = _subset(category, CATEGORIES, "category")
+    setup_moves = wanted is None or bool(wanted & set(SETUP_CATEGORIES))
+    # The pull half's namespace, spelled in full: --map and --force stay
+    # pull-only flags (R11), so a sync runs the pull the way a bare `carryon
+    # pull` would, and anyone needing either uses the half directly.
+    pull_code = pull(argparse.Namespace(apply=apply, category=category,
+                                        map=[], force=False), home)
+    if not apply:
+        # The plan's own limit, said between the halves where it applies
+        # (R2) - and said differently per half-set, because the reassuring
+        # version is FALSE when the Setup travels: a History union only
+        # grows, but the pull's Setup leg REPLACES same-named local files
+        # before the push half captures the disk, so a real run can publish
+        # less or different Setup content than the plan above showed.
+        if setup_moves:
+            print("\nsync dry run: the push plan below is drawn against "
+                  "this machine as it stands. A real pull lands first, and "
+                  "its Setup leg replaces same-named local files - so the "
+                  "real push may publish different Setup content than "
+                  "shown; the History half can only grow.")
+        else:
+            print("\nsync dry run: the push plan below is drawn against "
+                  "this machine as it stands, and a real pull can only "
+                  "make it push more, never less.")
+    push_code = push(argparse.Namespace(apply=apply, category=category,
+                                        agent=None), home)
+    return max(pull_code, push_code)
 
 
 # --- pair --------------------------------------------------------------------

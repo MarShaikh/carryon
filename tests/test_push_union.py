@@ -789,15 +789,18 @@ def test_a_destination_dying_while_serving_a_session_is_a_skip_not_an_abort(
     dying_destination(monkeypatch, "session-read")
     capsys.readouterr()
 
-    with pytest.raises(SystemExit) as exc:
-        sync.pull(ns(apply=True), home_b)
+    # Flagged, not raised: a finished pull reports its shortfall in the
+    # exit code (ADR-0012) so sync's push half still runs - which is the
+    # very property this test is about, one command up.
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert "-" * 74 in out, "the pull died before its summary"
     assert (home_b / ".claude" / "settings.json").is_file(), \
         "the Setup half was lost with the failed Session read"
     assert UUID_1 in out, "the skipped Session is not named in the report"
-    assert UUID_1 in str(exc.value)
+    assert UUID_1 in out.split("pull finished with")[1], \
+        "the closing sentence stopped naming the skipped Session"
 
 
 def test_a_destination_dying_while_laying_out_the_setup_is_one_refusal(
