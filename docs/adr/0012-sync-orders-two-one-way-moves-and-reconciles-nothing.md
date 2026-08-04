@@ -74,9 +74,10 @@ So a landed divergence makes `pull` non-zero, and `sync` inherits it by
 propagation rather than by inventing a channel of its own. The exit code's
 meaning does not change — it has always been "something landed that a person
 has to deal with" — only the set of things that qualify. The cost is a
-user-visible contract change and six assertions in
-`tests/test_pull_member_union.py` that pinned `== 0` while meaning "the pull
-worked"; each had to say which it meant.
+user-visible contract change and every assertion that pinned `pull(...) == 0`
+while meaning "the pull worked"; each had to say which it meant - the ones in
+divergence scenarios now assert the new code, and the union-only ones keep
+their 0 with the meaning stated.
 
 Between the halves, `sync` carries on past a non-zero **return** and never
 past a **raise**. The distinction is already load-bearing everywhere else in

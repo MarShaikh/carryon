@@ -114,6 +114,9 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("push", "category"): "a subset of a known set - cli._parse_subset",
     ("pull", "apply"): "a flag",
     ("pull", "force"): "a flag",
+    ("pull", "category"): "a subset of a known set - cli._parse_subset",
+    ("sync", "apply"): "a flag",
+    ("sync", "category"): "a subset of a known set - cli._parse_subset",
     ("init", "join"): "a pairing code - sync.parse_pairing_code, which admits "
                       "16 characters from one alphabet and is a stricter door "
                       "than this one",

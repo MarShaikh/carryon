@@ -192,7 +192,9 @@ def test_a_divergent_member_is_kept_and_the_incoming_copy_goes_aside(
     before = local.read_bytes()
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    # 2, not 0: this pull lands a divergence, which is ADR-0012's exit code
+    # (`2 if apply else 1`, setup_denied's convention).
+    assert sync.pull(ns(apply=True), behind) == 2
     out = capsys.readouterr().out
 
     assert local.read_bytes() == before, \
@@ -284,9 +286,14 @@ def test_a_local_member_spelled_in_another_case_is_not_overwritten(
     variant = project / UUID_A / "Subagents" / "journal.jsonl"
     write(variant, journal("machine-b", 20))
     before = variant.read_bytes()
+    # Asked before the pull, because the exit code depends on it: where the
+    # filesystem folds case the two names are one file and the pull lands a
+    # divergence - ADR-0012's exit code (`2 if apply else 1`) - and where it
+    # keeps them apart nothing diverges and the pull worked, so 0.
+    folded = case_insensitive(project)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(apply=True), behind) == (2 if folded else 0)
     out = capsys.readouterr().out
 
     assert variant.read_bytes() == before, \
@@ -300,7 +307,6 @@ def test_a_local_member_spelled_in_another_case_is_not_overwritten(
     # local-only.jsonl because the Archive never held it. The third is the
     # case-variant: one more kept file where the filesystem keeps the two
     # names apart, and the SAME file as the incoming member where it does not.
-    folded = case_insensitive(project)
     expected = "2 local file(s)" if folded else "3 local file(s)"
     assert expected in kept_summary(out), \
         f"kept files counted by name rather than by file: {kept_summary(out)!r}"
@@ -330,7 +336,9 @@ def test_a_new_session_does_not_write_over_a_local_subtree(tmp_path, capsys):
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2: the divergent member lands in conflicts, and a landed divergence is
+    # ADR-0012's exit code (`2 if apply else 1`).
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert orphan.read_bytes() == before, \
@@ -356,7 +364,8 @@ def test_the_keep_accounting_follows_the_directory_written_into(
     shutil.copytree(project, copy)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    # 2: the divergent journal lands in conflicts - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), behind) == 2
     out = capsys.readouterr().out
 
     assert "restored to another directory" not in out, \
@@ -380,7 +389,9 @@ def test_a_dry_run_says_which_local_members_it_would_keep(behind, capsys):
     write(project / UUID_A / SHARED, journal("machine-b", 40))
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=False), behind) == 0
+    # 1: the plan PLANS a divergence, which is ADR-0012's dry-run exit code
+    # (`2 if apply else 1`).
+    assert sync.pull(ns(apply=False), behind) == 1
     out = capsys.readouterr().out
 
     assert "keep" in out, "the plan says nothing about what it would keep"
@@ -411,7 +422,8 @@ def test_a_second_divergent_pull_keeps_the_first_copy_it_set_aside(
     home_b = pulling_home(tmp_path)
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
     write(project_root(home_b) / UUID_A / SHARED, journal("machine-b", 40))
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2 on both pulls: each lands the same divergence - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), home_b) == 2
     aside = conflicts_dir(home_b) / SHARED
     assert aside.read_text() == journal("machine-a", 2)
     aside.write_text(journal("merged-by-hand", 9))
@@ -424,7 +436,7 @@ def test_a_second_divergent_pull_keeps_the_first_copy_it_set_aside(
     assert sync.push(ns(apply=True, category="history"), home_a) == 0
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert "replace" in out, "the second pull never reached the branch"
@@ -533,7 +545,8 @@ def test_a_divergent_member_goes_aside_when_the_main_did_not_move(
     before = shared.read_bytes()
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), level) == 0
+    # 2: a divergence landed - ADR-0012's exit code (`2 if apply else 1`).
+    assert sync.pull(ns(apply=True), level) == 2
     out = capsys.readouterr().out
 
     assert shared.read_bytes() == before, \
@@ -555,7 +568,8 @@ def test_a_divergent_memory_file_goes_aside_when_the_main_did_not_move(
     memory.write_text("something else entirely\n")
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), level) == 0
+    # 2: a residue divergence is a divergence too - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), level) == 2
     out = capsys.readouterr().out
 
     assert memory.read_text() == "something else entirely\n", \
@@ -630,3 +644,40 @@ def test_a_dry_run_of_the_union_says_what_it_would_write(level, capsys):
     assert [line for line in out.splitlines()
             if "keep" in line and "run-9" in line], \
         f"the plan never said what it would keep: {out}"
+
+
+# --- a divergence is an exit code (ADR-0012) -----------------------------------
+
+
+def test_a_divergence_is_an_exit_code(behind, capsys):
+    """A pull that lands - or, on a dry run, plans - a member where neither
+    copy extends the other returns non-zero, on setup_denied's existing
+    convention: `2 if apply else 1` (ADR-0012). The one outcome that
+    genuinely needs a person printed a line and exited 0, which was
+    survivable while pull was something you watched and is not survivable
+    under a command built to be run in a loop.
+
+    The control alongside: once the divergent member is gone, the very same
+    pull is 0 again - the code is the divergence's, not this Archive's.
+    """
+    project = project_root(behind)
+    divergent = project / UUID_A / SHARED
+    write(divergent, journal("machine-b", 40))
+    capsys.readouterr()
+
+    assert sync.pull(ns(apply=False), behind) == 1, \
+        "a planned divergence did not reach the dry run's exit status"
+    assert not (behind / ".carryon" / "conflicts").exists(), \
+        "the dry run wrote the conflict it was only planning"
+
+    assert sync.pull(ns(apply=True), behind) == 2, \
+        "a landed divergence did not reach the exit status"
+    assert (conflicts_dir(behind) / SHARED).is_file(), \
+        "the exit code fired without the divergence landing"
+    capsys.readouterr()
+
+    # The control: remove the divergent local copy and pull again - the
+    # incoming member now lands on nothing and the pull worked, so 0.
+    divergent.unlink()
+    assert sync.pull(ns(apply=True), behind) == 0, \
+        "the non-zero status outlived the divergence it reports"

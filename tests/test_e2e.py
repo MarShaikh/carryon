@@ -487,7 +487,9 @@ def test_pull_lands_a_history_rekeyed_and_unions_with_b(joined, capsys):
     web = home_b / ".claude" / "projects" / rekey.encode_project_dir(cwd_web_b)
     u3_before = (web / (U3 + ".jsonl")).read_bytes()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2, not 0: U3 lands divergent below, and a landed divergence is
+    # ADR-0012's exit code (`2 if apply else 1`).
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     # A's Sessions land under B's re-derived project dirs, every member
@@ -532,12 +534,15 @@ def test_pull_lands_a_history_rekeyed_and_unions_with_b(joined, capsys):
 
 def test_second_pull_is_a_no_op_on_the_agent_trees(joined, capsys):
     home_b = joined.home_b
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2 on both pulls: U3 is divergent and stays divergent, and each pull
+    # says so in its status - ADR-0012's exit code, which is exactly what
+    # keeps a loop of syncs from reading as converged when it is not.
+    assert sync.pull(ns(apply=True), home_b) == 2
     capsys.readouterr()
     claude_before = tree_state(home_b / ".claude")
     conflicts_before = tree_state(home_b / ".carryon" / "conflicts")
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert tree_state(home_b / ".claude") == claude_before
@@ -583,7 +588,8 @@ def test_pushing_back_from_b_leaves_neither_machines_home_in_the_archive(
     re-uploaded, and the divergent copy of U3 it kept is skipped rather than
     allowed to overwrite A's (ADR-0002's union rule, mirrored onto push).
     """
-    assert sync.pull(ns(apply=True), joined.home_b) == 0
+    # 2: U3 lands divergent - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), joined.home_b) == 2
     capsys.readouterr()
     untouched = {key: joined.dest.read(key)
                  for key in joined.dest.list(archive.SESSIONS_PREFIX)}
@@ -1000,9 +1006,11 @@ def test_a_tampered_settings_json_is_refused_whole_and_lands_nothing(
     assert "Sessions: 2 new" in out
 
     # positive control: put the honest bytes back and the same Setup restores
-    # - so the refusal above was the tamper's, not some other check's
+    # - so the refusal above was the tamper's, not some other check's. Still
+    # 2, because U3 is still divergent and says so (ADR-0012); the Setup's
+    # own verdict is the "refused whole" line, asserted gone below.
     joined.dest.write(key, honest)
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
     assert "refused whole" not in out
     assert (home_b / ".claude" / "CLAUDE.md").read_text() == \
@@ -1024,7 +1032,8 @@ def test_a_push_from_behind_never_shortens_the_archives_session(
     carried everything.
     """
     home_b = joined.home_b
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2: U3 lands divergent - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), home_b) == 2
     capsys.readouterr()
 
     app = (home_b / ".claude" / "projects"
@@ -1194,7 +1203,11 @@ def test_a_hard_link_to_the_key_in_a_session_tree_reaches_neither_machine(
     # ...and nowhere on the machine that pulls it, which is where the bytes
     # actually landed the last time this was open: a 0644 file in a project
     # directory people share and screenshot.
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2, not 0: B's own divergent copy of U3 lands in conflicts along the
+    # way, and a landed divergence is ADR-0012's exit code. The plant itself
+    # contributes nothing to it - the member was withheld at push, so there
+    # is no stolen.jsonl in the Archive to land.
+    assert sync.pull(ns(apply=True), home_b) == 2
     pull_out = capsys.readouterr().out
     key_bytes_absent("the pull report", pull_out.encode("utf-8"), spellings)
     for rel, data in carried_bytes(home_b).items():
@@ -1354,10 +1367,13 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
 
     # Positive control: put the Archive back as it was and the same pull
     # restores the same Setup, authenticated - so what refused above was the
-    # deletion and not some other check that would have refused anyway.
+    # deletion and not some other check that would have refused anyway. 2,
+    # not 0: with the whole Archive back, the History lands too and U3 is
+    # divergent - ADR-0012's exit code; the Setup's own verdict is asserted
+    # on the report lines below.
     for key, data in honest.items():
         joined.dest.write(key, data)
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
     assert "Setup: from machine 'mac-a'" in out
     assert "nothing in the encrypted Index vouches" not in out, \
@@ -1507,8 +1523,9 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
              / rekey.encode_project_dir(str(home_b / PROJ_APP)))
 
     # B catches up, so the two machines start from the same U1 tree and every
-    # difference below is one they grew apart on afterwards.
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # difference below is one they grew apart on afterwards. 2: B's own U3
+    # lands divergent along the way - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), home_b) == 2
     capsys.readouterr()
     assert tree_state(app_a / U1).keys() == tree_state(app_b / U1).keys()
 
@@ -1593,7 +1610,9 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
     assert "pull first" in push_b, \
         "B was not behind on anything, so this leg tests nothing"
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # Still 2: U3 is still divergent, and every pull that meets it says so
+    # (ADR-0012) - the union this leg is about is asserted on the tree below.
+    assert sync.pull(ns(apply=True), home_b) == 2
     pull_b = capsys.readouterr().out
     assert (app_b / U1 / "subagents" / "only-on-a.jsonl").is_file(), \
         "a member the Archive held and this machine did not never landed"
@@ -1919,9 +1938,12 @@ def test_a_damaged_state_file_stops_neither_a_push_nor_a_pull(
         "the appended turn never reached the Archive"
 
     # -- the pull leg, on the other machine ----------------------------------
+    # 2 is U3's divergence landing (ADR-0012's exit code), not a refusal:
+    # the mark's own verdict is the "refusing to pull" absence below, and
+    # the summary line proves the pull ran to the end.
     make(home_b / ".carryon" / "state.json")
     with time_limit(JOURNEY_LIMIT):
-        assert sync.pull(ns(apply=True), home_b) == 0, \
+        assert sync.pull(ns(apply=True), home_b) == 2, \
             f"a state.json that is {name} refused a pull"
     pull_out = capsys.readouterr().out
     assert "-" * 74 in pull_out, \
@@ -1952,7 +1974,8 @@ def test_the_state_file_is_still_the_check_it_is_there_to_be(joined, capsys):
     """
     home_b = joined.home_b
     state = home_b / ".carryon" / "state.json"
-    assert sync.pull(ns(apply=True), home_b) == 0
+    # 2: U3 lands divergent - ADR-0012's exit code.
+    assert sync.pull(ns(apply=True), home_b) == 2
     capsys.readouterr()
     assert sync._seen_revision(home_b, joined.dest_spec) > 0, \
         "an honest pull recorded no high-water mark at all"
@@ -1974,7 +1997,9 @@ def test_the_state_file_is_still_the_check_it_is_there_to_be(joined, capsys):
     # rather than as a sentence: one rollback less noticed, nothing else.
     _damage_binary(state)
     with time_limit(JOURNEY_LIMIT):
-        assert sync.pull(ns(apply=True), home_b) == 0
+        # Still 2, and still not the mark's doing: U3 is still divergent
+        # (ADR-0012); what this arm pins is the two report lines below.
+        assert sync.pull(ns(apply=True), home_b) == 2
     unmarked = capsys.readouterr().out
     assert "rolled back" not in unmarked
     assert "Setup: from machine 'mac-a'" in unmarked
@@ -2043,10 +2068,12 @@ def test_a_pull_whose_setup_is_refused_exits_non_zero_through_the_cli(
     assert tree_state(home_b / ".claude") != before, \
         "the pull exited non-zero and laid no History down either"
 
-    # Positive control: put the tag back and the same Setup restores at exit
-    # 0, so what refused above was the stripped tag and not some other check.
+    # Positive control: put the tag back and the same Setup restores, so what
+    # refused above was the stripped tag and not some other check. The status
+    # stays 2 for a different reason - U3 is still divergent (ADR-0012) - so
+    # the Setup's own verdict is read off the report lines instead.
     joined.dest.write(tag_key, honest_tag)
-    assert cli.main(["pull", "--apply"]) == 0
+    assert cli.main(["pull", "--apply"]) == 2
     healed = capsys.readouterr().out
     assert "refused whole" not in healed
     assert (home_b / ".claude" / "CLAUDE.md").read_text() == "Answer briefly.\n"
@@ -2146,7 +2173,9 @@ def test_the_whole_journey_works_against_a_git_destination(tmp_path, capsys):
         assert sync.init(ns(dest=spec, join=code, machine="box-b"),
                          home_b) == 0
         capsys.readouterr()
-        assert sync.pull(ns(apply=True), home_b) == 0
+        # 2: U3 lands divergent over git exactly as it does over a
+        # directory - ADR-0012's exit code.
+        assert sync.pull(ns(apply=True), home_b) == 2
     pull_out = capsys.readouterr().out
     assert "PULLING <- git repository" in pull_out
 

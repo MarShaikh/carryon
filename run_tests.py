@@ -58,6 +58,7 @@ MODULES = (
     "tests.test_pair",
     "tests.test_pair_security",
     "tests.test_sync",
+    "tests.test_sync_command",
     "tests.test_sync_security",
     "tests.test_sync_hostile",
     "tests.test_push_union",

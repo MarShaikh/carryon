@@ -262,7 +262,8 @@ def _tree_members(packed, staging) -> tuple:
     return files, refused
 
 
-def _setup_writes(manifest: dict, staging, home, declared) -> tuple:
+def _setup_writes(manifest: dict, staging, home, declared,
+                  categories=None) -> tuple:
     """(writes, refused): (target, source) pairs mapping the stored Setup
     back onto $HOME, driven by the MANIFEST the capture engine wrote, plus
     the items refused before a byte moved in either direction.
@@ -270,7 +271,15 @@ def _setup_writes(manifest: dict, staging, home, declared) -> tuple:
     Both fields are validated up front because both are attacker-reachable
     (see _setup_target). A refused item comes back named rather than dropped:
     silently skipping one reads as a successful restore that is quietly
-    missing a file."""
+    missing a file.
+
+    `categories` is `pull --category`'s slice of the Setup leg (ADR-0012 /
+    R6): every MANIFEST item carries the category it was captured under, and
+    an item whose category was not chosen is not part of this pull at all -
+    not validated, not refused, not written - the same silence push's capture
+    engine answers an unchosen category with. None means no flag was given
+    and is the pre-flag behaviour exactly, malformed category fields
+    included."""
     writes, refused = [], []
     agents = manifest.get("agents")
     if not isinstance(agents, dict):
@@ -285,6 +294,9 @@ def _setup_writes(manifest: dict, staging, home, declared) -> tuple:
                 refused.append((printable(key),
                                 f"declares a malformed item: "
                                 f"{printable(repr(item))}"))
+                continue
+            if categories is not None \
+                    and item.get("category") not in categories:
                 continue
             src, dst = item.get("src"), item.get("dst")
             # Both fields in the label, whichever one was refused: the pair is
