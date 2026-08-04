@@ -86,23 +86,31 @@ class ObjectRefused(SystemExit):
 def occupied(dest) -> bool:
     """Whether an Archive is already at this Destination.
 
-    A read of one known key and no write at all, which is what makes it safe
-    to ask before anything has been decided. It is the check that catches the
+    Reads and lists, writes nothing, which is what makes it safe to ask
+    before anything has been decided. It is the check that catches the
     mistake costing most: `init` without `--join` against an Archive that
     already exists mints a SECOND recovery key, prints it as though it were
     the one that mattered, and fails only at the first push - by which point
     the user holds two keys, cannot tell them apart, and `init` refuses to run
     again because this machine already holds a master key.
 
-    The Index rather than a listing: a listing answers "is there anything
-    under carryon/", which a half-finished push, a stray probe or somebody
-    else's object all satisfy. The Index is the one object that is there if
-    and only if a push has completed, and a Destination that will not serve it
-    answers False - the same way a fresh Archive does, because carryon cannot
-    tell those apart here and the reachability probe below is what finds a
-    Destination that is not answering.
+    The Index first, because it is the one object that is there if and only
+    if a push (or a `pair`, which seals a fresh Index before minting a code)
+    has completed. But the Index is also ONE object, and anyone with write
+    access to the Destination can make one object unservable - delete it,
+    or on an object store shadow it with a prefix - and an Archive read as
+    fresh because its catalogue is missing is an Archive about to be
+    re-founded under a second key. So the listing `_join` already trusts is
+    asked as well: objects under carryon/ with no readable Index is
+    somebody's Archive in a state worth investigating, never a place to
+    start a new one. The cost of reading a stray probe or a half-finished
+    push as occupancy is a refusal that names `--join` - the fail-safe
+    direction, since the cure for a false yes is reading the sentence, and
+    the cure for a false no is a recovery key that opens nothing.
     """
-    return dest.read(INDEX_KEY) is not None
+    if dest.read(INDEX_KEY) is not None:
+        return True
+    return bool(dest.list(PREFIX + "/"))
 
 
 def probe_key() -> str:

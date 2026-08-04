@@ -11,8 +11,10 @@ So `init` now asks. With a terminal on both ends it offers what it found, and a
 short list of Providers when it found nothing; it prompts for that Provider's
 few fields, hands them to `rclone config create`, and verifies before it
 finishes. Without a terminal — over SSH with no tty, in CI, in a container — it
-prints the candidates and exits exactly as it did, so nothing that used to be
-scriptable stopped being scriptable.
+prints the candidates and exits. A script names its Destination with `--dest`,
+and the one scripted spelling that is gone is the silent pick the next
+paragraph deletes: it was a decision, not an answer, and a decision is exactly
+what a script cannot be making on the user's behalf.
 
 **Nothing is decided for the user, including the case where there is one obvious
 answer.** `init` used to take a lone candidate silently, which meant a machine

@@ -355,6 +355,20 @@ class Destination:
         """
         return None
 
+    def skips_probe(self):
+        """Why ADR-0011's reachability probe is not run against this type,
+        or None - and None is the answer unless writing and deleting here
+        costs something a probe has no business spending.
+
+        The probe writes random bytes, reads them back and deletes them,
+        which on most stores comes and goes without trace. A type whose
+        writes are PERMANENT - where the delete removes the object from
+        view and not from history - answers with the sentence, and `init`
+        prints it instead of a green tick that claims a delete the store's
+        own record contradicts.
+        """
+        return None
+
     def missing_container(self, key: str):
         """Why writing `key` here would first CREATE something that is not
         carryon's to create, or None.
@@ -501,6 +515,11 @@ class LocalTreeDestination(Destination):
     """
 
     root = None
+    # What the last delete's syscall said, handed from the verb to the
+    # confirmation inside one Destination.delete call (the rclone type keeps
+    # deletefile's stderr the same way). A class attribute so a confirm
+    # asked before any delete answers from "", not AttributeError.
+    _delete_said = ""
 
     def _hidden(self, name: str) -> bool:
         """Names the type keeps for itself - a tmp file, git's own .git."""
@@ -689,7 +708,18 @@ class LocalTreeDestination(Destination):
 
     def _local_delete(self, key: str) -> None:
         """Remove root/key if it is an ordinary file there. Absent is fine,
-        and nothing reached through a link is this key's object."""
+        and nothing reached through a link is this key's object.
+
+        What the syscall SAID is kept for `_confirm_delete` to quote, the
+        way the rclone type keeps deletefile's stderr. It is not acted on
+        here, because 'absent is not an error' used to be spelled as one
+        bare `except OSError: pass` - which swallowed EACCES alongside
+        ENOENT, so a directory whose ACL grants create and denies delete
+        (an SMB or NFS share, a read-only remount, a macOS uchg flag)
+        reported a delete it did not make. The base default then answered
+        True, and ADR-0005's one-time pairing code stayed live in silence.
+        """
+        self._delete_said = ""
         at, leaf, why = self._descend(key)
         if at is None:
             if why is not None:
@@ -699,10 +729,47 @@ class LocalTreeDestination(Destination):
             info = _at_lstat(at, leaf)
             if stat.S_ISREG(info.st_mode):
                 _at_unlink(at, leaf)
-        except OSError:
-            pass  # absent is not an error, and nothing else here is a blob
+        except OSError as exc:
+            if exc.errno not in ABSENT:
+                self._delete_said = _why_failed(exc, "the object")
         finally:
             _at_close(at)
+
+    def _confirm_delete(self, key: str) -> bool:
+        """Whether nothing is standing at the name any more, asked of the
+        filesystem rather than of the verb - lstat is the store's answer
+        here the way a read back is the rclone type's. A link or a
+        directory left standing is not this key's object (the read side
+        never serves one), so gone-as-a-blob counts as gone.
+        """
+        said, self._delete_said = self._delete_said, ""
+        at, leaf, why = self._descend(key)
+        if at is None:
+            if why is None:
+                return True
+            report_skipped(self.describe(), key,
+                           "this machine would not say whether the delete "
+                           f"landed ({why})")
+            return False
+        try:
+            info = _at_lstat(at, leaf)
+        except OSError as exc:
+            if exc.errno in ABSENT:
+                return True
+            report_skipped(self.describe(), key,
+                           "this machine would not say whether the delete "
+                           f"landed ({_why_failed(exc, 'the object')})")
+            return False
+        finally:
+            _at_close(at)
+        if not stat.S_ISREG(info.st_mode):
+            return True
+        report_skipped(
+            self.describe(), key,
+            f"this machine would not delete it ({said})" if said else
+            "the delete reported nothing wrong and the object is still "
+            "there")
+        return False
 
     def _local_keys(self, prefix: str) -> list:
         """Keys for the ordinary files under root, following no symlink.

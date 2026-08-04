@@ -3,10 +3,12 @@
 `init` asks - which Destination, which Provider, create the bucket or not -
 and one rule decides whether it may: a terminal on both ends. Over SSH with
 no tty, in CI, in a container, under a pipe on either side, nothing here is
-called at all; the command prints what it found and exits the way it always
-did, so nothing that used to be scriptable stops being scriptable. That rule
-is `available`, it is the only policy in this module, and every caller asks
-it rather than re-spelling `isatty` for itself.
+called at all; the command prints what it found and exits, and a script
+names its Destination with --dest. The one scripted spelling ADR-0011
+removed is the silent adoption of a lone candidate - a decision, not an
+answer, and never this module's to make. That rule is `available`, it is
+the only policy in this module, and every caller asks it rather than
+re-spelling `isatty` for itself.
 
 The rest is the mechanics of one question: ask, choose from a numbered list,
 confirm yes-or-no, take a secret without echo. Two seams - `_read_line` and

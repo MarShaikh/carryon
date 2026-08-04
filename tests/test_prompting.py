@@ -2,9 +2,10 @@
 
 One rule decides whether carryon may prompt at all: a terminal on BOTH ends.
 Over SSH with no tty, in CI, in a container, under a pipe on either side,
-`init` prints the candidates and exits exactly as it always did - nothing that
-used to be scriptable stops being scriptable, and no script ever blocks on a
-question it cannot see.
+`init` prints the candidates and exits - no script ever blocks on a question
+it cannot see, and the one scripted spelling ADR-0011 removed (the silent
+adoption of a lone candidate) has its own regression tests in
+test_init_dialogue.py.
 
 Everything here reads through two seams (`_read_line`, `_read_secret`) so the
 suite can hold a whole dialogue's answers without a terminal, and so no other

@@ -21,6 +21,7 @@ wording is that it says what was checked rather than implying what was not.
 import argparse
 import pathlib
 import re
+import subprocess
 import sys
 
 import pytest
@@ -193,7 +194,7 @@ def test_a_destination_that_will_not_delete_says_so(tmp_path, monkeypatch):
 # --- occupancy ---------------------------------------------------------------
 
 
-def test_occupancy_is_a_read_of_one_key_and_writes_nothing(tmp_path):
+def test_occupancy_is_a_read_and_a_listing_and_writes_nothing(tmp_path):
     root = tmp_path / "archive"
     dest = DirectoryDestination(root)
 
@@ -202,6 +203,47 @@ def test_occupancy_is_a_read_of_one_key_and_writes_nothing(tmp_path):
 
     dest.write(archive.INDEX_KEY, b"sealed")
     assert archive.occupied(dest) is True
+
+
+def test_an_archive_whose_index_is_unservable_still_reads_as_occupied(
+        tmp_path):
+    """The Index is the one object that is there iff a push completed - and
+    also one object, which anyone with write access to the Destination can
+    make unservable (delete it, or on an object store shadow it with a
+    prefix). Occupancy read as one key would then answer 'fresh' over a
+    populated Archive, and a second machine would mint a second master key
+    over it. So the listing _join already trusts is asked as well: objects
+    under carryon/ with no readable Index is somebody's Archive in a state
+    to investigate, never a place to found a new one."""
+    root = tmp_path / "archive"
+    dest = DirectoryDestination(root)
+    dest.write(archive.SETUPS_PREFIX + "machine-a/settings.json", b"{}")
+
+    assert archive.occupied(dest) is True
+
+
+def test_init_refuses_an_archive_that_is_only_a_pairing_blob(tmp_path,
+                                                             capsys):
+    """init A, pair A, and no push yet. `pair` seals a fresh Index before it
+    mints a code (sync.pair), so even this earliest Archive answers the
+    one-key read - pinned here because occupancy leans on that ordering, and
+    a pair that stopped sealing first would reopen the two-keys trap one
+    push earlier than the tests above can see."""
+    home_a = tmp_path / "home_a"
+    home_a.mkdir()
+    dest_spec = str(tmp_path / "archive")
+    assert sync.init(ns(dest=dest_spec, machine="machine-a"), home_a) == 0
+    assert sync.pair(ns(), home_a) == 0
+    capsys.readouterr()
+
+    home_b = tmp_path / "home_b"
+    home_b.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(dest=dest_spec, machine="machine-b"), home_b)
+
+    assert "--join" in str(exc.value)
+    assert keyring.fetch_master(home=home_b) is None
+    assert not re.search(RECOVERY_KEY, capsys.readouterr().out)
 
 
 def test_init_refuses_an_archive_that_already_exists(tmp_path, capsys):
@@ -261,6 +303,34 @@ def test_init_probes_before_it_mints_a_key(tmp_path, monkeypatch):
     assert config.load(home)["destination"] == ""
 
 
+def test_a_join_refused_by_the_probe_says_the_code_was_not_spent(
+        tmp_path, monkeypatch, capsys):
+    """The probe runs before the unwrap precisely so the code survives -
+    and the user has to be TOLD it survived, because the fresh-init refusal
+    beside this one talks about recovery keys and re-running `init`, both
+    wrong for a join. A user who burns a fresh code after every refused
+    join is following the sentence carryon gave them."""
+    home_a = tmp_path / "home_a"
+    home_a.mkdir()
+    dest_spec = str(tmp_path / "archive")
+    assert sync.init(ns(dest=dest_spec, machine="machine-a"), home_a) == 0
+    assert sync.pair(ns(), home_a) == 0
+    code = re.search(r"--join (\S+)", capsys.readouterr().out).group(1)
+
+    monkeypatch.setattr(archive, "reachable",
+                        lambda dest: "the store would not take the probe")
+    home_b = tmp_path / "home_b"
+    home_b.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(dest=dest_spec, join=code, machine="machine-b"), home_b)
+
+    assert "NOT spent" in str(exc.value)
+    assert keyring.fetch_master(home=home_b) is None
+    dest = DirectoryDestination(tmp_path / "archive")
+    assert len(dest.list(archive.PAIR_PREFIX)) == 1, \
+        "the refusal spent the blob after all"
+
+
 def test_init_says_what_it_checked_and_not_what_it_did_not(tmp_path, capsys):
     """No probe can say whether storage is private, and a green tick that
     implies one is worse than no tick at all."""
@@ -283,3 +353,63 @@ def test_a_recovery_key_is_still_shown_once(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert len(re.findall(RECOVERY_KEY, out)) == 1
+
+
+# --- a git Destination is not probed -----------------------------------------
+
+
+def bare_origin(tmp_path) -> pathlib.Path:
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "--initial-branch=main",
+                    str(origin)], capture_output=True, check=True)
+    return origin
+
+
+def commit_count(origin) -> int:
+    result = subprocess.run(
+        ["git", "-C", str(origin), "rev-list", "--all", "--count"],
+        capture_output=True, text=True, check=True)
+    return int(result.stdout.strip())
+
+
+def test_a_git_destination_is_not_probed_and_the_report_says_why(
+        tmp_path, capsys):
+    """Every write to a git Destination is a commit, and a pushed commit
+    stays in the remote's history for good - so a probe would leave two junk
+    commits and an irremovable blob in a repository carryon does not own,
+    on every init. The type says so and the report repeats it, instead of
+    claiming a delete worked that git's own history contradicts."""
+    home = tmp_path / "home"
+    home.mkdir()
+    origin = bare_origin(tmp_path)
+
+    assert sync.init(ns(dest=str(origin), machine="laptop"), home) == 0
+    out = capsys.readouterr().out
+
+    assert commit_count(origin) == 0, \
+        "init pushed commits to a repository it was only checking"
+    assert keyring.fetch_master(home=home) is not None
+    assert "not probed" in out
+    assert "commit" in out, "the report does not say why there was no probe"
+    assert "write, read and delete work" not in out, \
+        "the report claims a probe that never ran"
+    assert "private" in out, "the privacy line must survive the skip"
+
+
+def test_occupancy_still_guards_a_git_destination(tmp_path, capsys):
+    """Skipping the probe must not skip the other question: a pushed git
+    Archive still refuses a second plain init, through the same clone the
+    read side always makes."""
+    home_a = build_home_a(tmp_path)
+    origin = bare_origin(tmp_path)
+    assert sync.init(ns(dest=str(origin), machine="machine-a"), home_a) == 0
+    assert sync.push(ns(apply=True, category="config"), home_a) == 0
+    capsys.readouterr()
+
+    home_b = tmp_path / "home_b"
+    home_b.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(dest=str(origin), machine="machine-b"), home_b)
+
+    assert "--join" in str(exc.value)
+    assert keyring.fetch_master(home=home_b) is None
