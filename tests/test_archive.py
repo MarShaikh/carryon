@@ -175,7 +175,9 @@ def test_session_and_project_labels_do_not_collide(dest):
     assert s.split("/")[-1] != p.split("/")[-1]
 
 
-# --- Setups: plaintext trees -------------------------------------------------
+# --- Setups: one sealed object per machine (ADR-0014) ------------------------
+
+MASTER = b"\x11" * 32
 
 
 def build_setup(tmp_path) -> pathlib.Path:
@@ -186,37 +188,79 @@ def build_setup(tmp_path) -> pathlib.Path:
     return src
 
 
-def test_setups_are_readable_plaintext_on_disk(dest, tmp_path):
-    archive.put_setup(dest, "laptop", build_setup(tmp_path))
+def test_a_setup_is_not_readable_at_the_destination(dest, tmp_path):
+    """The reversal ADR-0014 exists for. This test asserted the opposite -
+    that a Setup lands unencrypted so a git Destination's diffs stay legible -
+    and that readability was the only thing standing between an `env` block
+    holding an API key and a readable object in somebody's bucket."""
+    archive.put_setup(dest, MASTER, "laptop", build_setup(tmp_path))
 
-    on_disk = dest.root / "carryon" / "setups" / "laptop" / "claude" / "settings.json"
-    assert on_disk.read_bytes() == b'{"model": "opus"}', \
-        "a Setup must land unencrypted, or a git Destination's diffs are noise"
+    keys = dest.list("carryon/setups/")
+    assert keys == ["carryon/setups/laptop.tar.enc"], \
+        "one sealed object per machine, not a browsable tree"
+    blob = dest.read("carryon/setups/laptop.tar.enc")
+    assert b'{"model": "opus"}' not in blob
+    assert b"settings.json" not in blob, \
+        "the names have to go too, or the Destination still reads the shape"
+
+
+def test_a_sealed_setup_round_trips(dest, tmp_path):
+    archive.put_setup(dest, MASTER, "laptop", build_setup(tmp_path))
 
     restored = tmp_path / "restored"
-    archive.get_setup(dest, "laptop", restored)
-    assert (restored / "claude" / "settings.json").read_bytes() == b'{"model": "opus"}'
-    assert (restored / "claude" / "skills" / "mine" / "SKILL.md").read_bytes() == \
-        b"authored here"
+    archive.get_setup(dest, MASTER, "laptop", restored)
+
+    assert (restored / "claude" / "settings.json").read_bytes() == \
+        b'{"model": "opus"}'
+    assert (restored / "claude" / "skills" / "mine" / "SKILL.md").read_bytes() \
+        == b"authored here"
 
 
 def test_put_setup_replaces_the_previous_setup(dest, tmp_path):
     """The Archive keeps the most recent Setup per machine, so a skill deleted
-    locally must not resurrect on every future pull."""
+    locally must not resurrect on every future pull.
+
+    It used to take a stale-key sweep to hold this, because the Setup was a
+    tree of independently-written objects. One object replacing one object is
+    the same promise with nothing to remember."""
     src = build_setup(tmp_path)
-    archive.put_setup(dest, "laptop", src)
+    archive.put_setup(dest, MASTER, "laptop", src)
 
     (src / "claude" / "skills" / "mine" / "SKILL.md").unlink()
-    archive.put_setup(dest, "laptop", src)
+    archive.put_setup(dest, MASTER, "laptop", src)
 
-    assert dest.list("carryon/setups/laptop/") == [
-        "carryon/setups/laptop/claude/settings.json"]
+    restored = tmp_path / "restored"
+    archive.get_setup(dest, MASTER, "laptop", restored)
+    assert not (restored / "claude" / "skills" / "mine" / "SKILL.md").exists()
+    assert (restored / "claude" / "settings.json").is_file()
 
 
 def test_get_setup_for_an_unknown_machine_is_a_systemexit(dest, tmp_path):
     with pytest.raises(SystemExit) as exc:
-        archive.get_setup(dest, "desktop", tmp_path / "restored")
+        archive.get_setup(dest, MASTER, "desktop", tmp_path / "restored")
     assert "desktop" in str(exc.value)
+
+
+def test_a_setup_sealed_for_one_machine_is_refused_under_another_name(
+        dest, tmp_path):
+    """The label binds the bytes to the machine as the Index spells it, so an
+    Archive that serves machine-a's Setup under machine-b's key is refused
+    rather than restored."""
+    archive.put_setup(dest, MASTER, "laptop", build_setup(tmp_path))
+    dest.write("carryon/setups/desktop.tar.enc",
+               dest.read("carryon/setups/laptop.tar.enc"))
+
+    with pytest.raises(SystemExit) as exc:
+        archive.get_setup(dest, MASTER, "desktop", tmp_path / "restored")
+    assert "integrity" in str(exc.value)
+
+
+def test_a_setup_sealed_under_another_key_is_refused(dest, tmp_path):
+    archive.put_setup(dest, MASTER, "laptop", build_setup(tmp_path))
+
+    with pytest.raises(SystemExit) as exc:
+        archive.get_setup(dest, b"\x22" * 32, "laptop", tmp_path / "restored")
+    assert "integrity" in str(exc.value)
 
 
 # --- pairing: one-time blobs -------------------------------------------------

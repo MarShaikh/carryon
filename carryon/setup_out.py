@@ -28,10 +28,12 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shutil
+import tempfile
 
 from . import archive, rekey, restore
-from .authentication import _carried_setup_files, _vouch_for_stored_manifest
-from .destinations.base import join_prefix, printable
+from .authentication import _stale_stamp, stamped_or_none
+from .destinations.base import printable
 from .stored_setup import _stored_setup_manifest
 
 
@@ -377,54 +379,94 @@ def _push_partial_setup(dest, master, machine, staging, manifest,
     the MANIFEST and RESTORE.md are regenerated from the merged view so they
     keep describing the whole stored tree, not just this push's slice.
 
-    Withheld files are the one thing an overlay does delete, and that is the
+    Since ADR-0014 a Setup is ONE sealed object, so "overlay" is no longer
+    something the Destination does for us by accepting writes for some keys
+    and not others. It is: unseal the stored tree into a temp dir, copy this
+    push's slice over it, delete the withheld, re-seal, write one object. The
+    stored tree is read through `archive.get_setup`, which means the seal has
+    already proved a key holder wrote it - there is no longer any way for the
+    Destination to author the MANIFEST this function merges, so the two guards
+    that used to close that oracle are gone with the plaintext they guarded.
+
+    Withheld files are the one thing an overlay deletes, and that is the
     point: withholding is done by removing the file from the staging tree,
-    which only a FULL push turns into a deletion in the Archive (put_setup
-    sweeps stale keys). On a partial push the file an earlier version
-    published stayed there, with the source machine's home inside it, while
-    the report said it had not gone - so the deletion is spelled out here
-    rather than left to the mirror that does not run.
+    which on a FULL push is a deletion because the whole object is replaced.
+    Here the stored copy would otherwise survive underneath, with the source
+    machine's home inside it, while the report said it had gone.
 
-    With a master key the overlay is authenticated: the new SETUP.mac joins
-    fresh hashes for this push's slice onto the entries the previous verified
-    manifest vouched for, minus the withheld. The carry-forward is resolved -
-    and the stored MANIFEST proved to be the one it vouches for - BEFORE a
-    byte is written, so either refusal leaves the Archive untouched.
+    What sealing does NOT prove is that the stored tree is the CURRENT one,
+    and this door has to ask. Carrying a superseded tree forward into a new
+    object under a new stamp launders it into the current Setup, signed by the
+    user's own key, at exit 0 - the exact failure `_stale_stamp` was written
+    against, arriving through the push leg rather than the pull. The check runs
+    before a byte is written, so the refusal leaves the Archive untouched.
 
-    What the merge could not carry is printed rather than raised. The keyless
-    path (ADR-0004) is the one that meets an attacker-authored MANIFEST with
-    nothing to check it against, and stopping there would hand anyone with
-    write access to the Destination a permanent `push --category config` on
-    every keyless machine - so the entry is dropped, named, and the rest of
-    the push carries on. A stored document that will not PARSE is still a
-    stop one function up, because there is no rest of the push to carry on
-    with: the merge would be built from nothing.
+    A Destination with no stored Setup for this machine is not a refusal: it is
+    every first partial push. It is named, and this push writes what it
+    captured.
     """
     prefix = archive.setup_prefix(machine)
-    raw = dest.read(prefix + "/MANIFEST.json")
-    carried = {}
-    if master is not None:
-        carried = _carried_setup_files(dest, master, machine, prefix,
-                                       index_entry or {})
-        _vouch_for_stored_manifest(raw, carried, prefix)
-    stored = _stored_setup_manifest(raw, prefix)
     staging = pathlib.Path(staging)
-    if stored is not None:
-        dropped = []
-        merged = _merge_setup_manifest(stored, manifest, pushed_categories,
-                                       dropped)
-        for why in dropped:
-            print(f"  drop     {printable(prefix)}/MANIFEST.json - {why}")
-        (staging / "MANIFEST.json").write_text(json.dumps(merged, indent=2))
-        (staging / "RESTORE.md").write_text(restore.build_restore(merged))
-    if master is not None:
-        files = dict(carried)
-        files.update(archive.setup_tree_manifest(staging))
+    with tempfile.TemporaryDirectory(prefix="carryon-overlay-") as merged_dir:
+        base = pathlib.Path(merged_dir)
+        raw = None
+        try:
+            archive.get_setup(dest, master, machine, base)
+        except archive.ObjectRefused as exc:
+            # No stored Setup, or one this machine cannot open. Either way
+            # there is nothing to overlay ONTO, so this push writes what it
+            # captured and says so - the alternative is refusing a push whose
+            # only problem is that the Archive has no Setup for this machine
+            # yet, which is every first partial push.
+            print(f"  note     {printable(prefix)} - nothing to overlay onto "
+                  f"({exc})")
+        else:
+            stamped = stamped_or_none(base)
+            if stamped is None or _stale_stamp(stamped, index_entry or {}):
+                # The push door's half of the freshness rule, and the reason
+                # this function cannot simply trust what unsealed. Carrying a
+                # superseded tree forward into a NEW object under a NEW stamp
+                # is how a replayed Setup gets laundered into the current one
+                # - by the user's own key, at exit 0. A full push is the cure
+                # because it replaces the tree with content read from here.
+                raise SystemExit(
+                    f"refusing a partial Setup push: the Archive's stored "
+                    f"Setup for '{printable(machine)}' is not the one the "
+                    "encrypted Index records as current. A partial push "
+                    "merges that tree into the one it seals, so carrying on "
+                    "would put this machine's key behind an earlier Setup "
+                    "served back in its place. Push the whole Setup "
+                    "(`carryon push --apply` with no --category or --agent) "
+                    "to replace it.")
+            raw = (base / "MANIFEST.json").read_bytes() \
+                if (base / "MANIFEST.json").is_file() else None
+
+        stored = _stored_setup_manifest(raw, prefix)
+        # The overlay itself: this push's slice lands on top of the stored
+        # tree, and what it did not capture survives underneath. Files are
+        # copied rather than the staging dir being packed directly, which is
+        # the whole difference between a partial push and a full one.
+        for path in sorted(p for p in staging.rglob("*")
+                           if p.is_file() and not p.is_symlink()):
+            target = base / path.relative_to(staging)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(path), str(target))
+        # Withheld files are the one thing an overlay deletes, and that is the
+        # point: withholding is done by removing the file from the staging
+        # tree, which on a full push is a deletion because the object is
+        # replaced whole. Here the stored copy would survive underneath, with
+        # the source machine's home inside it, while the report said it had
+        # not gone.
         for rel in withheld:
-            files.pop(rel, None)
-        (staging / archive.SETUP_MAC_NAME).write_bytes(
-            archive.seal_setup_manifest(master, machine, files, pushed_at,
-                                        stamp))
-    dest.write_tree(prefix, staging)
-    for rel in withheld:
-        dest.delete(join_prefix(prefix, rel))
+            (base / rel).unlink(missing_ok=True)
+        if stored is not None:
+            dropped = []
+            merged = _merge_setup_manifest(stored, manifest, pushed_categories,
+                                           dropped)
+            for why in dropped:
+                print(f"  drop     {printable(prefix)}/MANIFEST.json - {why}")
+            (base / "MANIFEST.json").write_text(json.dumps(merged, indent=2))
+            (base / "RESTORE.md").write_text(restore.build_restore(merged))
+        (base / archive.SETUP_STAMP_NAME).write_bytes(
+            archive.stamp_bytes(pushed_at, stamp))
+        archive.put_setup(dest, master, machine, base)

@@ -68,8 +68,8 @@ from .destinations.base import printable
 # Looking unused is the normal state of this band. A name may go only when
 # neither a body below calls it nor a caller says sync.X, which is a question
 # about the whole tree and not one this file can answer about itself.
-from .authentication import (_detached_tag_refusal,  # noqa: F401
-                             _index_setup_entry, _setup_authentication)
+from .authentication import (_index_setup_entry,  # noqa: F401
+                             setup_freshness)
 from .highwater import (_STATE_REPORTED, _begin_command,  # noqa: F401
                         _index_removed_note, _load_state, _no_state,
                         _record_revision, _refuse_on_index_removal,
@@ -513,18 +513,15 @@ def push(args, home) -> int:
                     _neutralise_staged_setup(staging, manifest, home)
                 if (setup_categories == set(SETUP_CATEGORIES)
                         and want_agents is None):
-                    # The MAC goes INTO staging before the mirror, so the
-                    # tree and its tag land in one put_setup and the stale-key
-                    # sweep keeps rather than deletes it. A keyless push
-                    # writes no tag - there is no key to derive one from -
-                    # which is ADR-0004's cost, reported below.
-                    if master is not None:
-                        (staging / archive.SETUP_MAC_NAME).write_bytes(
-                            archive.seal_setup_manifest(
-                                master, machine,
-                                archive.setup_tree_manifest(staging), now,
-                                setup_stamp))
-                    archive.put_setup(dest, machine, staging)
+                    # The stamp goes INTO staging before the pack, so the tree
+                    # and the value that says which tree it is are sealed
+                    # together in one object (ADR-0014). There is no keyless
+                    # branch here any more: without a master key there is
+                    # nothing to seal with, and the push refused long before
+                    # this line.
+                    (staging / archive.SETUP_STAMP_NAME).write_bytes(
+                        archive.stamp_bytes(now, setup_stamp))
+                    archive.put_setup(dest, master, machine, staging)
                 else:
                     # A partial Setup overlays rather than mirrors, so the
                     # items not selected this time survive in the Archive -
@@ -1446,15 +1443,16 @@ def pull(args, home) -> int:
                 staging = pathlib.Path(staging_s)
                 manifest = why = refusal = None
                 try:
-                    archive.get_setup(dest, source, staging)
+                    archive.get_setup(dest, master, source, staging)
                 except archive.ObjectRefused as exc:
                     why = str(exc)
                 else:
-                    # Authentication runs on the materialised tree, before a byte
+                    # Freshness runs on the materialised tree, before a byte
                     # moves towards $HOME - the staging dir is carryon's own and
-                    # is discarded with the refusal.
-                    refusal, note = _setup_authentication(staging, master,
-                                                          source, setups[source])
+                    # is discarded with the refusal. Authorship needed no check
+                    # here: get_setup above unsealed it (ADR-0014).
+                    refusal, note = setup_freshness(staging, source,
+                                                    setups[source])
                     if note:
                         print(f"  note     {note}")
                     if refusal is None:

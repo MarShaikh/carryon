@@ -38,7 +38,7 @@ from .destinations.base import printable
 # The three files a Setup carries about itself rather than for restoring: the
 # manifest, the notes rendered from it, and the tag over the tree. No captured
 # Item is ever written to one, on either leg.
-SETUP_OWN_FILES = ("MANIFEST.json", "RESTORE.md", archive.SETUP_MAC_NAME)
+SETUP_OWN_FILES = ("MANIFEST.json", "RESTORE.md", archive.SETUP_STAMP_NAME)
 
 # What every filesystem carryon runs on will hold: 255 bytes per name, and a
 # path far shorter than any PATH_MAX. Shape is not the whole check - a path

@@ -29,6 +29,12 @@ import pathlib
 from . import archive, config
 from .destinations.base import printable
 
+# What a sealed Setup's key ends with, so a listing can be split back into a
+# machine name. Spelled once here rather than re-derived beside each use: it is
+# the same string `archive.setup_key` builds, and two spellings of one suffix
+# is how a machine called 'x.tar' would come back as 'x'.
+SEALED_SUFFIX = ".tar.enc"
+
 
 # --- the twin readers of a stored MANIFEST -----------------------------------
 
@@ -100,19 +106,21 @@ def _stored_setup_manifest(raw, prefix):
 # --- the catalogue: which names are machines, and who vouches ----------------
 
 
-def _machine_name_refusal(machine: str, has_tree: bool):
-    """Why this Setup directory cannot name a machine, or None.
+def _machine_name_refusal(machine: str):
+    """Why this stored Setup cannot name a machine, or None.
 
-    Every name here is a directory name the Destination chose, which makes it
-    input: it is only a machine as far as this machine can act on it. Two
-    ways it is not. A key with no '/' after the name is a bare file where a
-    tree belongs, so there is nothing to restore. And a name carryon cannot
-    put back into a key - a backslash, a '..', a NUL, all of them legal in a
-    directory name on some filesystem - is one require_key refuses, which
-    used to surface as a ValueError out of the very next read.
+    Every name here comes out of the Destination's own listing, which makes it
+    input: it is only a machine as far as this machine can act on it. A name
+    carryon cannot put back into a key - a backslash, a '..', a NUL, all of
+    them legal on some filesystem - is one require_key refuses, which used to
+    surface as a ValueError out of the very next read, aborting a pull that
+    had already written a History to $HOME.
 
-    Both used to be admitted and both aborted a pull that had already written
-    a History to $HOME.
+    It used to ask a second question too: whether anything was stored UNDER
+    the name, because a Setup was a tree and a bare key where a directory
+    belonged had nothing to restore. Since ADR-0014 a Setup is a single sealed
+    object, so that shape is the correct one and its opposite - a directory -
+    is the legacy case, answered by the caller.
 
     The shape half is `config.machine_name_refusal` rather than a second
     spelling here, and the round that discovered why is the reason it moved:
@@ -124,9 +132,6 @@ def _machine_name_refusal(machine: str, has_tree: bool):
     """
     if not machine:
         return "the Archive holds a Setup key with no machine name in it"
-    if not has_tree:
-        return ("a Setup is a tree of files, and this names a single stored "
-                "file with nothing under it")
     return config.machine_name_refusal(machine)
 
 
@@ -170,88 +175,79 @@ def _vouched_machines(index, machines) -> dict:
 
 
 def _setup_catalogue(dest, index) -> tuple:
-    """(setups, refused) for every Setup directory the Archive holds.
+    """(setups, refused) for every Setup the Archive holds.
 
-    setups is machine -> {'pushed_at', 'vouched'}; refused is (name, why) for
-    every directory that cannot be treated as a machine's Setup at all.
+    setups is machine -> {'pushed_at', 'vouched', ...}; refused is (name, why)
+    for every key under setups/ that cannot be treated as a machine's Setup at
+    all.
 
-    The encrypted Index alone is not authoritative on timing: a Setup-only
-    push needs no master key (ADR-0004) and so cannot record itself there.
-    The plaintext tree's own MANIFEST carries captured_at, which fills the
-    gap - and wins when newer, since a keyless push after a keyed one would
-    otherwise pin the stale Index timestamp.
+    ADR-0014 took most of this function's reasoning away with the plaintext it
+    was reasoning about. A Setup is one sealed object now, so its timestamp
+    comes from inside the seal or from the sealed Index - never from a
+    MANIFEST.json the Destination serves in the clear and anyone with write
+    access can author. The `max(captured, known)` that used to let a plaintext
+    timestamp win, and the keyless case it existed for, are both gone: there is
+    no push that cannot record itself in the Index, because there is no push
+    without a master key.
 
-    But that timestamp, and the machine list itself, come out of the
-    plaintext tree, which anyone with write access to the Destination can
-    author. So each entry also records whether the Index vouches for the
-    machine: the Index is encrypted, so a name recorded there was put there
-    by a master key holder. That is the one field here an attacker cannot
-    forge, and _choose_setup_source ranks on it before it looks at any
-    timestamp. Machines the Index knows but the Archive no longer holds a
-    tree for are left out - there is nothing to restore from."""
-    machines, trees = set(), set()
+    What survives is the listing, and only as DISCOVERY. Which machines an
+    Archive holds is still read off the Destination, because a name nobody can
+    read is a name nobody can offer the user - so the names here are still
+    input, still go through `_machine_name_refusal`, and still prove nothing on
+    their own. What makes one trustworthy is that `archive.get_setup` unseals
+    it later; what makes it CURRENT is the Index's stamp.
+    """
+    machines, sealed = set(), set()
     for key in dest.list(archive.SETUPS_PREFIX):
         rest = key[len(archive.SETUPS_PREFIX):]
-        machine, sep, _ = rest.partition("/")
-        machines.add(machine)
-        if sep:
-            trees.add(machine)
+        if rest.endswith(SEALED_SUFFIX):
+            machine = rest[:-len(SEALED_SUFFIX)]
+            machines.add(machine)
+            sealed.add(machine)
+            continue
+        # A key under setups/ that is not a sealed object is an Archive from
+        # before ADR-0014 - a directory per machine. Its name is still listed
+        # so the user is told it is there and why nothing can be done with it,
+        # rather than the Archive appearing to hold no Setups at all.
+        machines.add(rest.partition("/")[0])
     entries = index.get("setups", {})
     if not isinstance(entries, dict):
         entries = {}
     vouched = _vouched_machines(index, machines)
     setups, refused = {}, []
     for machine in sorted(machines):
-        why = _machine_name_refusal(machine, machine in trees)
+        why = _machine_name_refusal(machine)
         if why is not None:
             # Before the read, not after: the point of the check is that
             # asking for this name at all is what used to end the pull.
             refused.append((machine, why))
             continue
-        raw = dest.read(archive.SETUPS_PREFIX + machine + "/MANIFEST.json")
-        captured = ""
-        if raw is not None:
-            try:
-                captured = json.loads(raw.decode("utf-8")).get("captured_at")
-            except _JSON_REFUSALS:
-                captured = ""
-        if not isinstance(captured, str):
-            captured = ""
+        if machine not in sealed:
+            refused.append((machine, "the Archive holds it as a plaintext "
+                                     "tree, which is how Setups were stored "
+                                     "before they were sealed (ADR-0014) - "
+                                     "push again from a machine that holds "
+                                     "the master key to replace it"))
+            continue
         entry = entries.get(vouched.get(machine), {})
         known = entry.get("pushed_at", "") if isinstance(entry, dict) else ""
-        # A str, or nothing. _validated proves the entry is an object and
-        # stops one level above where this indexes; max() over a str and an
-        # int is a TypeError, and it escapes the one `except SystemExit`
-        # wrapped around this whole call - a traceback out of a pull that has
-        # already written to $HOME, from the very case _validated exists for.
+        # A str, or nothing. max() over a str and an int is a TypeError, and
+        # it used to escape the one `except SystemExit` wrapped around this
+        # whole call - a traceback out of a pull that had already written to
+        # $HOME. The max() has gone; the guard stays, because the value still
+        # reaches a report line and a comparison.
         if not isinstance(known, str):
             known = ""
-        authenticated = (isinstance(entry, dict)
-                         and entry.get("authenticated") is True)
         # index_name is the Index's own spelling of the machine - the one the
-        # pushing side bound into the Setup MAC's label - which a case-folding
-        # Destination rename must not detach from the directory it vouches
-        # for. authenticated and index_pushed_at ride along for the same
-        # reason vouched does: they are the Index's answers, and only the
-        # Index's.
-        #
-        # Once a Setup is authenticated the Index is the whole authority on
-        # when it was pushed, so max() stops applying: the plaintext
-        # captured_at beside it is the attacker's to set, and letting it win
-        # printed the NEWEST time in the one line the user reads while the
-        # pull was restoring an older tree. max() survives for the
-        # unauthenticated case, where a keyless push (ADR-0004) genuinely
-        # cannot record itself in the Index and the plaintext field is the
-        # only timestamp there is.
-        setups[machine] = {"pushed_at": known if authenticated
-                           else max(captured, known),
+        # pushing side bound into the seal's label - which a case-folding
+        # Destination rename must not detach from the object it vouches for.
+        setups[machine] = {"pushed_at": known,
                            "vouched": machine in vouched,
                            "index_name": vouched.get(machine),
                            "index_pushed_at": known,
                            "index_stamp": (entry.get("stamp")
                                            if isinstance(entry, dict)
-                                           else None),
-                           "authenticated": authenticated}
+                                           else None)}
     return setups, refused
 
 

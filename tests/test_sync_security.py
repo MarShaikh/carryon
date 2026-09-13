@@ -40,13 +40,13 @@ from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_CLAUDE_MD, GOOD_COMMAND, GOOD_SETTINGS, SECRET,
     SETUP_CATEGORIES, ListsOneExtraKey, author_setup, build_home_a,
     build_home_b, file_keyring, files_containing, item, link_home, manifest,
-    ns, paired, remac_setup, stored_setup)
+    ns, paired, reseal_setup, stored_setup)
 
 # Since the Setup gained its authentication tag (test_setup_auth.py), a tree
 # edited by a KEYLESS attacker is refused whole before any item is read. The
 # item-level guards these tests assert still have to hold - a hostile or
 # compromised key holder produces exactly an authenticated tree full of
-# malicious items - so each tamper below is re-stamped with remac_setup to
+# malicious items - so each tamper below is re-stamped with reseal_setup to
 # model that source, and the guards stay the thing under test.
 
 
@@ -60,7 +60,7 @@ def test_absolute_src_is_not_written(tmp_path, paired, capsys):
     landing = tmp_path / "pwned" / "cron.d" / "x"
     author_setup(paired.dest_root, "machine-a",
                  [item(str(landing), "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -74,7 +74,7 @@ def test_src_climbing_out_of_home_is_not_written(tmp_path, paired, capsys):
     landing = tmp_path / "outside" / "evil.txt"
     author_setup(paired.dest_root, "machine-a",
                  [item("../outside/evil.txt", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -88,7 +88,7 @@ def test_src_pointing_into_carryons_own_state_is_not_written(paired, capsys):
     Destination - the carve-out config._relative_to_home already makes."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".carryon/master.key", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "master.key").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -108,7 +108,7 @@ def test_dst_climbing_out_of_the_staging_dir_reads_nothing(paired, capsys):
     secret = paired.home_b / ".ssh" / "id_ed25519"
     author_setup(paired.dest_root, "machine-a",
                  [item("leak.txt", "../" * 40 + str(secret).lstrip("/"))])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -124,7 +124,7 @@ def test_absolute_dst_reads_nothing(paired, capsys):
     secret = paired.home_b / ".ssh" / "id_ed25519"
     author_setup(paired.dest_root, "machine-a",
                  [item("leak.txt", str(secret))])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -142,7 +142,7 @@ def test_a_refused_item_does_not_stop_the_rest_of_the_setup(
         item(str(tmp_path / "pwned" / "x"), "claude/settings.json"),
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     capsys.readouterr()
@@ -379,7 +379,7 @@ def test_a_case_variant_of_carryons_own_state_is_not_written(paired, capsys):
     resolves to the same file."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".Carryon/master.key", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "master.key").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -395,7 +395,7 @@ def test_a_case_variant_of_carryons_config_is_not_written(paired, capsys):
     planted one turns the next push into arbitrary $HOME file publication."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".CARRYON/config.json", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "config.json").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -413,7 +413,7 @@ def test_a_src_no_adapter_declares_is_not_written(paired, capsys):
         item(".zshrc", "claude/settings.json"),
         item(".ssh/authorized_keys", "claude/settings.json"),
     ])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -433,7 +433,7 @@ def test_force_does_not_turn_an_undeclared_src_into_a_write_anywhere(
     (paired.home_b / "mnt").symlink_to(outside)
     author_setup(paired.dest_root, "machine-a",
                  [item("mnt/evil.sh", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True, force=True), paired.home_b) == 0
     capsys.readouterr()
@@ -492,7 +492,7 @@ def test_a_missing_packed_file_is_named_rather_than_silently_dropped(
      / "claude" / "CLAUDE.md").unlink()
     # re-stamped AFTER the deletion: the missing-file naming under test is
     # the MANIFEST item's, not the authentication tag's
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out

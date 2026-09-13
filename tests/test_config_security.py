@@ -45,10 +45,10 @@ from carryon.adapters import CONFIG  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     GOOD_COMMAND, GOOD_SETTINGS, SETUP_CATEGORIES, author_setup, build_home_a,
     build_home_b, file_keyring, files_containing, item, manifest, ns, paired,
-    remac_setup, stored_setup)
+    reseal_setup, stored_setup)
 
 # The end-to-end restore-leg tests below re-stamp the tampered tree with
-# remac_setup: since the Setup gained its authentication tag
+# reseal_setup: since the Setup gained its authentication tag
 # (test_setup_auth.py), an unstamped tamper is refused whole before the
 # state carve-out under test here is ever consulted, and the carve-out must
 # hold even for a Setup a hostile key holder authenticated.
@@ -258,7 +258,7 @@ def test_restore_refuses_a_case_variant_of_carryon_state(paired, capsys):
     MANIFEST naming '.Carryon/master.key' is refused, the file untouched."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".Carryon/master.key", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "master.key").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -294,7 +294,7 @@ def test_restore_symlink_into_carryon_state_leaves_the_key_untouched(
     (paired.home_b / "vault").symlink_to(paired.home_b / ".carryon")
     author_setup(paired.dest_root, "machine-a",
                  [item("vault/master.key", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "master.key").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -315,7 +315,7 @@ def test_pull_force_never_writes_into_carryon_state(paired, capsys):
     author_setup(paired.dest_root, "machine-a",
                  [item(".claude/commands", "claude/commands", kind="tree")],
                  files={"claude/commands/ship.md": GOOD_COMMAND})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True, force=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -349,7 +349,7 @@ def test_force_never_writes_through_a_link_below_the_item_root(paired, capsys,
     author_setup(paired.dest_root, "machine-a",
                  [item(".claude/commands", "claude/commands", kind="tree")],
                  files={"claude/commands/sub/" + member: ATTACKER_BYTES})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True, force=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -369,7 +369,7 @@ def test_force_never_writes_through_a_leaf_link(paired, capsys):
     author_setup(paired.dest_root, "machine-a",
                  [item(".claude/commands", "claude/commands", kind="tree")],
                  files={"claude/commands/notes.md": ATTACKER_BYTES})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True, force=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -390,7 +390,7 @@ def test_force_still_writes_an_ordinary_member_through_a_dotfiles_link(
     author_setup(paired.dest_root, "machine-a",
                  [item(".claude/commands", "claude/commands", kind="tree")],
                  files={"claude/commands/ship.md": GOOD_COMMAND})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True, force=True), paired.home_b) == 0
     capsys.readouterr()

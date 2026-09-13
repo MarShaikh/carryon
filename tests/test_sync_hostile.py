@@ -37,14 +37,14 @@ from carryon import config, destinations, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_CLAUDE_MD, GOOD_COMMAND, GOOD_SETTINGS, SECRET,
     SETUP_CATEGORIES, ListsOneExtraKey, author_setup, build_home_a,
-    file_keyring, files_containing, item, manifest, ns, paired, remac_setup,
+    file_keyring, files_containing, item, manifest, ns, paired, reseal_setup,
     stored_setup)
 
 # Since the Setup gained its authentication tag (test_setup_auth.py), a tree
 # edited without the master key is refused whole before any item is read.
 # The string-vs-syscall guards here still have to hold for a tree a key
 # holder DID stamp - a compromised source machine is exactly that - so each
-# tamper of the vouched tree below is re-stamped with remac_setup, keeping
+# tamper of the vouched tree below is re-stamped with reseal_setup, keeping
 # those guards the thing under test.
 
 # A forged report line, spelled the way pull spells the real one.
@@ -83,7 +83,7 @@ def test_a_dst_the_kernel_will_not_take_does_not_abort_the_pull(
         item(".claude/settings.json", dst),
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ], files={"claude/CLAUDE.md": GOOD_CLAUDE_MD})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -101,7 +101,7 @@ def test_a_src_the_kernel_will_not_take_does_not_abort_the_pull(paired,
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ], files={"claude/settings.json": GOOD_SETTINGS,
               "claude/CLAUDE.md": GOOD_CLAUDE_MD})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -130,7 +130,7 @@ def test_a_src_that_is_only_too_long_once_joined_to_home_is_refused(
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ], files={"claude/settings.json": GOOD_SETTINGS,
               "claude/CLAUDE.md": GOOD_CLAUDE_MD})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -153,7 +153,7 @@ def test_a_src_below_a_local_file_does_not_abort_the_pull(paired, capsys):
         item(".claude/commands/ship.md/evil.md", "claude/settings.json"),
     ], files={"claude/CLAUDE.md": GOOD_CLAUDE_MD,
               "claude/settings.json": EVIL_SETTINGS})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -177,7 +177,7 @@ def test_a_file_item_naming_a_local_directory_does_not_abort_the_pull(
         item(".claude/commands", "claude/settings.json"),
     ], files={"claude/CLAUDE.md": GOOD_CLAUDE_MD,
               "claude/settings.json": EVIL_SETTINGS})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -200,7 +200,7 @@ def test_a_deeply_nested_stored_manifest_does_not_abort_the_pull(paired,
     none of the three."""
     (stored_setup(paired.dest_root, "machine-a")
      / "MANIFEST.json").write_text(NESTED)
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     # code=2: no abort, and no false success either - the Setup carryon chose
     # could not be used, and the status says so while the report survives.
@@ -468,7 +468,7 @@ def test_a_manifest_agent_key_cannot_forge_a_line_of_the_pull_report(
     doc["agents"] = {f"claude-code\n{FORGERY}\nz": doc["agents"]["claude-code"]}
     (stored_setup(paired.dest_root, "machine-a")
      / "MANIFEST.json").write_text(json.dumps(doc, indent=2))
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -484,7 +484,7 @@ def test_a_stored_tree_member_cannot_forge_a_line_of_the_pull_report(
     fields does not reach it."""
     stored = stored_setup(paired.dest_root, "machine-a")
     (stored / "claude" / "commands" / f"a\n{FORGERY}\nb.md").write_text("hi\n")
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
