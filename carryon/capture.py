@@ -792,18 +792,33 @@ def write_archive(out: pathlib.Path, archive: pathlib.Path,
 def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
             archive: pathlib.Path = None) -> tuple:
     print("-" * 74)
+    # Reported, in a Setup exactly as it already is in a History (ADR-0014).
+    # It refused here until the Setup was sealed, and the refusal was load-
+    # bearing while it was: a Setup went to the Archive in the clear, so
+    # stopping the push was the only thing between somebody's `env` block and
+    # a readable object in a bucket. Sealing is what stands there now, which
+    # is strictly better than the refusal's best case - where the credential
+    # never travelled because nothing did.
+    #
+    # What refusing could not do is fix the case it was written for.
+    # `.claude/settings.json` holds an `env` block, that block is where an
+    # ANTHROPIC_API_KEY goes, and the file is a CONFIG Item no Adapter change
+    # can stop carrying - so "a hit means the capture list is wrong" had no
+    # purchase on it, and the user was left with a push they could not unblock.
     if cap.findings:
-        print("SECRET SCAN: FAILED - do not commit or transfer this Setup\n")
+        print(f"SECRET SCAN: {len(cap.findings)} file(s) hold something that "
+              "matches a credential shape\n")
         for label, hits in cap.findings:
             print(f"  !! {label}\n     matched: {', '.join(hits)}")
-        print("\nThis is fail-closed on purpose. A Setup should contain no")
-        print("credentials, so a hit means the capture list is wrong. Fix it, re-run.")
-        if not dry:
-            print("\nRefusing to finalise. Written files left in place for inspection.")
-            return 2, manifest
-        return 1, manifest
-
-    print("SECRET SCAN: clean - no credential patterns in the captured set")
+        print("\nNamed, not refused. carryon does not manage your secrets for "
+              "you -")
+        print("it makes sure nothing crosses in the clear. If one of these is a "
+              "real")
+        print("credential you did not mean to carry, it is worth moving out of "
+              "the")
+        print("file rather than out of the Setup.")
+    else:
+        print("SECRET SCAN: no credential patterns in the captured set")
 
     if cap.skipped:
         # Beside the scan verdict rather than folded into it: the Setup is
@@ -857,7 +872,16 @@ def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
                                           cap.identities))
         print(f"  {archive}  ({archive.stat().st_size/1024:.0f}K)")
 
-    print("\nThis Setup passed the credential scan, so private storage of any")
-    print("kind will do. Your History is not in it - `carryon push` carries")
-    print("that separately and encrypts it unconditionally.")
+    # Deliberately not "the scan passed, so anywhere will do", which is what
+    # stood here and is the sentence CONTEXT.md retired the word `clean` over:
+    # it named the scan's coverage while reading as a guarantee about the
+    # bytes. This directory is plaintext because the user asked for a Setup
+    # they can read (ADR-0014), and where it is safe to put is theirs to know.
+    print("\nThis is a Setup in the clear, on the machine that already holds "
+          "the")
+    print("secrets. What `carryon push` publishes is sealed; this is not, so "
+          "it")
+    print("is only as private as the directory you put it in. Your History is "
+          "not")
+    print("in it - push carries that separately, encrypted.")
     return 0, manifest

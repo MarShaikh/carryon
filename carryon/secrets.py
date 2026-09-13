@@ -1,11 +1,22 @@
 """Credential detection for captured files.
 
-In a Setup this module does not mask, it REFUSES. A Setup should contain no
-credentials at all, so a hit means the capture list is wrong - not that the
-output needs cleaning up afterwards. A History is the other posture: the same
-scan() runs there, but hits are reported and the Sessions carried encrypted,
-because a credential echoed to a terminal in the past cannot be un-echoed
-(see docs/adr/0001).
+This module names what it finds and never refuses (ADR-0014). It used to
+refuse in a Setup, on the reasoning that a Setup should contain no credentials
+at all - so a hit meant the capture list was wrong and was therefore fixable.
+That reasoning broke on `.claude/settings.json`, whose `env` block is where an
+API key goes and which no Adapter change can stop carrying: the hit was real,
+the cure did not exist, and the user was left with a push nothing could
+unblock.
+
+What made refusing load-bearing was storage, not detection - a Setup went to
+the Archive in the clear, so stopping the push was the only thing between that
+`env` block and a readable object in a bucket. Both halves are sealed now, so
+the scan keeps its whole job and loses its veto.
+
+Nothing about secrecy may rest on it. It is a list of shapes somebody
+maintains, and carryon's own master key is bare hex that no pattern here
+matches; encryption is what protects the bytes, and a quiet report means "no
+shape I know", never "there was nothing there".
 
 Rule set follows entangle's internal/redact (MIT).
 """

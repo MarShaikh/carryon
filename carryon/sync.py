@@ -175,13 +175,27 @@ def _open_destination(home):
     return cfg, destinations.from_spec(cfg["destination"], home)
 
 
-def _require_master(home) -> bytes:
+def _require_master(home, for_push: bool = False) -> bytes:
+    """The master key, or a refusal naming what to do about not having one.
+
+    `for_push` adds the cure that is only a cure on the way OUT. Since
+    ADR-0014 a Setup is sealed like everything else, so a push with no key
+    writes nothing at all - and a user who wanted a readable Setup rather than
+    a published one has somewhere to put it that is not somebody else's
+    storage. Saying so here is the difference between a refusal that reads as
+    a dead end and one that names the thing they were actually after.
+    """
     master = keyring.fetch_master(home=home)
     if master is None:
-        raise SystemExit(
-            "this machine holds no master key - run `carryon init`, or "
-            "`carryon init --join CODE --dest SPEC` with a code from "
-            "`carryon pair` on an already-paired machine")
+        cure = ("this machine holds no master key - run `carryon init`, or "
+                "`carryon init --join CODE --dest SPEC` with a code from "
+                "`carryon pair` on an already-paired machine")
+        if for_push:
+            cure += (". Everything carryon carries is encrypted, a Setup "
+                     "included, so there is nothing a keyless push could "
+                     "write. For a Setup you can read, `carryon capture --out "
+                     "DIR --apply` writes one here in the clear")
+        raise SystemExit(cure)
     return master
 
 
@@ -403,13 +417,14 @@ def push(args, home) -> int:
                         else want_categories & set(SETUP_CATEGORIES))
     do_history = want_categories is None or HISTORY in want_categories
 
-    # Only a History is encrypted (ADR-0004), so a Setup-only push must work
-    # with no master key at all - locked keychain, machine never paired.
-    # Without a key the encrypted Index cannot be read or written, so such a
-    # push records nothing there; pull learns of the Setup from the plaintext
-    # tree's own MANIFEST instead.
-    master = (_require_master(home) if do_history
-              else keyring.fetch_master(home=home))
+    # Every push needs the key now, History or not (ADR-0014). A Setup-only
+    # push used to work without one, because only a History was encrypted -
+    # locked keychain, machine never paired. With both halves sealed there is
+    # nothing such a push could write, so the warning it used to print becomes
+    # this refusal. It is the one capability ADR-0014 takes away, and the case
+    # that made it worth having - a machine whose keychain entry is gone - is
+    # answered by pairing again rather than by publishing in the clear.
+    master = _require_master(home, for_push=True)
 
     print(f"{'PUSH PLAN (dry run)' if not apply else 'PUSHING'} -> "
           f"{dest.describe()}\n")
@@ -802,11 +817,10 @@ def push(args, home) -> int:
                       "the rest of the Setup went:")
                 for rel in setup_undecodable:
                     print(f"  -- {rel}")
-            if apply and setup_pushed and master is None:
-                print("  warning: pushed without a master key, so this Setup "
-                      "carries no authentication tag and cannot be verified "
-                      "by the machines that pull it (ADR-0004; the encrypted "
-                      "Index was not touched)")
+            # The keyless warning that stood here has gone with the path that
+            # produced it (ADR-0014): a push with no master key refuses before
+            # it reaches this report, so there is no longer such a thing as a
+            # Setup in the Archive that no key holder wrote.
     else:
         # The same line pull prints for the same skip, because the reasoning
         # cuts both ways: a leg that merely vanishes reads as a push that

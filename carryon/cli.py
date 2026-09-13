@@ -354,9 +354,10 @@ def cmd_list(args) -> int:
                      and adapters_present(home / item.src)]
             if names:
                 print(f"        {category:<11} {', '.join(names)}")
-    print("\nEverything above is Setup - carried plaintext, refused if a "
-          "credential is found.\nThe History (Transcripts, per-project "
-          "memory) moves with `carryon push`, always encrypted.")
+    print("\nEverything above is Setup, and it travels sealed like the "
+          "History\n(Transcripts, per-project memory) beside it - one promise, "
+          "both\nhalves. A credential found in either is named, not refused "
+          "(ADR-0014).")
     return 0
 
 
@@ -547,9 +548,8 @@ def build_parser() -> argparse.ArgumentParser:
         # which is what decides whether the storage needs to be private.
         description="Carry an AI coding agent's working life between "
                     "machines: the Setup that makes an agent yours, and the "
-                    "History of what you did with it - the Setup in the clear "
-                    "and checked for credentials, the History always "
-                    "encrypted.")
+                    "History of what you did with it. carryon reports what it "
+                    "sees and encrypts what it carries.")
     parser.add_argument("--version", action="version",
                         version=f"carryon {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
