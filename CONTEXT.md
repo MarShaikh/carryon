@@ -111,12 +111,15 @@ with each other
 
 **Probe**:
 The random bytes under a random name `init` writes, reads back and deletes to
-prove a Destination works before anything is minted. It lands in the
-plaintext half of untrusted storage before any master key exists, so it
-carries no machine name, no home path and no timestamp. Passing it means
-write, read and delete work - nothing about whether the storage is private,
-which no probe can answer.
-_Avoid_: health check, ping (a Probe moves real bytes through the real verbs)
+prove a Destination works before anything is minted. It is the one thing
+carryon writes in the clear, and it has no choice: it runs before any master
+key exists, so there is nothing to seal it with. That is why it carries no
+machine name, no home path and no timestamp — it is content chosen to mean
+nothing to whoever reads it. Passing it means write, read and delete work,
+nothing about whether the storage is private, which no probe can answer.
+_Avoid_: health check, ping (a Probe moves real bytes through the real verbs);
+"the Archive's plaintext half" for where it lands — after ADR-0014 there is no
+such half, only this one deliberate exception
 
 **Sync**:
 Carrying a History both ways in one step: what the Archive holds and this
@@ -166,16 +169,17 @@ _Avoid_: version, sync state (it records how far this machine has got, nothing
 about what was pushed)
 
 **Authenticated**:
-What a machine's Setup is once a master key holder has pushed it: a tag over the
-whole tree, with the Index recording that the tag exists and which tree is
-current. The record lives in the Index because the tag itself sits where an
-attacker can strip it — a tag that can be stripped is not a guard. A keyless
-push produces an unauthenticated Setup, and warns — which ADR-0014 unsettles
-rather than answers: once a Setup is sealed under the master key there is
-nothing for a keyless push to write, so that warning becomes a refusal and the
-word stops distinguishing anything. Settle it when ADR-0014 is built.
-_Avoid_: verified, signed (nothing here is a signature; one key both writes
-and checks)
+Retired by ADR-0014. It named a Setup a master key holder had pushed, as
+against one anybody could have — a distinction that existed because a keyless
+push could write a Setup at all. Once a Setup is sealed there is nothing to
+write without the key, so every Setup in an Archive is the first kind and the
+word divides nothing. What outlived it is the Index's record of **which tree is
+current**, which was always a separate question: a seal says a key holder wrote
+these bytes at some time, and a versioned Destination keeps every sealed tree it
+has ever held, all of which open. Say _current_ for that, and say _sealed_ for
+what a seal proves.
+_Avoid_: authenticated, unauthenticated (both retired), verified, signed
+(nothing here is a signature; one key both writes and checks)
 
 **Pairing**:
 Giving a new machine the master key by way of a short one-time code, so nobody
