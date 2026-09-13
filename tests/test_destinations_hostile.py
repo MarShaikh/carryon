@@ -1157,6 +1157,8 @@ elif verb == "cat":
     target = resolve(rest[0])
     extra = ctl.get("shadow", {}).get(rel_of(rest[0]))
     if not target.is_file():
+        if ctl.get("cat_missing_is_empty"):
+            raise SystemExit(0)      # an object store: exit 0, nothing served
         sys.stderr.write("object not found\n")
         raise SystemExit(1)
     # rclone cat on a prefix concatenates every object under it and exits 0,
@@ -1212,6 +1214,21 @@ class RcloneStore:
 
     def copyto_writes_nothing(self, on=True):
         self._set(copyto_noop=bool(on))
+
+    def cat_missing_serves_nothing(self, on=True):
+        """Answer `cat` on an absent object the way an object store does:
+        exit 0, having served no bytes.
+
+        A local backend errors on a key that is not there, and this store is
+        a local directory, so without this knob the suite only ever saw the
+        one spelling. On S3 - and so on R2, GCS and every bucket carryon is
+        for - `rclone cat` cannot say "no such object": it exits 0 and writes
+        nothing, which is byte-for-byte what it does for an object holding
+        nothing. Only a listing separates them. Verified against live R2 on
+        2026-09-03, where the fake's exit 1 had hidden a read that answered
+        b'' for every absent key and an `init` that could not be run.
+        """
+        self._set(cat_missing_is_empty=bool(on))
 
     def deletefile_removes_nothing(self, on=True, only=None):
         """A delete that exits 0 and removes nothing - RCLONE_DRY_RUN in this
@@ -1453,6 +1470,37 @@ def test_a_verb_that_starts_failing_mid_run_names_the_object(tmp_path,
     assert dest.read(SETUP_PREFIX + "/settings.json") is None
     out = capsys.readouterr().out
     assert "settings.json" in out and "skipping" in out
+
+
+def test_an_object_store_serving_nothing_for_an_absent_key_reads_as_absent(
+        tmp_path, monkeypatch):
+    """`cat` on a key that is not there exits 0 and serves no bytes, and that
+    has to read as absent rather than as an object holding nothing.
+
+    The distinction is the whole of `occupied`'s question. An Index that
+    answers b'' instead of None is an empty bucket reported as somebody
+    else's Archive, and `init` refuses against it - so the first machine a
+    user sets up on an object store cannot be set up at all.
+    """
+    store = install_rclone_store(tmp_path, monkeypatch)
+    store.cat_missing_serves_nothing()
+    dest = RcloneDestination("fakeremote:archive")
+
+    assert dest.read("carryon/index.enc") is None
+
+
+def test_an_empty_bucket_is_not_an_archive(tmp_path, monkeypatch):
+    """The consequence the user meets: `init` asks occupancy first, and a
+    Destination nothing has been pushed to must answer no.
+
+    Asked through `archive.occupied` rather than through the read, because
+    the refusal it drives is the one that cost this its own session.
+    """
+    store = install_rclone_store(tmp_path, monkeypatch)
+    store.cat_missing_serves_nothing()
+    dest = RcloneDestination("fakeremote:archive")
+
+    assert archive.occupied(dest) is False
 
 
 # =============================================================================
