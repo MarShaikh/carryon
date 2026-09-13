@@ -1269,6 +1269,12 @@ def user_adapter(cfg: dict, home: pathlib.Path = HOME) -> Adapter:
     and the manifest says so. But because they are ordinary config Items, the
     existing engine captures them and the fail-closed scanner refuses on any
     credential inside, which is the safety property ADR-0008 buys for free.
+
+    `vouched=False` is the same sentence said where the engine can read it.
+    It was a string in `verified_against` and a note on every Item, which a
+    person can see and no code can ask, and ADR-0013 gives carryon its first
+    reason to narrow a declared tree - so the one declaration it must never
+    narrow needs to be a question with an answer rather than prose.
     """
     items = []
     for raw in cfg.get("carry", []):
@@ -1283,4 +1289,5 @@ def user_adapter(cfg: dict, home: pathlib.Path = HOME) -> Adapter:
         verified_against="user-supplied - unvouched",
         items=tuple(items),
         platforms=PLATFORMS,
+        vouched=False,
     )

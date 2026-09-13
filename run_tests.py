@@ -29,6 +29,7 @@ MODULES = (
     "tests.test_harness",
     "tests.test_secrets",
     "tests.test_capture",
+    "tests.test_development_artifacts",
     "tests.test_layout",
     "tests.test_transport",
     "tests.test_crypto",

@@ -118,3 +118,18 @@ class Adapter:
     is how a vendor's redesign first becomes visible. fnmatch patterns are
     allowed, so `daemon*` covers a family of files.
     """
+
+    vouched: bool = True
+    """Whether this adapter stands behind the contents of what it declares.
+
+    True for every real adapter, and that is the point of the default: an
+    adapter names a directory the user never named, on their behalf, so it
+    vouches for what is in it and carryon may leave Development artifacts out
+    (ADR-0013). Nobody writing an adapter has to remember to say so.
+
+    False on one adapter in the package - the handpicked pseudo-adapter
+    config.user_adapter builds out of `carry`. The user named those paths
+    themselves, ADR-0008 says a user-added path always joins the Setup, and a
+    `carry` entry pointing at a directory called `tests` is carried as a
+    directory called `tests`. Nothing narrows a path its owner chose.
+    """
