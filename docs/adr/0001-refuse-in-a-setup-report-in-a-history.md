@@ -1,5 +1,11 @@
 # Refuse credentials in a Setup, report them in a History
 
+> Status: the Setup half is superseded by ADR-0014, which encrypts both halves
+> and reports in both. The History half below stands, and its 26% was
+> re-measured at 27.6% on an unrelated corpus while ADR-0014 was decided. The
+> reasoning here is why the split existed and why it stopped holding, so it is
+> kept rather than rewritten.
+
 carryon was built on a fail-closed credential scanner: a hit stops the capture
 and produces nothing, on the reasoning that a Setup should contain no
 credentials at all, so a hit means the Adapter is reading a file it shouldn't.

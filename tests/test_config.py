@@ -42,7 +42,8 @@ def test_missing_file_yields_defaults(tmp_path):
     assert cfg["machine"], "machine must default to a hostname, not empty"
     assert cfg["excludes"] == []
     assert cfg["carry"] == []
-    assert cfg["encrypt_all"] is False
+    assert "encrypt_all" not in cfg, \
+        "retired by ADR-0014 - encryption is the behaviour, not a knob"
 
 
 def test_save_then_load_round_trips(tmp_path):
@@ -96,7 +97,6 @@ def test_unknown_key_is_refused_and_named(tmp_path):
     ({"machine": ""}, "machine"),
     ({"excludes": ".claude/*"}, "excludes"),
     ({"carry": [1]}, "carry"),
-    ({"encrypt_all": "yes"}, "encrypt_all"),
 ])
 def test_wrong_value_names_the_offending_key(bad, key):
     cfg = config.default_config()
@@ -109,7 +109,7 @@ def test_wrong_value_names_the_offending_key(bad, key):
 def test_save_refuses_an_invalid_config(tmp_path):
     home = build_home(tmp_path)
     cfg = config.default_config()
-    cfg["encrypt_all"] = "yes"
+    cfg["excludes"] = ".claude/*"          # a string where a list belongs
 
     with pytest.raises(SystemExit):
         config.save(cfg, home=home)
@@ -274,3 +274,105 @@ def test_handpicked_paths_feed_the_fail_closed_scanner(tmp_path):
 
     assert cap.findings, "a credential in a handpicked path must be caught"
     assert entry["items"], "the engine must have actually visited the path"
+
+
+# --- retired settings (ADR-0014) --------------------------------------------
+#
+# `validate` refuses any key it does not know AND any known key that is
+# missing, deliberately - "a typo that validation shrugs at is a setting
+# silently not applied". That posture makes DELETING a setting a breaking
+# change: every config.json `carryon init` ever wrote holds the old name, and
+# refusing it would break the command the user would run to fix it. So a
+# retired name is a third category beside known and unknown.
+
+def test_a_retired_setting_is_dropped_on_read_rather_than_refused(tmp_path):
+    """The config this machine has been running with all along keeps working
+    the day the setting behind it is retired."""
+    home = build_home(tmp_path)
+    stored = config.default_config()
+    stored["encrypt_all"] = False          # written by an older carryon
+    write_config(home, stored)
+
+    cfg = config.load(home=home)
+
+    assert "encrypt_all" not in cfg, \
+        "a retired setting must not survive into the config carryon uses"
+    assert cfg["version"] == 1, "the rest of the file is still read"
+
+
+def test_a_retired_setting_is_named_rather_than_dropped_in_silence(
+        tmp_path, capsys):
+    """Silently ignoring it is the failure the strict validator exists to
+    prevent, one category over: the user has a line in a file that does
+    nothing, and nothing tells them."""
+    home = build_home(tmp_path)
+    stored = config.default_config()
+    stored["encrypt_all"] = True           # they had deliberately turned it on
+    write_config(home, stored)
+
+    config.load(home=home)
+
+    printed = capsys.readouterr().out
+    assert "encrypt_all" in printed
+    assert "retired" in printed.lower()
+
+
+def test_a_retired_setting_turned_on_is_still_only_dropped(tmp_path):
+    """`encrypt_all: true` asked for what carryon now always does, so there is
+    nothing to honour and nothing to refuse."""
+    home = build_home(tmp_path)
+    stored = config.default_config()
+    stored["encrypt_all"] = True
+    write_config(home, stored)
+
+    cfg = config.load(home=home)
+
+    assert "encrypt_all" not in cfg
+
+
+def test_a_retired_setting_of_the_wrong_type_is_still_only_dropped(tmp_path):
+    """It is not validated on the way out. A retired name has no valid value,
+    so a hand-edited `encrypt_all: "yes"` must not refuse a config whose
+    every live setting is fine."""
+    home = build_home(tmp_path)
+    stored = config.default_config()
+    stored["encrypt_all"] = "yes"
+    write_config(home, stored)
+
+    cfg = config.load(home=home)
+
+    assert "encrypt_all" not in cfg
+
+
+def test_a_name_that_was_never_a_setting_is_still_refused(tmp_path):
+    """The negative control. Retirement is a named list, not an amnesty: a
+    typo must still be refused, which is the whole reason the validator is
+    strict."""
+    home = build_home(tmp_path)
+    stored = config.default_config()
+    stored["encrpt_all"] = False           # a typo, not a retired name
+    write_config(home, stored)
+
+    with pytest.raises(SystemExit) as exc:
+        config.load(home=home)
+    assert "encrpt_all" in str(exc.value)
+
+
+def test_a_retired_setting_cannot_be_saved_back(tmp_path):
+    """`load` repairs a file an older carryon wrote; `save` writes what this
+    one means. A dead key must not be written afresh, or the next carryon to
+    retire something finds the name still spreading."""
+    home = build_home(tmp_path)
+    cfg = config.default_config()
+    cfg["encrypt_all"] = False
+
+    with pytest.raises(SystemExit) as exc:
+        config.save(cfg, home=home)
+    assert "encrypt_all" in str(exc.value)
+
+
+def test_encrypt_all_is_no_longer_a_setting():
+    """The knob itself. ADR-0014 makes encryption the behaviour rather than
+    something to turn on, and a knob that can be turned off would restore the
+    plaintext case for exactly the user who turns it off."""
+    assert "encrypt_all" not in config.default_config()

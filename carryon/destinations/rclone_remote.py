@@ -363,7 +363,19 @@ class RcloneDestination(Destination):
                     "object's. Nothing carryon wrote put that prefix there; "
                     "remove it, or use a Destination nobody else writes to")
                 return None
-            return result.stdout
+            # Served nothing is read as absent, because on an object store
+            # `cat` has no way to say "no such object": it exits 0 and writes
+            # nothing both for a key that was never there and for one holding
+            # no bytes, and only a listing separates them. carryon writes no
+            # empty object - the Index, the Sessions, the manifests and the
+            # pairing blob are all sealed or JSON - so the two cases it must
+            # tell apart are absent and present-with-bytes, and this tells
+            # them apart without the extra `lsf` that asking would cost on
+            # every read. A foreign empty object at a carryon key is still
+            # somebody's Archive in a state worth investigating, and still
+            # refused as one: `occupied` asks the listing too, and the
+            # listing sees it.
+            return result.stdout or None
         there, why = self._present(key)
         if there is None:
             raise self._unreachable(f"say whether it holds {key}", why)

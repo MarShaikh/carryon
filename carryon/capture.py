@@ -70,7 +70,7 @@ import pathlib
 import tarfile
 from datetime import datetime, timezone
 
-from . import __version__, config, external
+from . import __version__, config, development, external
 from .adapters import ADAPTERS, HISTORY, HOME, SETUP_CATEGORIES, is_installed
 from .config import state_identities, unsafe_reads
 from .destinations.base import printable
@@ -124,6 +124,82 @@ def tree_files(root: pathlib.Path) -> tuple:
             continue
         files.append(path)
     return files, skipped
+
+
+def _split_workshop(root: pathlib.Path, files) -> tuple:
+    """(carried, declined): `files` minus the Development artifacts under
+    `root`, and the directories those stood in - each named once, as an
+    absolute path.
+
+    The rule is development.workshop_prefix and the walk is tree_files; this
+    is only the join between them, and it is module-level so that the engine
+    and `doctor` share it. A doctor that answered this question its own way
+    would be a doctor that could disagree with the capture it is describing,
+    which is the same gap `tree_files`' own docstring exists to record.
+    """
+    carried, declined = [], set()
+    for path in files:
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            # A member the walk reached from outside the tree is nothing this
+            # rule has an opinion about. Carry it, and leave it to the gates
+            # that do have one.
+            carried.append(path)
+            continue
+        prefix = development.workshop_prefix(rel)
+        if prefix is None:
+            carried.append(path)
+            continue
+        declined.add(root / prefix)
+    return carried, sorted(declined)
+
+
+def _vouched_roots(src: pathlib.Path, kind: str) -> list:
+    """The directories a handler of `kind` walks under one declared Item.
+
+    One for a tree. For a skills directory, one per REAL subdirectory, which
+    is the set do_skills copies: a symlink into the shared store re-resolves
+    on the other machine and carryon carries none of its bytes, so what is
+    inside it is not this question's business.
+    """
+    try:
+        if kind != "skills":
+            return [src] if src.is_dir() else []
+        return [path for path in sorted(src.iterdir())
+                if not path.is_symlink() and path.is_dir()]
+    except OSError:
+        # Same posture as every other walk here: a path this machine will not
+        # answer about is reported by whoever meets it, never raised out of a
+        # question about what would be left behind.
+        return []
+
+
+def would_decline(adapter, home: pathlib.Path = HOME) -> list:
+    """Every Development artifact directory a capture would leave out of the
+    trees this adapter declares, $HOME-relative and sorted (ADR-0013).
+
+    `doctor`'s half of ADR-0013, and it asks the engine rather than walking
+    for itself. An unvouched adapter answers with nothing at all, because
+    nothing is left out of a path the user named.
+    """
+    if not adapter.vouched:
+        return []
+    home = pathlib.Path(home)
+    found = set()
+    for item in adapter.items:
+        if item.kind not in ("tree", "skills"):
+            continue
+        for root in _vouched_roots(home / item.src, item.kind):
+            files, _ = tree_files(root)
+            found.update(_split_workshop(root, files)[1])
+    named = []
+    for path in found:
+        try:
+            named.append(str(path.relative_to(home)))
+        except ValueError:
+            named.append(str(path))
+    return sorted(named)
 
 
 def _size(path: pathlib.Path) -> int:
@@ -201,6 +277,14 @@ class Capture:
         # capture is still clean, it just covers less than the adapters
         # declare, and a user who is not told reads it as covering more.
         self.skipped = []
+        # Development artifact directories left out of a vouched tree
+        # (ADR-0013). A THIRD register, and the distinction is the point: a
+        # skip is this machine declining to hand something over and may be
+        # something to fix, a decline is carryon choosing and is working as
+        # intended. Folding the two would make a Setup that covers less than
+        # the adapters declare look the same as one that covers exactly what
+        # it should.
+        self.declined = []
 
     def _check(self, label: str, data: bytes) -> None:
         hits = scan(data)
@@ -229,17 +313,57 @@ class Capture:
         self.bytes += len(data)
         return True
 
+    def _named(self, path: pathlib.Path) -> str:
+        """A path as the user would type it - relative to $HOME where it can
+        be, and whatever it actually is where it cannot."""
+        try:
+            return str(path.relative_to(self.home))
+        except ValueError:
+            return str(path)
+
     def _report_skipped(self, skipped) -> None:
         """Name every path the walk would not take. Silence here reads as a
         capture that covered more than it did, which is the failure the whole
         report exists to prevent."""
         for path, why in skipped:
-            try:
-                rel = str(path.relative_to(self.home))
-            except ValueError:
-                rel = str(path)
+            rel = self._named(path)
             print(f"        -- {printable(rel)}  skipped: {why}")
             self.skipped.append(rel)
+
+    def _decline(self, root: pathlib.Path, files, vouched: bool) -> tuple:
+        """(carried, declined): a vouched tree's files minus its Development
+        artifacts, and the directories those were left in (ADR-0013).
+
+        Asked HERE rather than inside `tree_files`, and that is the whole
+        design. `tree_files` answers what a walk found, and it is walked for
+        every tree there is - including a handpicked one, which becomes an
+        ordinary kind='tree' Item and must not be narrowed by anything
+        (ADR-0008, config.user_adapter). The question this asks is about the
+        DECLARATION rather than about the files, so it is asked where the
+        declaration is known.
+
+        The declined names are directories, one per tree however many files
+        stood under it, and they are returned rather than reported from here:
+        the caller puts them where excludes are named, because that is the
+        class of thing they are.
+        """
+        if not vouched:
+            return files, []
+        carried, declined = _split_workshop(root, files)
+        return carried, [self._named(path) for path in declined]
+
+    def _report_declined(self, declined) -> None:
+        """Name what carryon chose not to carry, in its own words.
+
+        Not `skipped:` - that register means this machine would not hand
+        something over, which is a shortfall a user may want to fix. This one
+        is carryon working as intended, and a Setup that is smaller and truer
+        for it.
+        """
+        for rel in declined:
+            print(f"        ..  {printable(rel)}  left behind: "
+                  f"{development.WHAT}")
+            self.declined.append(rel)
 
     def _read(self, path):
         """One user file's bytes, or (None, why) - the engine's only read.
@@ -259,8 +383,14 @@ class Capture:
         """
         return config.read_carryable(path, self.home, self.identities)
 
-    def do_file(self, src, dst, item):
-        """One declared file. None when this machine will not hand it over."""
+    def do_file(self, src, dst, item, vouched: bool = False):
+        """One declared file. None when this machine will not hand it over.
+
+        `vouched` is taken and ignored, here and in do_json_strip: the
+        dispatch in `_capture_agent` is uniform across kinds on purpose, and
+        vouching decides what may be left out of a TREE. An Item naming one
+        file is carried or it is not.
+        """
         data, why = self._read(src)
         if data is None:
             print(f"      !!  {item.src:<46} skipped: {why}")
@@ -272,8 +402,9 @@ class Capture:
             return None
         return {}
 
-    def do_tree(self, src, dst, item):
+    def do_tree(self, src, dst, item, vouched: bool = False):
         files, skipped = tree_files(src)
+        files, declined = self._decline(src, files, vouched)
         size = sum(_size(p) for p in files)
         print(f"      {item.src:<46} {len(files):>3} files {size/1024:>6.1f}K  {item.note}")
         readable = []
@@ -291,9 +422,10 @@ class Capture:
             self.bytes += written
             skipped += failed
         self._report_skipped(skipped)
-        return {}
+        self._report_declined(declined)
+        return {"declined": declined}
 
-    def do_json_strip(self, src, dst, item):
+    def do_json_strip(self, src, dst, item, vouched: bool = False):
         data, why = self._read(src)
         if data is None:
             print(f"      !!  {item.src:<46} skipped: {why}")
@@ -323,7 +455,7 @@ class Capture:
             return None
         return {"stripped_keys": removed}
 
-    def do_skills(self, src, dst, item):
+    def do_skills(self, src, dst, item, vouched: bool = False):
         """Sort a skills directory into three groups.
 
         re-resolvable  a symlink into the shared store, recorded in a lock file
@@ -342,7 +474,7 @@ class Capture:
         store = (self.home / item.resolvable_via).resolve() if item.resolvable_via else None
 
         resolvable, external, owned = [], {}, []
-        skipped = []
+        skipped, declined = [], []
         try:
             entries = sorted(src.iterdir(), key=lambda p: p.name)
         except OSError as exc:
@@ -369,6 +501,11 @@ class Capture:
             print(f"        + {path.name}  (no upstream - lost if not carried)")
             files, bad = tree_files(path)
             skipped += bad
+            # Per skill, not per skills directory: the name a user acts on is
+            # `skills/mine/tests`, and one carried skill having a test tree
+            # says nothing about the next one.
+            files, left = self._decline(path, files, vouched)
+            declined += left
             readable = []
             for f in files:
                 data, why = self._read(f)
@@ -386,12 +523,18 @@ class Capture:
         for name, target in external.items():
             print(f"        ~ {name}  managed elsewhere: {target}")
         self._report_skipped(skipped)
+        self._report_declined(declined)
 
         return {"carried": [p.name for p in owned],
                 "re_resolvable": resolvable,
-                "external": external}
+                "external": external,
+                "declined": declined}
 
 
+# Every handler takes the same four arguments - source, landing path, Item,
+# and whether the adapter that declared it vouches for its contents - because
+# the dispatch below is one getattr and a kind that grew a private signature
+# would be a kind the dispatcher had to know about by name.
 HANDLERS = {
     "file": "do_file",
     "tree": "do_tree",
@@ -444,11 +587,22 @@ def _capture_agent(cap: Capture, adapter, want_categories: set) -> dict:
         # inside `out` that something else holds. It is named where it was met
         # and recorded as absent, because a MANIFEST entry for a file that was
         # never written is a restore that refuses it later.
-        extra = getattr(cap, HANDLERS[item.kind])(src, cap.out / item.dst, item)
+        extra = getattr(cap, HANDLERS[item.kind])(src, cap.out / item.dst,
+                                                  item, adapter.vouched)
         if extra is None:
             entry["absent"].append(
                 item.src + " (this machine would not hand it over)")
             continue
+        # A Development artifact left out of a vouched tree is named where the
+        # adapter's own exclusions are named, and deliberately not beside
+        # layout_drift: drift is a vendor moving a path and is something to
+        # look into, this is carryon declining to carry something and is the
+        # same class of thing as an exclude (ADR-0013). One register means the
+        # MANIFEST, the restore notes and everything downstream of them get it
+        # without being taught a second word.
+        entry["excluded"] += [{"path": path, "what": development.WHAT,
+                               "why": development.WHY}
+                              for path in extra.pop("declined", ())]
         record = {"src": item.src, "dst": item.dst, "kind": item.kind,
                   "category": item.category, "note": item.note}
         record.update(extra)
@@ -657,6 +811,14 @@ def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
         # adapters declare. A user who is not told reads it as covering more.
         print(f"\n{len(cap.skipped)} path(s) NOT captured - this machine would "
               "not read them (named above)")
+
+    if cap.declined:
+        # And its own line again, for the opposite reason. Nothing is wrong
+        # here: a Setup carries a capability, not the workshop that built it
+        # (ADR-0013), and this is the sentence that stops a user reading a
+        # smaller Setup as a broken one.
+        print(f"\n{len(cap.declined)} tree(s) left behind - development "
+              "artifacts a Setup does not carry (named above)")
 
     drift = {key: agent["layout_drift"] for key, agent in manifest["agents"].items()
              if agent["layout_drift"]}

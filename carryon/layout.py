@@ -4,12 +4,21 @@ Vendors move files without notice. When that happens a path-driven tool has two
 options: fail loudly, or quietly copy less than the user thinks. Mackup chose
 the second by accident and broke for years before anyone could say exactly how.
 
-`inspect` answers three questions per installed agent:
+`inspect` answers four questions per installed agent:
   - is anything here that this adapter has never heard of?
   - is this platform one the adapter was actually verified on?
-  - and is there anything here this machine will not answer about?
+  - is there anything here this machine will not answer about?
+  - and is there anything here carryon would deliberately leave behind?
 
 Run it before a migration, not after.
+
+The fourth is ADR-0013's, and it is a separate line on purpose. A Development
+artifact left out of a vouched tree is NOT layout drift: drift means a vendor
+moved something and is a thing to look into, and this is carryon declining to
+carry a test suite, which is working as intended. Reporting them together
+would teach a user to read the one register that is meant to alarm them as
+routine. It is asked of capture.would_decline rather than answered here, so
+doctor cannot describe a Setup different from the one push produces.
 
 The third question is the one this walk was missing, and it is the same rule
 capture.tree_files and history._listing already spell for theirs: $HOME is
@@ -39,6 +48,7 @@ import pathlib
 import stat
 import sys
 
+from . import capture
 from .adapters import ADAPTERS, HOME
 from .destinations.base import printable
 
@@ -140,13 +150,14 @@ def inspect(home: pathlib.Path = HOME, platform: str = None) -> dict:
         if state == "absent":
             continue
 
-        unknown = []
+        unknown, declined = [], []
         if state == "dir":
             names, why = _entries(root)
             declared = _declared_under(root, home)
             unknown = sorted(name for name in names
                              if not _is_known(name, adapter.known_entries)
                              and name not in declared)
+            declined = capture.would_decline(adapter, home)
 
         report[key] = {
             "name": adapter.name,
@@ -155,6 +166,10 @@ def inspect(home: pathlib.Path = HOME, platform: str = None) -> dict:
             "platforms": list(adapter.platforms),
             "platform_verified": platform in adapter.platforms,
             "unknown": unknown,
+            # What a capture would deliberately leave out of this agent's
+            # vouched trees (ADR-0013). Its own key, never folded into
+            # `unknown`: one is a surprise and the other is a decision.
+            "declined": declined,
             # "" when the walk got a straight answer. Anything else is a
             # sentence about why it did not, and it is drift of its own kind.
             "unreadable": why,
@@ -171,7 +186,7 @@ def format_report(report: dict, platform: str = None) -> str:
         lines.append("  No supported agents found.")
         return "\n".join(lines)
 
-    drifting = blocked = False
+    drifting = blocked = declining = False
     for key, info in report.items():
         lines.append(f"  {printable(info['name'])}  ({printable(key)})")
         # Which directory was walked, said rather than implied: this report
@@ -201,6 +216,15 @@ def format_report(report: dict, platform: str = None) -> str:
                     lines.append(f"                       {printable(name)}")
             else:
                 lines.append("    unrecognised     : none")
+        # Only when there is something to say. A line reading "left behind:
+        # none" on every agent of every machine would train the eye past the
+        # one run where it is not none.
+        if info.get("declined"):
+            declining = True
+            lines.append("    left behind      : "
+                         f"{len(info['declined'])} development artifact(s)")
+            for path in info["declined"]:
+                lines.append(f"                       {printable(path)}")
         lines.append("")
 
     if drifting:
@@ -213,6 +237,16 @@ def format_report(report: dict, platform: str = None) -> str:
         ]
     elif not blocked:
         lines.append("Everything on disk is accounted for by an adapter.")
+    if declining:
+        lines += [
+            "",
+            "What is left behind is not a layout change and not a loss. A",
+            "Setup carries a capability, not what built it - the skill moves",
+            "and the test suite that proves it works stays, the same way an",
+            "exclude leaves something behind. It applies only to directories",
+            "an adapter declared for you; a path you named in `carry` is",
+            "carried as you named it.",
+        ]
     if blocked:
         lines += [
             "",

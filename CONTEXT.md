@@ -23,8 +23,10 @@ _Avoid_: backup, remote, bucket
 **Setup**:
 The part of a Snapshot that makes an agent yours rather than freshly installed —
 settings, skills, subagents, slash commands, standing instructions, plugin
-lists. Contains no credentials, and carryon refuses to produce one that does.
-_Avoid_: config (it is one of three categories inside a Setup, not the whole)
+lists. Carried encrypted, like a History (ADR-0014); a credential found in one
+is named, not refused.
+_Avoid_: config (it is one of three categories inside a Setup, not the whole),
+clean (retired — see Flagged ambiguities)
 
 **History**:
 The part of a Snapshot that records what you actually did — transcripts, and the
@@ -62,6 +64,26 @@ layout for, which is the one thing a declaration cannot supply.
 One thing an Adapter declares worth carrying, with a kind that tells the engine
 how to handle it.
 
+**Vouched**:
+What an Adapter does for a declaration it makes on the user's behalf: it names a
+directory the user never named, and stands behind what is in it. A handpicked
+path is the opposite and deliberately so — unvouched, but named by the person
+whose machine it is. The distinction decides who may narrow what a tree carries:
+carryon may leave Development artifacts out of a vouched tree, because the
+Adapter chose the whole directory and nobody asked for its contents one by one.
+It may not narrow a path the user named.
+_Avoid_: trusted (nothing here is about trusting the user), verified (that is
+Layout drift's word, about a vendor version)
+
+**Development artifact**:
+Content inside a carried tree that belongs to making the thing rather than to
+using it — a test suite, its fixtures, a build cache. A Setup carries what makes
+an agent yours, so a skill belongs in one and the tests that prove the skill
+works do not. Not a judgement about worth: they are worth keeping, and keeping
+them is a backup's job rather than a Snapshot's.
+_Avoid_: junk, cruft (they are neither), residue (taken — that is per-project
+memory in a History)
+
 **Layout drift**:
 An Adapter expecting a path the agent no longer uses. The early warning that a
 vendor has reorganised, and the reason Adapters record what version they were
@@ -89,12 +111,15 @@ with each other
 
 **Probe**:
 The random bytes under a random name `init` writes, reads back and deletes to
-prove a Destination works before anything is minted. It lands in the
-plaintext half of untrusted storage before any master key exists, so it
-carries no machine name, no home path and no timestamp. Passing it means
-write, read and delete work - nothing about whether the storage is private,
-which no probe can answer.
-_Avoid_: health check, ping (a Probe moves real bytes through the real verbs)
+prove a Destination works before anything is minted. It is the one thing
+carryon writes in the clear, and it has no choice: it runs before any master
+key exists, so there is nothing to seal it with. That is why it carries no
+machine name, no home path and no timestamp — it is content chosen to mean
+nothing to whoever reads it. Passing it means write, read and delete work,
+nothing about whether the storage is private, which no probe can answer.
+_Avoid_: health check, ping (a Probe moves real bytes through the real verbs);
+"the Archive's plaintext half" for where it lands — after ADR-0014 there is no
+such half, only this one deliberate exception
 
 **Sync**:
 Carrying a History both ways in one step: what the Archive holds and this
@@ -144,13 +169,17 @@ _Avoid_: version, sync state (it records how far this machine has got, nothing
 about what was pushed)
 
 **Authenticated**:
-What a machine's Setup is once a master key holder has pushed it: a tag over
-the whole plaintext tree, with the Index recording that the tag exists and
-which tree is current. The record lives in the Index because the tag itself
-sits where an attacker can strip it — a tag that can be stripped is not a
-guard. A keyless push produces an unauthenticated Setup, and warns.
-_Avoid_: verified, signed (nothing here is a signature; one key both writes
-and checks)
+Retired by ADR-0014. It named a Setup a master key holder had pushed, as
+against one anybody could have — a distinction that existed because a keyless
+push could write a Setup at all. Once a Setup is sealed there is nothing to
+write without the key, so every Setup in an Archive is the first kind and the
+word divides nothing. What outlived it is the Index's record of **which tree is
+current**, which was always a separate question: a seal says a key holder wrote
+these bytes at some time, and a versioned Destination keeps every sealed tree it
+has ever held, all of which open. Say _current_ for that, and say _sealed_ for
+what a seal proves.
+_Avoid_: authenticated, unauthenticated (both retired), verified, signed
+(nothing here is a signature; one key both writes and checks)
 
 **Pairing**:
 Giving a new machine the master key by way of a short one-time code, so nobody
@@ -175,40 +204,40 @@ user. The root of trust and the last resort; lose it and the History is gone.
 
 ### Handling credentials
 
-**Refuses**:
-What carryon does when it finds a credential in a Setup — stops, names the file,
-produces nothing. A hit there means the Adapter is wrong, and that is fixable.
-
 **Reports**:
-What carryon does when it finds a credential in a History — names the count,
-carries on, encrypts. A hit there means something was echoed to a terminal in
-the past. The user cannot fix it retroactively, so blocking them would be an
-obstacle rather than a safeguard.
+What carryon does when it finds a credential in either half — names it, carries
+on, encrypts. One posture, in a Setup and a History alike (ADR-0014). It is not
+a judgement that the credential is harmless: it is carryon declining to manage
+somebody's secrets for them, having first made sure nothing crosses in the
+clear.
+_Avoid_: refuses (that was the Setup's posture until ADR-0014, and it is not a
+word about credentials any more)
 
 ## Flagged ambiguities
 
 **"Bundle"** appears throughout the current code and README meaning "a Setup".
 It is retired: a Snapshot is the whole, a Setup and a History are its parts.
 
-**"Scan"** now means two different things depending on where it runs. Say
-*refuses* or *reports* instead, never "the scan" unqualified.
+**"Scan"** meant two different things depending on where it ran. Since ADR-0014
+it means one — it *reports*, everywhere. Say *reports*, and never let "the scan
+passed" stand in for a promise about the bytes: it is a list of shapes it
+recognises, not a proof of what is absent.
 
-**"Clean"** was an absolute — carryon either produced a credential-free artifact
-or nothing. It now applies only to a Setup. A History is never clean; it is
-encrypted. These are different promises and must not be blurred in user-facing
-text. Nor is *clean* a proof: it says the scan matched no credential shape it
-knows and the capture set read nothing it must not. A secret that announces
-nothing — carryon's own master key is bare hex — is invisible to it, which is
-why what a Setup may read is a rule of its own and not a question put to the
-scanner.
+**"Clean"** is retired entirely (ADR-0014). It was an absolute, then briefly a
+word about the Setup alone, and it never was a proof: it said only that the scan
+matched no credential shape it knows. A secret that announces nothing —
+carryon's own master key is bare hex — was always invisible to it, so *clean*
+named the scan's coverage while reading as a guarantee about the bytes. There is
+one promise now and it is about storage, not content: everything carryon carries
+is encrypted. Say *encrypted*, and say what the scan reported separately.
 
-**"Refused"** now covers two different sizes. A credential in a Setup refuses
-the whole capture and nothing is produced. What a Destination serves is refused
-one thing at a time — this object, this catalogue entry, this stored item —
-named in the report while the rest of the run carries on. Both are the same
-posture, fail closed and say so, and the unit is the whole difference between a
-pull that skips a Session and a pull that abandons an Archive, so say which one
-is meant.
+**"Refused"** no longer covers credentials at all (ADR-0014) — those are
+*reported*, in both halves. What remains refused is what a Destination serves —
+this object, this catalogue entry, this stored item — named in the report while
+the rest of the run carries on, and what a capture may read at all, which is
+ADR-0008's rule and stops a whole capture. Those two still differ in size, and
+the unit is the whole difference between a pull that skips a Session and a pull
+that abandons an Archive, so say which one is meant.
 
 **"Memory"** names things in both halves, with opposite safety properties. The
 per-project notes that accrete beside a project's Transcripts are a History:
@@ -232,16 +261,23 @@ files it was applied to.
 
 > **Dev:** If I push from my laptop, does my API key go up?
 >
-> **Domain expert:** Depends which half. If it's sitting in your Setup, carryon
-> refuses to push at all — that's an adapter bug, we shouldn't have been reading
-> that file. If you echoed it in a terminal six weeks ago it's in your History,
-> and carryon will tell you how many transcripts look like that, then encrypt
-> the lot and push it.
+> **Domain expert:** Yes, and sealed either way. If it's in your settings it
+> travels in the Setup; if you echoed it in a terminal six weeks ago it's in
+> your History. carryon names what it recognised in both, then encrypts the lot
+> and pushes.
+>
+> **Dev:** It doesn't stop me?
+>
+> **Domain expert:** It used to, for the Setup, and that only worked while the
+> Setup went up in the clear. Both halves are encrypted now, so there is nothing
+> left to protect you from by refusing — it would just be carryon deciding how
+> you may store your own keys.
 >
 > **Dev:** So it's safe.
 >
-> **Domain expert:** It's encrypted. That's not the same word. Your Setup is
-> clean; your History is only as safe as your recovery key.
+> **Domain expert:** It's encrypted. That's not the same word. All of it is only
+> as safe as your recovery key — and a quiet report means no shape it knows, not
+> that there was nothing there.
 >
 > **Dev:** And when I pull it down on the desktop?
 >
