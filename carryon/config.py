@@ -1067,12 +1067,48 @@ def default_config() -> dict:
         "machine": socket.gethostname(),
         "excludes": [],
         "carry": [],
-        "encrypt_all": False,
     }
+
+
+RETIRED = {
+    "encrypt_all": "nothing ever read it, and ADR-0014 makes encryption the "
+                   "behaviour rather than something to switch on",
+}
+"""Names that were settings once, are dropped on read, and are not errors.
+
+A third category beside known and unknown, and it exists because `validate`
+below is strict in both directions: it refuses a name it does not know AND a
+name it knows that is missing. That strictness is right - "a typo that
+validation shrugs at is a setting silently not applied" - and it makes deleting
+a setting a breaking change, because every config.json `carryon init` has ever
+written holds the old name. Without this, retiring `encrypt_all` would answer
+every command with "'encrypt_all' is not a carryon setting", including the
+command the user would run to fix it.
+
+Dropped on read and named once, never validated: a retired name has no valid
+value, so a hand-edited `encrypt_all: "yes"` must not refuse a config whose
+every live setting is fine. `save` is the other half and refuses one outright -
+`load` repairs a file an older carryon wrote, `save` writes what this one
+means, and a dead name written afresh would outlive the next retirement too.
+"""
 
 
 def _fail(key: str, why: str):
     raise SystemExit(f"config.json: {key!r} {why}")
+
+
+def retire(stored: dict) -> dict:
+    """`stored` without the settings that no longer exist, having named them.
+
+    On the read path only. Printing rather than staying silent because the
+    user has a line in a file that does nothing, and the whole argument for a
+    strict validator is that they should be told.
+    """
+    dead = [key for key in stored if key in RETIRED]
+    for key in dead:
+        print(f"note: config.json: {key!r} is retired and was ignored - "
+              f"{RETIRED[key]}")
+    return {k: v for k, v in stored.items() if k not in RETIRED}
 
 
 def validate(cfg: dict) -> dict:
@@ -1080,6 +1116,8 @@ def validate(cfg: dict) -> dict:
     silently not applied."""
     known = default_config()
     for key in cfg:
+        if key in RETIRED:
+            _fail(key, f"is retired - {RETIRED[key]}. Remove the line")
         if key not in known:
             _fail(key, "is not a carryon setting")
     for key in known:
@@ -1106,8 +1144,6 @@ def validate(cfg: dict) -> dict:
         if not isinstance(value, list) or \
                 not all(isinstance(v, str) and v for v in value):
             _fail(key, "must be a list of non-empty strings")
-    if not isinstance(cfg["encrypt_all"], bool):
-        _fail("encrypt_all", "must be true or false")
     return cfg
 
 
@@ -1143,7 +1179,7 @@ def load(home: pathlib.Path = HOME) -> dict:
     if state.why is not None:
         raise SystemExit(f"{path}: carryon reads its config on every command "
                          f"and {state.why}")
-    return validate({**default_config(), **state.value})
+    return validate({**default_config(), **retire(state.value)})
 
 
 def save(cfg: dict, home: pathlib.Path = HOME) -> pathlib.Path:
