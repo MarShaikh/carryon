@@ -142,17 +142,14 @@ def _setup_target(src, home, declared) -> tuple:
     """(target, None) for where a stored Setup item may be written, or
     (None, why) refusing it.
 
-    A stored MANIFEST is input, not carryon's own output, and ADR-0014 changed
-    only who the author can be. It used to be anyone: the Setup half was
-    plaintext and pushing one needed no master key at all (ADR-0004). It opens
-    under the master key now, so the author holds one - which is a narrower set
+    A stored MANIFEST is input, not carryon's own output. It opens under the
+    master key (ADR-0014), so its author holds one - which is a narrower set
     of people and not a trustworthy one. A key holder's older or newer carryon
     writes shapes this version never would, a compromised machine writes
     whatever it likes, and either way `home / src` silently *becomes* an
     absolute src (pathlib drops the left operand) and a '..' walks out of $HOME
     the way config._relative_to_home warns about. Either one turns a restore
-    into a write anywhere on this machine, so the check stays exactly as it
-    was; only the attacker's name for it changed.
+    into a write anywhere on this machine.
 
     Three checks, narrowing. Lexical containment first, judged on the
     unresolved path because a ~/.claude/settings.json symlinked into a

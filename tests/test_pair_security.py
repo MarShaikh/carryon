@@ -13,9 +13,6 @@ once possible:
    nothing in an Archive object used to say where it belonged. Every object
    now authenticates against its own label before a byte is decrypted.
 
-3. Keys come back from the Destination's own listing, so read_tree treats
-   them as input and validates before it makes a directory for one.
-
 Every home here is a temp dir and the OS keychain is forced to the fallback
 file, so nothing touches the real keyring or the real ~/.claude.
 """
@@ -33,7 +30,6 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from carryon import archive, config, crypto, keyring, rekey, sync  # noqa: E402
-from carryon.destinations.base import Destination  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 
 PAIR_CODE = re.compile(r"--join (\S+)")
@@ -279,58 +275,6 @@ def test_the_mac_key_is_not_the_master_key():
     assert tag != naive
 
 
-# --- read_tree: a key from a listing is input --------------------------------
-
-
-class HostileDestination(Destination):
-    """Answers list() with a key that walks out of the Archive's root.
-
-    read() validates the way every real Destination does, which is exactly
-    why the escape had to be caught earlier: by the time read() refuses, the
-    default read_tree has already made the directory outside dst_dir.
-    """
-
-    def __init__(self, keys):
-        self.keys = keys
-
-    def list(self, prefix: str = "") -> list:
-        return [k for k in self.keys if k.startswith(prefix)]
-
-    def read(self, key: str):
-        from carryon.destinations.base import require_key
-        require_key(key)
-        return b"planted"
-
-    def describe(self) -> str:
-        return "hostile"
-
-
-def test_read_tree_refuses_a_key_that_escapes_its_root(tmp_path):
-    dst = tmp_path / "dst"
-    dest = HostileDestination(["carryon/setups/mac/../sibling/evil.txt"])
-
-    with pytest.raises(ValueError):
-        dest.read_tree("carryon/setups/mac", dst)
-
-    assert not (tmp_path / "sibling").exists(), \
-        "the escaping directory was created before the key was ever checked"
-    assert not (tmp_path / "sibling" / "evil.txt").exists()
-
-
-def test_read_tree_refuses_a_malformed_key(tmp_path):
-    dest = HostileDestination(["carryon/setups/mac/ok.txt",
-                               "carryon/setups/mac//empty-component.txt"])
-    with pytest.raises(ValueError):
-        dest.read_tree("carryon/setups/mac", tmp_path / "dst")
-
-
-def test_read_tree_still_materialises_ordinary_keys(tmp_path):
-    dst = tmp_path / "dst"
-    dest = HostileDestination(["carryon/setups/mac/claude/settings.json"])
-    dest.read_tree("carryon/setups/mac", dst)
-    assert (dst / "claude" / "settings.json").read_bytes() == b"planted"
-
-
 # --- an Archive that goes backwards ------------------------------------------
 
 
@@ -419,42 +363,6 @@ def test_an_expired_code_is_still_refused_and_burnt(tmp_path, capsys,
     assert keyring.fetch_master(home=home_b) is None
     assert DirectoryDestination(tmp_path / "archive").list(
         archive.PAIR_PREFIX) == []
-
-
-class UnfilteredDestination(Destination):
-    """Answers list() with everything it holds, prefix or no prefix.
-
-    The base class's read_tree slices `key[len(head):]` on the assumption
-    that every listed key really is under `head`. A Destination is untrusted
-    storage; that assumption is the Destination's to break.
-    """
-
-    def __init__(self, keys):
-        self.keys = keys
-
-    def list(self, prefix: str = "") -> list:
-        return list(self.keys)
-
-    def read(self, key: str):
-        return b"planted"
-
-    def describe(self) -> str:
-        return "unfiltered"
-
-
-def test_read_tree_refuses_a_key_that_is_not_under_the_prefix(tmp_path):
-    """`relative_to` is lexical and does not reject '..': dst/'../evil'
-    relative_to dst returns '../evil' rather than raising. So the slice, not
-    the whole key, is what has to be contained - and a key that is not under
-    the prefix slices into one that walks out."""
-    dst = tmp_path / "staging"
-    head = "carryon/setups/mac"          # 18 chars; head becomes 19 with '/'
-    escaping = "a" * 19 + "../evil"
-    dest = UnfilteredDestination([escaping])
-
-    with pytest.raises(ValueError):
-        dest.read_tree(head, dst)
-    assert not (tmp_path / "evil").exists(), "read_tree wrote outside dst_dir"
 
 
 def test_a_tampered_pairing_blob_is_refused_and_not_burnt(tmp_path, capsys):

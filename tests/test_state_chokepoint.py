@@ -849,19 +849,14 @@ ALLOWED_READS = {
         "the stored Setup in carryon's staging", ("read_text",)),
     ("authentication.py", "stamped_or_none"): (
         "SETUP.stamp out of a Setup that has already unsealed, so these bytes "
-        "were a master key holder's before this function saw them (ADR-0014). "
-        "It replaced ('authentication.py', '_stored_setup_tag'), which read "
-        "SETUP.mac out of a plaintext tree for the same reason and is gone "
-        "with the tag", ("read_bytes",)),
+        "were a master key holder's before this function saw them (ADR-0014)",
+        ("read_bytes",)),
     ("setup_in.py", "_restore_setup_item"): (
         "the staged Setup being written out, an Archive's bytes on their way "
         "IN", ("read_bytes",)),
     ("archive.py", "put_setup"): (
-        "a Setup tree carryon staged, on its way to a Destination - the same "
-        "answer destinations/base.py's write_tree gives, for the sealed shape "
-        "that replaced the tree walk (ADR-0014). It replaced ('archive.py', "
-        "'setup_tree_manifest'), which read the same tree to hash it for a "
-        "MAC that no longer exists", ("read_bytes",)),
+        "a Setup tree carryon staged, on its way to a Destination as one "
+        "sealed object (ADR-0014)", ("read_bytes",)),
     ("setup_out.py", "_push_partial_setup"): (
         "the merged overlay tree, which is a TemporaryDirectory this call "
         "made: the stored MANIFEST read back out of it to merge onto, and the "
@@ -871,8 +866,6 @@ ALLOWED_READS = {
         ("read_bytes", "shutil.copyfile")),
     ("archive.py", "tree_hash"): ("a Setup tree carryon staged",
                                   ("read_bytes",)),
-    ("destinations/base.py", "write_tree"): (
-        "a tree carryon staged, on its way to a Destination", ("read_bytes",)),
     ("destinations/base.py", "_at_open"): (
         "the openat walk over a Destination's own tree (ADR-0009)",
         ("open", "open")),
@@ -921,11 +914,6 @@ ALLOWED_WRITES = {
         "the write chokepoint itself - it asks owner_of about the ancestors, "
         "opens the leaf O_NOFOLLOW, and answers for the descriptor before it "
         "truncates anything", ("write",)),
-    ("destinations/base.py", "read_tree"): (
-        "the Destination base class's own openat walk (ADR-0009)",
-        ("write_bytes",)),
-    ("destinations/base.py", "write_tree"): (
-        "Destination.write, the Archive chokepoint", ("write",)),
     ("destinations/base.py", "_local_write"): (
         "inside that walk, on a descriptor it opened", ("write",)),
     ("destinations/rclone_remote.py", "_write_blob"): (

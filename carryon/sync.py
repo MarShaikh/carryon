@@ -419,13 +419,9 @@ def push(args, home) -> int:
                         else want_categories & set(SETUP_CATEGORIES))
     do_history = want_categories is None or HISTORY in want_categories
 
-    # Every push needs the key now, History or not (ADR-0014). A Setup-only
-    # push used to work without one, because only a History was encrypted -
-    # locked keychain, machine never paired. With both halves sealed there is
-    # nothing such a push could write, so the warning it used to print becomes
-    # this refusal. It is the one capability ADR-0014 takes away, and the case
-    # that made it worth having - a machine whose keychain entry is gone - is
-    # answered by pairing again rather than by publishing in the clear.
+    # Every push needs the key, History or not (ADR-0014): with both halves
+    # sealed there is nothing a keyless push could write. A machine whose
+    # keychain entry is gone pairs again rather than publishing in the clear.
     master = _require_master(home, for_push=True)
 
     print(f"{'PUSH PLAN (dry run)' if not apply else 'PUSHING'} -> "
@@ -433,9 +429,8 @@ def push(args, home) -> int:
 
     # Before a byte is written anywhere, Setup half included: a push onto an
     # Index this machine has already seen past destroys catalogue entries
-    # rather than merely hiding them. A keyless Setup-only push has no Index
-    # to check, which is ADR-0004's cost and is reported at the end.
-    index = archive.load_index(dest, master) if master is not None else None
+    # rather than merely hiding them.
+    index = archive.load_index(dest, master)
     index_refused = archive.index_refusals(index)
     # A record load_index set aside is still a record: the Archive holds a
     # Session, and the entry describing it is the thing this machine could not
@@ -449,7 +444,7 @@ def push(args, home) -> int:
         name: {refusal.key for refusal in index_refused
                if refusal.catalogue == name}
         for name in ("sessions", "projects")}
-    if index is not None and apply:
+    if apply:
         # Removal first: it is the more specific reading of the same missing
         # number, and it names what actually happened.
         _refuse_on_index_removal(home, cfg["destination"], index, "push")
@@ -460,7 +455,7 @@ def push(args, home) -> int:
         # to change anything worth sealing.
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
-    elif index is not None:
+    else:
         note = (_index_removed_note(home, cfg["destination"], index)
                 or _rollback_note(home, cfg["destination"], index))
         if note:
@@ -535,10 +530,7 @@ def push(args, home) -> int:
                         and want_agents is None):
                     # The stamp goes INTO staging before the pack, so the tree
                     # and the value that says which tree it is are sealed
-                    # together in one object (ADR-0014). There is no keyless
-                    # branch here any more: without a master key there is
-                    # nothing to seal with, and the push refused long before
-                    # this line.
+                    # together in one object (ADR-0014).
                     (staging / archive.SETUP_STAMP_NAME).write_bytes(
                         archive.stamp_bytes(now, setup_stamp))
                     _note_plaintext_removed(
@@ -705,17 +697,10 @@ def push(args, home) -> int:
             index["projects"][cwd] = meta
             index_changed = True
 
-    if apply and setup_pushed and index is not None:
-        # There is no 'authenticated' flag here any more, and ADR-0014 is why.
-        # It existed because the Setup half was plaintext: a SETUP.mac sat in
-        # it where anyone with write access could strip the file, so the
-        # encrypted Index had to carry the fact that a tag was ever written.
-        # A Setup is one sealed object now - it opens under the master key or
-        # it does not - so "a key holder wrote this" is the format rather than
-        # a field, and a flag that was unconditionally True on the only path
-        # that wrote it said nothing the seal does not say better. What the
-        # Index still has to carry is the question after that one, which no
-        # seal answers: WHICH of the trees that open is the current one.
+    if apply and setup_pushed:
+        # The seal already says a key holder wrote this Setup (ADR-0014).
+        # What the Index has to carry is the question no seal answers: WHICH
+        # of the Setups that open is the current one.
         index["setups"][machine] = {"pushed_at": now, "stamp": setup_stamp}
         index_changed = True
     if apply and index_changed:
@@ -723,10 +708,9 @@ def push(args, home) -> int:
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
 
-    # The report, in one place, so the two halves' different promises stay
-    # side by side. Since ADR-0014 that is no longer a difference in STORAGE -
-    # both halves are encrypted, and `clean` is retired - but the two still
-    # differ in the unit they are refused in, which is what a user has to read
+    # The report, in one place, so the two halves stay side by side. Both are
+    # encrypted (ADR-0014); they differ in the unit they are refused in,
+    # which is what a user has to read
     # off this report: a Setup is a replacement and lands whole or not at all,
     # while a History accumulates, so it reports per Session and carries the
     # rest (ADR-0001, ADR-0002).
@@ -834,10 +818,6 @@ def push(args, home) -> int:
                       "of the Setup went:")
                 for rel in setup_undecodable:
                     print(f"  -- {rel}")
-            # The keyless warning that stood here has gone with the path that
-            # produced it (ADR-0014): a push with no master key refuses before
-            # it reaches this report, so there is no longer such a thing as a
-            # Setup in the Archive that no key holder wrote.
     else:
         # The same line pull prints for the same skip, because the reasoning
         # cuts both ways: a leg that merely vanishes reads as a push that
@@ -1378,9 +1358,9 @@ def pull(args, home) -> int:
                   "Destination is reachable.")
         elif rolled_back is not None:
             # A rollback only WARNED, and the Setup half of a pull is
-            # executable content. Replay a superseded Index, its tree and its
-            # SETUP.mac together and every check downstream agrees - the tag
-            # verifies, the stamp matches the Index, the tree matches the
+            # executable content. Replay a superseded Index and its sealed
+            # Setup together and every check downstream agrees - the seal
+            # opens, the stamp matches the Index, the tree matches the
             # manifest - so a hook the user removed between two pushes comes
             # back at exit 0. Nothing in the Archive can tell that from the
             # current state; the one party that can is this machine's own

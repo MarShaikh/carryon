@@ -1,17 +1,9 @@
 """Credential detection for captured files.
 
-This module names what it finds and never refuses (ADR-0014). It used to
-refuse in a Setup, on the reasoning that a Setup should contain no credentials
-at all - so a hit meant the capture list was wrong and was therefore fixable.
-That reasoning broke on `.claude/settings.json`, whose `env` block is where an
-API key goes and which no Adapter change can stop carrying: the hit was real,
-the cure did not exist, and the user was left with a push nothing could
-unblock.
-
-What made refusing load-bearing was storage, not detection - a Setup went to
-the Archive in the clear, so stopping the push was the only thing between that
-`env` block and a readable object in a bucket. Both halves are sealed now, so
-the scan keeps its whole job and loses its veto.
+This module names what it finds and never refuses (ADR-0014). A real hit has
+no cure when it is `.claude/settings.json`'s `env` block, which is where an API
+key goes and which no Adapter change can stop carrying - and both halves of the
+Archive are sealed, so the scan reports and the push carries on.
 
 Nothing about secrecy may rest on it. It is a list of shapes somebody
 maintains, and carryon's own master key is bare hex that no pattern here

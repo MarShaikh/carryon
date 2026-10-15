@@ -133,13 +133,9 @@ def fetch_master(home: pathlib.Path = HOME, platform=None):
     here is worse than a wrong sentence: `carryon init` asks this same
     question, and a key it merely could not read reads as no key at all, so
     init mints a fresh recovery key and orphans the Archive the old one
-    opened. The second half of that used to be worse: `push --category config`
-    needed no key by design (ADR-0004), so it carried on and wrote a Setup
-    with no tag over one the encrypted Index still recorded as authenticated,
-    after which every pull from every machine refused that Setup whole.
-    ADR-0014 closed that route - a push with no master key refuses before it
-    writes anything - so a key that merely could not be READ now costs the
-    orphaned Archive rather than a corrupted one. That is still the whole
+    opened. A push with no master key refuses before it writes anything
+    (ADR-0014), so a key that merely could not be READ costs the orphaned
+    Archive rather than a corrupted one. That is still the whole
     reason this read has to tell 'nothing stored' from 'could not read'.
 
     So the read is the guard. ENOENT and ENOTDIR are the two errnos that mean

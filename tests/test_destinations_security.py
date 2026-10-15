@@ -30,7 +30,6 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon.destinations.base import Destination  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 from carryon.destinations.git_repo import GitDestination  # noqa: E402
 from carryon.destinations.rclone_remote import RcloneDestination  # noqa: E402
@@ -40,23 +39,6 @@ SETUP_PREFIX = "carryon/setups/mac"
 
 
 # --- helpers -----------------------------------------------------------------
-
-
-def files_under(root) -> dict:
-    """{relative posix path: bytes} for the real files below root.
-
-    Walks with lstat semantics of its own so that a symlink staging picked
-    up is visible to the assertions rather than silently read through.
-    """
-    root = pathlib.Path(root)
-    found = {}
-    for path in root.rglob("*"):
-        rel = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            found[rel] = b"<symlink to " + os.readlink(path).encode() + b">"
-        elif path.is_file():
-            found[rel] = path.read_bytes()
-    return found
 
 
 def victim_home(tmp_path) -> tuple:
@@ -90,7 +72,7 @@ def git(repo, *args, **kwargs) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, check=True, **kwargs)
 
 
-def hostile_git(tmp_path, extra_files=()) -> tuple:
+def hostile_git(tmp_path) -> tuple:
     """A bare origin whose committed tree holds a symlink out of the clone.
 
     The link is written as the number of parent steps that reaches the
@@ -112,10 +94,6 @@ def hostile_git(tmp_path, extra_files=()) -> tuple:
     planted.mkdir(parents=True)
     (planted / "settings.json").write_bytes(b'{"model": "opus"}')
     os.symlink(hops, planted / "CLAUDE.md")
-    for rel in extra_files:
-        path = planted / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"ordinary")
     git(work, "add", "-A")
     git(work, "-c", "user.name=a", "-c", "user.email=a@b", "commit",
         "--quiet", "-m", "plant")
@@ -175,27 +153,6 @@ def install_recording_rclone(tmp_path, monkeypatch, listing):
     return root, log
 
 
-class ListingDestination(Destination):
-    """Answers a listing with keys of the caller's choosing.
-
-    Stands in for storage that is not a filesystem at all, which is where a
-    key shaped to escape staging comes from: read() hands back planted bytes
-    for anything, so anything that reaches disk did so through read_tree.
-    """
-
-    def __init__(self, keys):
-        self.keys = list(keys)
-
-    def list(self, prefix: str = "") -> list:
-        return [k for k in self.keys if k.startswith(prefix)]
-
-    def read(self, key: str):
-        return SECRET
-
-    def describe(self) -> str:
-        return "listing double"
-
-
 # --- the planted link is armed -----------------------------------------------
 
 
@@ -253,25 +210,13 @@ def test_directory_list_does_not_descend_into_a_symlinked_directory(tmp_path):
     assert dest.read(SETUP_PREFIX + "/skills/loot.md") is None
 
 
-def test_directory_read_tree_never_stages_the_secret(tmp_path):
-    dest = hostile_directory(tmp_path)
-    staging = tmp_path / "staging"
-
-    dest.read_tree(SETUP_PREFIX, staging)
-
-    staged = files_under(staging)
-    assert staged == {"settings.json": b'{"model": "opus"}'}
-    assert not any(SECRET in data for data in staged.values())
-
-
 def test_directory_a_dangling_symlink_does_not_abort_a_pull(tmp_path):
     """A hostile object is reported and skipped. If one could raise, an
     attacker with write access could stop every pull instead."""
     dest = hostile_directory(tmp_path)
     dest.list("carryon/")
     assert dest.read(SETUP_PREFIX + "/gone.md") is None
-    dest.read_tree(SETUP_PREFIX, tmp_path / "staging")
-    assert (tmp_path / "staging" / "settings.json").is_file()
+    assert dest.read(SETUP_PREFIX + "/settings.json") == b'{"model": "opus"}'
 
 
 def test_directory_write_refuses_to_write_through_a_planted_directory(tmp_path):
@@ -297,52 +242,6 @@ def test_git_read_does_not_follow_a_committed_symlink(tmp_path):
     assert dest.read(SETUP_PREFIX + "/CLAUDE.md") is None
 
 
-def test_git_read_tree_never_stages_the_secret(tmp_path):
-    dest, _ = hostile_git(tmp_path)
-    staging = tmp_path / "staging"
-
-    dest.read_tree(SETUP_PREFIX, staging)
-
-    staged = files_under(staging)
-    assert staged == {"settings.json": b'{"model": "opus"}'}
-    assert not any(SECRET in data for data in staged.values())
-
-
-# --- containment: relative_to is not a containment check ---------------------
-
-
-def test_read_tree_refuses_a_key_that_resolves_out_of_staging(tmp_path):
-    """dst/'sub/evil.md' is lexically inside dst and lands outside it when
-    'sub' is a symlink. relative_to and a startswith on the key are both
-    lexical and say the path is contained; only resolving says otherwise."""
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    os.symlink(outside, staging / "skills")
-    dest = ListingDestination([SETUP_PREFIX + "/skills/evil.md"])
-
-    with pytest.raises(ValueError):
-        dest.read_tree(SETUP_PREFIX, staging)
-    assert not (outside / "evil.md").exists(), \
-        "read_tree wrote through a symlink and left staging"
-
-
-def test_git_read_tree_holds_the_same_containment_as_the_base(tmp_path):
-    """Two implementations of one rule is how the guards drifted apart: the
-    git override had neither the key check nor the containment check."""
-    dest, _ = hostile_git(tmp_path, extra_files=("skills/evil.md",))
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    os.symlink(outside, staging / "skills")
-
-    with pytest.raises(ValueError):
-        dest.read_tree(SETUP_PREFIX, staging)
-    assert not (outside / "evil.md").exists()
-
-
 # --- rclone: a listing is the remote's answer, not carryon's layout ----------
 
 
@@ -360,23 +259,6 @@ def test_rclone_listing_keys_are_validated_at_the_point_of_listing(tmp_path,
 
     assert dest.list() == ["carryon/index.enc"], \
         "every key from a listing is checked where it is listed"
-
-
-def test_rclone_read_tree_writes_nothing_outside_staging(tmp_path, monkeypatch):
-    store, _ = install_recording_rclone(tmp_path, monkeypatch, [
-        SETUP_PREFIX + "/settings.json",
-        SETUP_PREFIX + "/../../../../../outside/evil.md",
-    ])
-    real = store / "archive" / SETUP_PREFIX
-    real.mkdir(parents=True)
-    (real / "settings.json").write_bytes(b'{"model": "opus"}')
-    dest = RcloneDestination("fakeremote:archive")
-    staging = tmp_path / "staging"
-
-    dest.read_tree(SETUP_PREFIX, staging)
-
-    assert files_under(staging) == {"settings.json": b'{"model": "opus"}'}
-    assert not (tmp_path / "outside").exists()
 
 
 def test_rclone_still_uses_the_fake_binary_and_no_network(tmp_path, monkeypatch):

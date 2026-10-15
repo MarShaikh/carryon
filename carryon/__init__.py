@@ -3,7 +3,7 @@
 Two halves, kept apart on purpose. The Setup (config, capability, knowledge)
 is what makes an agent yours; the History (Sessions, with the paths inside
 them re-keyed) is what you did with it. Everything carryon carries is
-encrypted (ADR-0014), so the halves no longer differ in how they are stored -
+encrypted (ADR-0014), so the halves do not differ in how they are stored -
 they differ in the UNIT they are refused in, which is the thing to hold on to:
 a Setup is a replacement and lands whole or not at all, while a History
 accumulates and never deletes, so it reports per Session and carries the rest.

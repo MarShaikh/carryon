@@ -1,15 +1,11 @@
 """Which stored Setup a key holder means you to have NOW.
 
-This module used to answer two questions, and ADR-0014 took the first one away.
-It was "did a master key holder write these bytes", asked of a plaintext tree
-by way of a MAC file sitting beside it, plus "and is this the tree they meant
-last". A sealed Setup answers the first by opening at all - the seal is an HMAC
-over the object's label and then its ciphertext, so a Setup that unseals under
-this machine's key, bound to this machine's name, was written by a key holder
-and there is nothing left to check.
+"Did a master key holder write these bytes" is answered by the seal (ADR-0014):
+a Setup that unseals under this machine's key, bound to this machine's name,
+was written by a key holder.
 
-The second question survives sealing completely intact, and that is the whole
-reason this file still exists. A seal says a key holder wrote these bytes AT
+"Is this the Setup they meant last" is not, and it is this module's whole
+job. A seal says a key holder wrote these bytes AT
 SOME TIME. Every sealed Setup a Destination has ever held goes on opening for
 ever, so a versioned bucket, a git history or a synced folder's trash holds an
 unlimited supply of objects that pass, and serving an old one back silently
@@ -19,9 +15,9 @@ to agree.
 
 The temptation ADR-0014 creates is to read "it unsealed" as "it is current".
 Those are different sentences, and only the Index says the second - which is
-why `_stale_stamp` is asked at BOTH doors into a Setup, in and out. It was
-asked on the pull leg only, once, and one ordinary `push --category config`
-laundered a replayed tree.
+why `_stale_stamp` is asked at BOTH doors into a Setup, in and out: asked on
+the pull leg only, one ordinary `push --category config` launders a replayed
+tree.
 
 A leaf over archive and nothing else in this package.
 """
@@ -95,33 +91,17 @@ def setup_freshness(staging, source, entry):
     The refusal is WHOLE - a partial Setup is worse than none, so this never
     salvages the files that still match.
 
-    What it no longer does is decide whether a key holder wrote the tree.
-    `archive.get_setup` settled that by unsealing it under a label bound to
-    the machine; nothing that reaches here is the Destination's authorship.
-    So there is no 'authenticated' flag to consult and no detached-tag
-    contradiction to resolve - both were shapes of the plaintext era, and a
-    keyless push that could produce an unauthenticated Setup no longer exists.
+    Whether a key holder wrote the tree is already settled:
+    `archive.get_setup` unsealed it under a label bound to the machine.
 
-    One question is left, and it is the one sealing cannot answer: a sealed
-    object says 'a key holder wrote these bytes at some time', and a versioned
+    What is left is the question sealing cannot answer: a sealed object says
+    'a key holder wrote these bytes at some time', and a versioned
     Destination keeps every one they ever pushed. Which is CURRENT is the
-    Index's stamp to answer.
+    Index's stamp to answer, and a Setup nothing calls current is refused.
 
-    It used to return `(refusal, note)`, where a note was a warning to print
-    and restore anyway, and two of its four branches produced one: a Setup
-    with no stamp and no Index record, and a stamp with no Index record to
-    check it against. Both were reachable only with a falsy `entry`, and the
-    one caller - the pull, sync's `setup_freshness(staging, source,
-    setups[source])` - passes a `_setup_catalogue` entry, which is always a
-    populated dict. So neither note could ever be printed, and the pull's
-    'restore it anyway' path had no way to be taken. The notes were a vestige
-    of ADR-0004: a keyless Archive genuinely had no Index record to check
-    against, and restoring behind a warning was the promise ADR-0014 withdrew.
-    A Setup nothing calls current is refused now, uniformly, at both doors -
-    so the note channel went with the branches that wrote to it.
-
-    (The `{}` entry §3 of the handoff describes is real, but it reaches
-    `_stale_stamp` directly from the push door in setup_out, not through here.)
+    The one caller is the pull, with a `_setup_catalogue` entry for a Setup
+    the Index vouches for, so `entry` is always populated here. The push door
+    calls `_stale_stamp` directly from setup_out, and may pass `{}`.
     """
     stamped = stamped_or_none(staging)
     head = (f"the stored Setup for machine '{printable(source)}' is refused "

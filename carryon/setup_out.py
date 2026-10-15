@@ -388,14 +388,11 @@ def _push_partial_setup(dest, master, machine, staging, manifest,
     the MANIFEST and RESTORE.md are regenerated from the merged view so they
     keep describing the whole stored tree, not just this push's slice.
 
-    Since ADR-0014 a Setup is ONE sealed object, so "overlay" is no longer
-    something the Destination does for us by accepting writes for some keys
-    and not others. It is: unseal the stored tree into a temp dir, copy this
-    push's slice over it, delete the withheld, re-seal, write one object. The
-    stored tree is read through `archive.get_setup`, which means the seal has
-    already proved a key holder wrote it - there is no longer any way for the
-    Destination to author the MANIFEST this function merges, so the two guards
-    that used to close that oracle are gone with the plaintext they guarded.
+    A Setup is ONE sealed object (ADR-0014), so an overlay is: unseal the
+    stored tree into a temp dir, copy this push's slice over it, delete the
+    withheld, re-seal, write one object. The stored tree is read through
+    `archive.get_setup`, so the seal has already proved a key holder wrote the
+    MANIFEST this function merges.
 
     Withheld files are the one thing an overlay deletes, and that is the
     point: withholding is done by removing the file from the staging tree,

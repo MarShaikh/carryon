@@ -1204,46 +1204,6 @@ def test_a_home_that_will_not_resolve_is_answered_the_same_on_both_runners(
     assert "~/x" in text
 
 
-def test_a_listing_that_changes_between_two_calls_lands_the_rest(
-        rclone_journey, capsys):
-    """read_tree lists and then reads, and on a remote those are two answers
-    about two moments. A key that was listed and is gone by the read is
-    ordinary on storage somebody else writes to - a sync client mid-delete,
-    a second machine pushing.
-
-    What must hold is that the rest of the tree lands and nothing raises.
-    What does NOT hold is a line about the member that vanished: base
-    read_tree drops a key whose read comes back None without a word, which
-    is this round's one unclosed silence and is recorded in the deviations -
-    the rclone type cannot supply it, since 'absent' is also every fresh
-    Archive's answer for index.enc.
-
-    Driven over `carryon/sessions` since ADR-0014, because `setups/<machine>`
-    is no longer a prefix with members under it - it is one object. Note that
-    this leaves read_tree with no caller in carryon at all: the Setup tree was
-    the last one, and what is exercised here is a Destination capability
-    nothing in the tool now uses.
-    """
-    fake = rclone_journey.fake
-    honest = "\n".join(o.replace("archive/", "", 1)
-                       for o in fake.objects()) + "\n"
-    real = sorted(o.replace("archive/carryon/sessions/", "", 1)
-                  for o in fake.objects() if "carryon/sessions/" in o)
-    assert real, "the journey pushed no Session for this prefix to hold"
-    ghost = "carryon/sessions/ghost.tar.enc\n"
-    fake.listing((honest + ghost).encode(), honest.encode())
-
-    dest = RcloneDestination("fakeremote:archive")
-    staging = pathlib.Path(rclone_journey.tmp_path) / "staging"
-    dest.read_tree("carryon/sessions", staging)
-    out = capsys.readouterr().out
-
-    landed = sorted(p.name for p in staging.rglob("*") if p.is_file())
-    assert landed == real, out
-    assert "ghost.tar.enc" not in landed
-    assert "Traceback" not in out
-
-
 def _covered_names(adapter) -> set:
     """Top-level names under the agent root that this adapter speaks for.
 

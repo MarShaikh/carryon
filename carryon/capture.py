@@ -559,11 +559,9 @@ def _capture_agent(cap: Capture, adapter, want_categories: set) -> dict:
     for item in adapter.items:
         # A chats item names where the History lives, and the History has its
         # own pipeline. The Setup engine never copies one, whatever categories
-        # were asked for. The reason used to be put as "a Setup is clean, a
-        # History never is", which ADR-0014 retired twice over: both halves are
-        # encrypted now, and the scan reports in both. What is left is simply
-        # that these are two different carriers, and a Transcript travelling as
-        # a Setup item would be one neither side's rules were written for.
+        # were asked for: these are two different carriers, and a Transcript
+        # travelling as a Setup item would be one neither side's rules were
+        # written for.
         if item.kind == "chats":
             continue
         if item.category not in want_categories:

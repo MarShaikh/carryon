@@ -41,12 +41,6 @@ often enough to matter - a thread renaming one directory to a symlink won a
 read of a file outside the root about once in 150 tries against the walk this
 replaces.
 
-write_tree/read_tree have default implementations over the blob primitives, so
-a new Destination type only has to supply the four - but a type where per-key
-round trips are expensive (git syncs with its remote around every operation)
-batches by suppressing the redundant syncs inside them, never by
-re-implementing them.
-
 Two questions hang off the verbs for the same reason the verbs are concrete:
 `_confirm_write` and `_confirm_delete`. Whether a store DID the thing is a
 question every type has to answer and only some types have work to do for it -
@@ -116,10 +110,6 @@ def require_key(key: str) -> str:
     except UnicodeEncodeError:
         raise ValueError(f"bad Destination key: {key!r}")
     return key
-
-
-def join_prefix(prefix: str, rel: str) -> str:
-    return f"{prefix.rstrip('/')}/{rel}" if prefix else rel
 
 
 _CONTROL = {c: f"\\x{c:02x}" for c in range(0x20)}
@@ -436,70 +426,11 @@ class Destination:
         """Sorted keys starting with prefix, each one usable as a key.
 
         The prefix is re-applied to what the type returned: a listing that
-        does not honour its own prefix is a Destination misbehaving, and
-        read_tree slices keys on the assumption that it did.
+        does not honour its own prefix is a Destination misbehaving, and a
+        caller walking a prefix is entitled to assume it did.
         """
         keys = usable_keys(self._list_keys(prefix), self.describe())
         return [key for key in keys if key.startswith(prefix)]
-
-    def write_tree(self, prefix: str, src_dir) -> None:
-        """Store every file under src_dir as prefix/<relative path>.
-
-        `is_file()` follows a symlink, so a link in the tree being published
-        used to upload its target's bytes - past the home-path neutralisation
-        that deliberately leaves symlinks alone (ADR-0006). A relative path
-        no key can hold is reported rather than raised, for the same reason a
-        listing's bad key is: it is one member, not the whole push.
-        """
-        src_dir = pathlib.Path(src_dir)
-        for path in sorted(p for p in src_dir.rglob("*")
-                           if p.is_file() and not p.is_symlink()):
-            rel = path.relative_to(src_dir).as_posix()
-            key = join_prefix(prefix, rel)
-            try:
-                require_key(key)
-            except ValueError:
-                report_skipped(self.describe(), rel,
-                               "no Destination key can hold that name, so it "
-                               "cannot be published")
-                continue
-            self.write(key, path.read_bytes())
-
-    def read_tree(self, prefix: str, dst_dir) -> None:
-        """Materialise every key under prefix as a file below dst_dir.
-
-        The keys come from the Destination's own listing, which makes them
-        input rather than carryon's own layout: read() would refuse an
-        escaping one, but only after this method had already made a
-        directory for it outside dst_dir. So each key is checked before it
-        is used for anything.
-
-        The check is on the SLICE, not on the key. require_key inspects the
-        whole key while the write uses `key[len(head):]`, and a key that is
-        not really under `head` slices into one that walks out of dst_dir
-        while the whole key contains no '..' component at all -
-        'aaaaaaaaaaaaaaaaaaa../evil' against a 19-character head. Then the
-        materialised path is checked against dst_dir with both resolved,
-        because every check above it is lexical and a symlinked directory
-        inside dst_dir puts a perfectly well-shaped key outside it.
-        """
-        dst_dir = pathlib.Path(dst_dir)
-        head = prefix.rstrip("/") + "/" if prefix else ""
-        for key in self.list(head):
-            require_key(key)
-            if not key.startswith(head):
-                raise ValueError(
-                    f"Destination listed {key!r} under prefix {head!r}, "
-                    "which it is not under")
-            target = dst_dir / require_key(key[len(head):])
-            if not is_inside(dst_dir, target):
-                raise ValueError(
-                    f"Destination key {key!r} lands outside {dst_dir} - "
-                    "refusing to write through it")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            data = self.read(key)
-            if data is not None:
-                target.write_bytes(data)
 
 
 class LocalTreeDestination(Destination):

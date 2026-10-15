@@ -7,25 +7,12 @@ the master key - the Destination learns object counts and sizes, never a
 Session UUID or a project path - and the Index is an encrypted blob read first
 on every pull.
 
-There is no non-encrypted half any more (ADR-0014): every object a push writes
+There is no non-encrypted half (ADR-0014): every object a push writes
 is sealed, the Setup included, and the only bytes carryon ever puts at a
 Destination in the clear are the Probe's, which name no machine, no home and
 no time precisely so that they can be.
 
-It used to be the module's one non-obvious decision, and the reasoning is
-worth keeping because it is what ADR-0014 overturned. A Setup was stored as a
-plaintext tree so that a git Destination diffed as readable changes to settings
-and skills rather than an opaque blob churning, and that was thought safe
-because a Setup was "clean by construction" - ADR-0001 having carryon refuse to
-produce one containing a credential. The scan was never that proof: it matches
-the credential shapes it knows, and carryon's own master key is bare hex that
-matches none of them. Plaintext was not taken to mean unauthenticated either -
-a keyed push MACed a manifest of the tree into SETUP.mac and the Index recorded
-that it had - but a MAC over a tree an attacker can edit file by file protects
-the manifest and not the content, and the readable diff was being paid for in
-every item-level guard downstream of it.
-
-So a Setup is one sealed object per machine now, keyed setups/<machine>.tar.enc
+A Setup is one sealed object per machine, keyed setups/<machine>.tar.enc
 and sealed under setup_label(machine). What that cannot carry is WHEN it was
 pushed - a versioned Destination keeps every sealed Setup it has ever held and
 all of them open - so the Index's stamp is what says which one is current, and
@@ -900,8 +887,7 @@ def unpack_into(tar_bytes: bytes, dst_dir, what=None) -> int:
     finish. The resolved check below is the second question and not the same
     one: every check up there is lexical, and a symlinked directory already
     standing inside dst_dir turns a perfectly well-shaped member name into a
-    write somewhere else. `read_tree` asks both for the same reason about a
-    listing; this is that rule for the sealed shape.
+    write somewhere else.
     """
     dst_dir = pathlib.Path(dst_dir)
     written = 0
@@ -953,17 +939,13 @@ def get_project(dest, master_key: bytes, cwd: str, object_key: str) -> bytes:
 # HMAC. That is a deliberate, narrower choice than it could be: the pull leg
 # discovers which machines an Archive holds by LISTING (stored_setup.
 # _setup_catalogue), and a name nobody can read is a name nobody can offer the
-# user. What the name no longer tells anyone is anything about the contents.
+# user. The name says nothing about the contents.
 
 
 def setup_prefix(machine: str) -> str:
-    """Where a machine's Setup used to live, as a directory.
-
-    Kept because the pull leg still reads a listing under SETUPS_PREFIX to
-    find out which machines exist, and because an Archive written before
-    ADR-0014 has real keys under here that a reader has to be able to name
-    when it refuses them.
-    """
+    """A machine's place under SETUPS_PREFIX: the stem of its sealed key, and
+    the directory a pre-ADR-0014 plaintext Setup sits in, which a pull names
+    when it refuses one and put_setup sweeps."""
     return SETUPS_PREFIX + machine
 
 
@@ -1054,24 +1036,17 @@ def get_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
 
 # --- the Setup's freshness stamp (ADR-0014) -----------------------------------
 #
-# This was a MAC over a plaintext tree, and most of it has gone with the
-# plaintext. A seal is an HMAC over the object's label and then its ciphertext,
-# so "a master key holder wrote these bytes, and they are this machine's Setup"
-# is now answered by `get_setup` unsealing at all - and a second answer to a
-# settled question is what ADR-0010 exists to prevent.
+# "A master key holder wrote these bytes, and they are this machine's Setup" is
+# answered by `get_setup` unsealing at all. What a seal cannot say is WHICH tree
+# a key holder means you to have now. Every sealed Setup a Destination has ever
+# held goes on unsealing for ever, so a versioned bucket, a git history or a
+# synced folder's trash holds an unlimited supply of objects that open, and
+# replaying one silently undoes whatever the last push tightened. So the push
+# stamps the sealed tree and the encrypted Index with one fresh value, and the
+# pull requires them to agree (authentication._stale_stamp).
 #
-# What a seal cannot say is WHICH tree a key holder means you to have now. Every
-# sealed Setup a Destination has ever held goes on unsealing for ever, so a
-# versioned bucket, a git history or a synced folder's trash holds an unlimited
-# supply of objects that open, and replaying one silently undoes whatever the
-# last push tightened. That is the whole reason this file did not disappear: the
-# push stamps the sealed tree and the encrypted Index with one fresh value, and
-# the pull requires them to agree (authentication._stale_stamp).
-#
-# The stamp rides INSIDE the tar, where it used to ride inside the tag. Both
-# places are ones only a key holder can write; the difference is that the tag
-# was a file an attacker could strip from a browsable tree, and a member of a
-# sealed object is not.
+# The stamp rides INSIDE the tar, so only a key holder can write it and nobody
+# can strip it.
 
 SETUP_STAMP_NAME = "SETUP.stamp"
 SETUP_STAMP_VERSION = 1
@@ -1123,14 +1098,6 @@ def read_stamp(raw):
     if not isinstance(pushed_at, str) or not isinstance(stamp, str):
         return None
     return {"pushed_at": pushed_at, "stamp": stamp}
-
-
-# `setup_tree_mismatches` lived here and has gone with the tag. It compared a
-# materialised tree against the per-file hashes a key holder vouched for -
-# deleted here, planted there, edited in between - and every one of those three
-# questions was about a tree an attacker could edit in place. The contents of a
-# sealed object are what the key holder wrote or the object does not open, so
-# there is no second copy of the truth left to compare against (ADR-0014).
 
 
 # --- pairing: one-time blobs (ADR-0005) --------------------------------------

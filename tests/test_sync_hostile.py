@@ -355,9 +355,8 @@ def test_a_partial_push_really_withholds_what_it_says_it_withheld(tmp_path,
 # the fallback still does is decide WHICH refusal happens: with it the renamed
 # name is chosen and the seal refuses it by name, without it nothing is vouched
 # and the pull says so. Both land on exit 2 and neither restores anything, so
-# the fallback is now a difference in wording rather than a guard - recorded
-# rather than removed, because removing production code in this path wants
-# Marouf's call and not a test's.
+# the fallback is a difference in wording rather than a guard, and it is
+# kept deliberately: it names the renamed object in the refusal.
 #
 # The half that DID have to be fixed was "at exit 0", and it was fixed by the
 # exit-status rule rather than by vouching: a Setup carryon was offered and

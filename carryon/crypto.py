@@ -17,10 +17,8 @@ and says nothing about where its ciphertext was meant to live, and a Destination
 is untrusted storage that may edit a blob or serve one object's bytes under
 another object's key. So every object carries an HMAC over its own label, and
 unseal checks it before openssl ever sees the ciphertext. Every object means
-every object since ADR-0014, the Setup included; it used to be the exception,
-unsealable without giving up ADR-0004's keyless push, so it got the MAC
-without the encryption - setup_tag, under a key of its own, now dead code
-below. The wrapped pairing blob is the one object left with neither: it is
+every object since ADR-0014, the Setup included. The wrapped pairing blob is
+the one object left with neither: it is
 guarded by the pairing code, not the master key, and the machine reading it
 has no master key yet.
 """
@@ -48,8 +46,6 @@ MASTER_SALT = b"carryon.master.v1"
 
 MAC_INFO = b"carryon.mac.v1"    # domain separator for the derived MAC key
 NAME_INFO = b"carryon.name.v1"  # and for the key object names are HMACed under
-SETUP_INFO = b"carryon.setup.v1"  # the plaintext Setup's manifest MAC: dead
-                                  # since ADR-0014, see _setup_key
 MAC_BYTES = 32                  # HMAC-SHA256, stored as the blob's prefix
 
 
@@ -219,60 +215,15 @@ def unseal(blob: bytes, master_key: bytes, label: str) -> bytes:
                       BLOB_ITERATIONS)
 
 
-# --- authenticating the plaintext Setup (dead since ADR-0014) ---
-
-
-def _setup_key(master_key: bytes) -> bytes:
-    """A third derived key, for the Setup's manifest MAC.
-
-    DEAD SINCE ADR-0014, along with `setup_tag` and `setup_tag_ok` below: a
-    Setup is a sealed object now, so `seal`/`unseal` under setup_label do this
-    job and nothing in carryon or its tests calls any of the three.
-
-    It existed because the Setup was the Archive's one plaintext half and so
-    could not be sealed - while its content is executable (settings.json
-    hooks, skills), so it could not go unauthenticated either. A MAC over a
-    manifest of the tree was the answer, with its own domain separator so that
-    the key authenticating encrypted objects and the key authenticating the
-    plaintext Setup were never the same 32 bytes doing two jobs.
-
-    Kept rather than deleted so that removing a primitive is a decision of its
-    own rather than a side effect of the branch that rewrote the format - the
-    same reasoning that keeps read_tree/write_tree. Nothing reaches it, so it
-    is inert; if ADR-0014 is never reversed it should go.
-    """
-    return hmac_mod.new(master_key, SETUP_INFO, hashlib.sha256).digest()
-
-
-def setup_tag(master_key: bytes, label: str, payload: bytes) -> bytes:
-    """The MAC over a Setup manifest, bound to which machine's Setup it is.
-
-    Dead since ADR-0014 - see `_setup_key`. A sealed Setup carries its own
-    authentication, so there is no manifest to tag.
-
-    The NUL separates label from payload for the reason _tag's does: no
-    label may extend into the payload and produce another Setup's tag.
-    """
-    return hmac_mod.new(_setup_key(master_key),
-                        label.encode("utf-8") + b"\0" + payload,
-                        hashlib.sha256).digest()
-
-
-def setup_tag_ok(master_key: bytes, label: str, payload: bytes,
-                 tag: bytes) -> bool:
-    """Constant-time, like unseal's check: the tag came off untrusted
-    storage, and a comparison that leaks where it diverges helps forge one."""
-    return hmac_mod.compare_digest(tag, setup_tag(master_key, label, payload))
-
-
 def new_stamp() -> str:
     """A value one push writes into two places, so the two can be checked
     against each other later.
 
-    The Setup's tag proves a key holder wrote a tree; it says nothing about
-    WHICH tree they meant last, so every superseded tree a Destination kept
-    still verifies. The push therefore stamps the tag and the encrypted Index
-    entry with the same fresh value, and the pull requires them to agree.
+    The Setup's seal proves a key holder wrote a tree; it says nothing about
+    WHICH tree they meant last, so every superseded Setup a Destination kept
+    still opens. The push therefore stamps the sealed tree and the encrypted
+    Index entry with the same fresh value, and the pull requires them to
+    agree.
 
     Random rather than a timestamp or a counter: a timestamp is only as fine
     as the clock it is read from - two pushes in one second stamp the same

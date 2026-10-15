@@ -123,15 +123,12 @@ def _machine_name_refusal(machine: str):
     Every name here comes out of the Destination's own listing, which makes it
     input: it is only a machine as far as this machine can act on it. A name
     carryon cannot put back into a key - a backslash, a '..', a NUL, all of
-    them legal on some filesystem - is one require_key refuses, which used to
-    surface as a ValueError out of the very next read, aborting a pull that
-    had already written a History to $HOME.
+    them legal on some filesystem - is one require_key refuses, and left to
+    the next read it would surface as a ValueError aborting a pull that had
+    already written a History to $HOME.
 
-    It used to ask a second question too: whether anything was stored UNDER
-    the name, because a Setup was a tree and a bare key where a directory
-    belonged had nothing to restore. Since ADR-0014 a Setup is a single sealed
-    object, so that shape is the correct one and its opposite - a directory -
-    is the legacy case, answered by the caller.
+    A directory under setups/ is a pre-ADR-0014 Setup, and the caller
+    answers that case, not this function.
 
     The shape half is `config.machine_name_refusal` rather than a second
     spelling here, and the round that discovered why is the reason it moved:
@@ -195,16 +192,10 @@ def _setup_catalogue(dest, index) -> tuple:
     for every key under setups/ that cannot be treated as a machine's Setup at
     all.
 
-    ADR-0014 took most of this function's reasoning away with the plaintext it
-    was reasoning about. A Setup is one sealed object now, so its timestamp
-    comes from inside the seal or from the sealed Index - never from a
-    MANIFEST.json the Destination serves in the clear and anyone with write
-    access can author. The `max(captured, known)` that used to let a plaintext
-    timestamp win, and the keyless case it existed for, are both gone: there is
-    no push that cannot record itself in the Index, because there is no push
-    without a master key.
+    A Setup's timestamp comes from the sealed Index (ADR-0014), never from
+    anything the Destination serves in the clear.
 
-    What survives is the listing, and only as DISCOVERY. Which machines an
+    The listing is used only as DISCOVERY. Which machines an
     Archive holds is still read off the Destination, because a name nobody can
     read is a name nobody can offer the user - so the names here are still
     input, still go through `_machine_name_refusal`, and still prove nothing on
@@ -232,8 +223,8 @@ def _setup_catalogue(dest, index) -> tuple:
     for machine in sorted(machines):
         why = _machine_name_refusal(machine)
         if why is not None:
-            # Before the read, not after: the point of the check is that
-            # asking for this name at all is what used to end the pull.
+            # Before the read, not after: asking the Destination for this
+            # name at all is what would end the pull.
             refused.append((machine, why))
             continue
         if machine not in sealed:
@@ -245,11 +236,10 @@ def _setup_catalogue(dest, index) -> tuple:
             continue
         entry = entries.get(vouched.get(machine), {})
         known = entry.get("pushed_at", "") if isinstance(entry, dict) else ""
-        # A str, or nothing. max() over a str and an int is a TypeError, and
-        # it used to escape the one `except SystemExit` wrapped around this
-        # whole call - a traceback out of a pull that had already written to
-        # $HOME. The max() has gone; the guard stays, because the value still
-        # reaches a report line and a comparison.
+        # A str, or nothing: the value reaches a report line and a
+        # comparison, and a TypeError there would escape the one
+        # `except SystemExit` around this call after the pull had already
+        # written to $HOME.
         if not isinstance(known, str):
             known = ""
         # index_name is the Index's own spelling of the machine - the one the
@@ -296,25 +286,12 @@ def _choose_setup_source(setups: dict) -> tuple:
     index['setups'].
 
     No Index vouches for nothing, so it chooses nothing (ADR-0014's
-    amendment). There used to be an exception for one unvouched Setup in an
-    Archive with no Index, kept for ADR-0004's keyless push. Once that push
-    was gone, the exception chose a Setup only for the freshness check to
-    refuse it as a replay, which told the user their Index disagreed when it
-    was missing. _no_setup_source_note now says what happened, once."""
+    amendment), and _no_setup_source_note says why."""
     candidates = {m: e for m, e in setups.items() if e["vouched"]}
     if candidates:
-        # The timestamp alone, because every candidate is now of the same
-        # standing. This used to rank on an 'authenticated' flag first: a
-        # vouched entry without one was an Archive from before Setups were
-        # authenticated, or a machine that had only pushed keylessly, and it
-        # reported the time its own plaintext MANIFEST claimed - which anyone
-        # with write access could set to the year 9999, so ranking on time
-        # alone let a freely editable tree beat a vouched one. ADR-0014
-        # removed both halves of that: the time comes from the sealed Index,
-        # not from a MANIFEST the Destination serves in the clear, and there
-        # is no keyless push to produce an unauthenticated entry. The flag was
-        # already dead weight here - `_setup_catalogue` stopped setting it, so
-        # the term was constantly falsy and ranked nothing.
+        # The Index's timestamp alone: every candidate is vouched, and the
+        # time comes from the sealed Index rather than from anything the
+        # Destination serves in the clear.
         source = max(candidates, key=lambda m: candidates[m]["pushed_at"])
         return source, sorted(set(setups) - set(candidates))
     return None, sorted(setups)
@@ -330,13 +307,9 @@ def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
     here; and no Index at all, where nothing says whether any Setup is
     current.
 
-    Each sentence used to explain itself by ADR-0004's keyless push - 'a
-    directory under setups/ needs no key to write' - which ADR-0014 removed,
-    and the explanation mattered because it was the reason an unvouched Setup
-    was a legitimate thing to meet. It is not one any more: a name under
-    setups/ still costs an attacker nothing, but the bytes at it will not open
-    unless a key holder wrote them. So each sentence now says where the verdict
-    comes from rather than citing a capability that is gone."""
+    A name under setups/ costs an attacker nothing, but the bytes at it will
+    not open unless a key holder wrote them, so each sentence says where the
+    verdict comes from: the Index, or its absence."""
     held = ", ".join(printable(m) for m in sorted(setups))
     if not index_names and not index_absent:
         return (

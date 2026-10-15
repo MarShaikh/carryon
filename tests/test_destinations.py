@@ -121,15 +121,6 @@ def make_destination(kind, tmp_path, monkeypatch):
 KINDS = ("directory", "git", "rclone")
 
 
-def build_tree(tmp_path) -> pathlib.Path:
-    src = tmp_path / "setup-src"
-    (src / "claude" / "skills" / "mine").mkdir(parents=True)
-    (src / "claude" / "settings.json").write_bytes(b'{"model": "opus"}')
-    (src / "claude" / "skills" / "mine" / "SKILL.md").write_bytes(b"authored here")
-    (src / "MANIFEST.json").write_bytes(b"\x00\x01\xffnot-utf8")
-    return src
-
-
 # --- round trips through all three types -------------------------------------
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -163,25 +154,6 @@ def test_blob_round_trip(kind, tmp_path, monkeypatch):
     dest.delete("carryon/sessions/aa.tar.enc")  # deleting a missing key is fine
 
 
-@pytest.mark.parametrize("kind", KINDS)
-def test_tree_round_trip(kind, tmp_path, monkeypatch):
-    dest = make_destination(kind, tmp_path, monkeypatch)
-    src = build_tree(tmp_path)
-
-    dest.write_tree("carryon/setups/mac", src)
-    assert dest.list("carryon/setups/mac/") == [
-        "carryon/setups/mac/MANIFEST.json",
-        "carryon/setups/mac/claude/settings.json",
-        "carryon/setups/mac/claude/skills/mine/SKILL.md",
-    ]
-
-    dst = tmp_path / "restored"
-    dest.read_tree("carryon/setups/mac", dst)
-    got = {p.relative_to(dst).as_posix(): p.read_bytes()
-           for p in dst.rglob("*") if p.is_file()}
-    want = {p.relative_to(src).as_posix(): p.read_bytes()
-            for p in src.rglob("*") if p.is_file()}
-    assert got == want
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -306,18 +278,6 @@ def test_git_commit_author_is_carryon(tmp_path):
         ["git", "-C", str(check), "log", "-1", "--format=%an <%ae>|%cn <%ce>"],
         capture_output=True, text=True, check=True).stdout.strip()
     assert out == "carryon <carryon@localhost>|carryon <carryon@localhost>"
-
-
-def test_git_write_tree_is_one_commit(tmp_path):
-    origin = make_bare_origin(tmp_path)
-    dest = GitDestination(str(origin), home=tmp_path / "home-a")
-    dest.write_tree("carryon/setups/mac", build_tree(tmp_path))
-
-    check = tmp_path / "check"
-    subprocess.run(["git", "clone", "--quiet", str(origin), str(check)], check=True)
-    count = subprocess.run(["git", "-C", str(check), "rev-list", "--count", "HEAD"],
-                           capture_output=True, text=True, check=True).stdout.strip()
-    assert count == "1", "a write batch is one commit, not one per file"
 
 
 def test_git_fetch_failure_is_a_systemexit_with_git_stderr(tmp_path):
