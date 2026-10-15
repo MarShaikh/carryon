@@ -43,9 +43,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import capture, config, history, rekey, sync  # noqa: E402
 from carryon.adapters import CONFIG  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
-    GOOD_COMMAND, GOOD_SETTINGS, SETUP_CATEGORIES, author_setup, build_home_a,
-    build_home_b, file_keyring, files_containing, item, manifest, ns, paired,
-    reseal_setup, stored_setup)
+    GOOD_COMMAND, GOOD_SETTINGS, SETUP_CATEGORIES, archive_plaintext_containing,
+    author_setup, build_home_a, build_home_b, file_keyring, files_containing,
+    item, manifest, ns, paired, reread_setup, reseal_setup, stored_setup)
 
 # The end-to-end restore-leg tests below re-stamp the tampered tree with
 # reseal_setup: since the Setup gained its authentication tag
@@ -150,7 +150,7 @@ def test_capture_refuses_a_link_one_component_inside_a_handpicked_tree(
 
     code, out = push_setup(home, tmp_path, capsys)
 
-    assert not files_containing(tmp_path / "archive", key_hex), \
+    assert not archive_plaintext_containing(tmp_path / "archive", key_hex), \
         "the master key was published in the Archive's plaintext half"
     assert code != 0, "the push reported success over a refused Setup"
     assert ".mytool/notes.md" in out, "the offending path is not named"
@@ -170,7 +170,7 @@ def test_capture_refuses_a_link_inside_an_adapter_declared_tree(tmp_path,
 
     code, out = push_setup(home, tmp_path, capsys)
 
-    assert not files_containing(tmp_path / "archive", key_hex), \
+    assert not archive_plaintext_containing(tmp_path / "archive", key_hex), \
         "the master key was published in the Archive's plaintext half"
     assert code != 0
     assert ".claude/commands" in out
@@ -193,9 +193,10 @@ def test_capture_still_reads_through_a_link_that_stays_out_of_state(tmp_path,
     code, out = push_setup(home, tmp_path, capsys)
 
     assert code == 0, out
-    stored = (tmp_path / "archive" / "carryon" / "setups" / "machine-a"
+    stored = (reread_setup(tmp_path / "archive", "machine-a")
               / "claude" / "commands" / "linked.md")
-    assert stored.read_text() == "carried through the link\n"
+    assert stored.read_text() == "carried through the link\n", \
+        "a link that stays out of carryon's state was not read through"
 
 
 def test_carry_cannot_leave_home_through_a_doubled_slash(tmp_path):

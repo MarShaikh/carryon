@@ -16,8 +16,13 @@ directory the user pointed at by hand.
 
 The one carve-out: ~/.carryon itself is refused outright, because the
 fallback master.key kept there is bare hex that no scanner pattern matches -
-handpicking it would push, in the plaintext Setup, the key that decrypts the
-same Archive's History. The refusal is by construction, not by spelling:
+handpicking it would push the key that decrypts the same Archive. ADR-0014
+sealing the Setup does not answer that, which is the thing to be clear about:
+a key carried into the Archive is sealed under ITSELF, so it is published to
+every machine paired there rather than hidden from them, and `carryon capture`
+writes the same tree to a directory in the clear. The rule is about what may
+be READ at all (ADR-0008), so it does not depend on where the bytes then go.
+The refusal is by construction, not by spelling:
 `lands_in_state` resolves the candidate and folds case, so neither a link that
 resolves into ~/.carryon nor a case-variant of it (the SAME file on APFS and
 NTFS) can reach the key. sync's restore leg consults the same function, so the
@@ -27,7 +32,8 @@ The $HOME boundary around a handpicked path is the same shape of rule and was
 the same shape of mistake: "only paths under home can join a Setup", enforced
 lexically over an engine that resolves. '~/link/loot.txt' spells nothing
 outside home and holds no '..', and with link -> /etc it is a file from
-outside home in a plaintext Setup. So `stays_under_home` asks the question
+outside home in a Setup every paired machine will open. So `stays_under_home`
+asks the question
 about the path that will actually be opened, links followed. It refuses on an
 unresolvable path where `lands_in_state` accepts one, and that is not an
 inconsistency: both fail closed, and closed points opposite ways when one rule
@@ -637,7 +643,7 @@ def stays_under_home(candidate: pathlib.Path, home: pathlib.Path) -> bool:
     engine that acts on the answer follows links (ADR-0007), so a check on the
     unresolved string answers about a path nobody reads. '~/link/loot.txt'
     with link -> /etc spells nothing outside $HOME, holds no '..', and is a
-    file from outside $HOME in a plaintext Setup.
+    file from outside $HOME carried in a Setup.
 
     Case is NOT folded here, and that is the opposite choice from
     lands_in_state on purpose. Both fail closed, and closed points in opposite
@@ -996,15 +1002,16 @@ def read_carryable(path, home=HOME, identities=None, followed=True,
 def unsafe_reads(src: str, home: pathlib.Path = HOME, identities=None,
                  kind: str = "tree") -> list:
     """(path, why) for every path the capture engine would read for the Item
-    at `src` that a Setup must not carry. '~/'-relative, sorted, empty is
-    clean.
+    at `src` that a Setup must not carry. '~/'-relative, sorted; empty means
+    there is no such path.
 
     `carry_refusal` answers about one named path, and an Item is a TREE
     expanded after that answer. '~/.mytool' is an innocent directory no rule
     refuses; put '.mytool/notes.md' inside it pointing at
-    ~/.carryon/master.key and the engine copies the key into the plaintext
-    Setup, and pointing it outside $HOME puts a file this machine never agreed
-    to carry there instead. The same holds one component inside any
+    ~/.carryon/master.key and the engine copies the key into the Setup - where
+    it is sealed under itself, so every paired machine holds it - and pointing
+    it outside $HOME puts a file this machine never agreed to carry there
+    instead. The same holds one component inside any
     adapter-declared tree, where no handpicking is involved at all. So the
     gate is asked again for every path the expansion produces.
 
@@ -1228,8 +1235,8 @@ def _relative_to_home(raw: str, home: pathlib.Path) -> str:
     # Not an `elif`: '~/' is stripped by string surgery, so '~//abs/path'
     # arrives here as the absolute '/abs/path' - and a chain that had already
     # spent its branch on the tilde walked past the $HOME boundary this arm
-    # exists to enforce, putting a file from outside home into the plaintext
-    # Setup. One '~' followed by an absolute path IS that absolute path.
+    # exists to enforce, putting a file from outside home into the Setup.
+    # One '~' followed by an absolute path IS that absolute path.
     if path.startswith("/"):
         try:
             path = str(pathlib.Path(path).relative_to(home))
@@ -1249,7 +1256,7 @@ def _relative_to_home(raw: str, home: pathlib.Path) -> str:
         raise SystemExit(f"carry: {raw} escapes $HOME - only paths under "
                          "home can join a Setup")
     # '~', '/', '.' and $HOME itself all normalise to no parts at all, and
-    # home/'' *is* $HOME - the whole home directory as a plaintext Setup
+    # home/'' *is* $HOME - the whole home directory as one Setup
     if not parts:
         raise SystemExit(f"carry: {raw!r} is the entire home directory - "
                          "refusing to carry it")

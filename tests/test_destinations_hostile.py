@@ -69,6 +69,9 @@ from tests.timeouts import time_limit  # noqa: E402
 SECRET = b"-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n"
 HONEST = b'{"model": "opus"}'
 SETUP_PREFIX = "carryon/setups/mac"
+# Invented, and the only key this module needs: ADR-0014 made put_setup and
+# get_setup take one, and nothing here is about what a real key looks like.
+MASTER = bytes(range(32))
 
 # A forged report line, spelled the way pull spells the real one.
 FORGERY = "  Setup: 6 file(s) written, 0 refused"
@@ -515,19 +518,32 @@ def test_write_tree_does_not_publish_the_target_of_a_staged_symlink(tmp_path):
     assert dest.list(SETUP_PREFIX + "/") == [SETUP_PREFIX + "/settings.json"]
 
 
-def test_put_setup_does_not_publish_or_sweep_through_a_staged_symlink(tmp_path):
-    """put_setup builds its stale-key set from the same is_file() walk, so a
-    staged link both published its target and kept the published copy alive
-    through the sweep."""
+def test_put_setup_does_not_publish_through_a_staged_symlink(tmp_path):
+    """`is_file()` follows a link, so a staged one used to publish its
+    target's bytes - past the home-path neutralisation that deliberately
+    leaves links alone (ADR-0006).
+
+    The sweep half of this test is gone with the sweep: since ADR-0014 a Setup
+    is one object replacing one object, so there are no stale keys for a
+    followed link to keep alive. What survives is the publishing half, and it
+    is now measured inside the seal - the link's target must not be a member
+    of the tar, which a listing of one object cannot say.
+    """
     dest = DirectoryDestination(tmp_path / "archive")
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "settings.json").write_bytes(HONEST)
     os.symlink(secret_file(tmp_path), staging / "CLAUDE.md")
 
-    archive.put_setup(dest, "mac", staging)
+    archive.put_setup(dest, MASTER, "mac", staging)
 
-    assert dest.list(SETUP_PREFIX + "/") == [SETUP_PREFIX + "/settings.json"]
+    assert dest.list("carryon/setups/") == ["carryon/setups/mac.tar.enc"]
+    opened = tmp_path / "opened"
+    archive.get_setup(dest, MASTER, "mac", opened)
+    assert [str(p.relative_to(opened)) for p in sorted(opened.rglob("*"))
+            if p.is_file()] == ["settings.json"], \
+        "a staged symlink published its target's bytes into the Setup"
+    assert SECRET not in dest.read("carryon/setups/mac.tar.enc")
 
 
 # --- git gets the same rules --------------------------------------------------

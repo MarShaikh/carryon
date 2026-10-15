@@ -39,8 +39,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import (archive, cli, config, history, keyring,  # noqa: E402
-                     layout, rekey, sync)
+from carryon import (archive, cli, config, crypto, history,  # noqa: E402
+                     keyring, layout, rekey, sync)
 from carryon.adapters import ADAPTERS  # noqa: E402
 from carryon.destinations.rclone_remote import RcloneDestination  # noqa: E402
 
@@ -325,7 +325,8 @@ def test_a_whole_journey_runs_against_an_rclone_remote(rclone_journey, capsys):
     objects = fake.objects()
     assert any(o.endswith("carryon/index.enc") for o in objects), objects
     assert any("carryon/sessions/" in o for o in objects), objects
-    assert any("carryon/setups/mac-a/" in o for o in objects), objects
+    assert any(o.endswith("carryon/setups/mac-a.tar.enc")
+               for o in objects), objects
 
     assert sync.pair(ns(), home_a) == 0
     code = re.search(PAIR_CODE, capsys.readouterr().out).group(1)
@@ -391,6 +392,27 @@ def stored_text(fake, rel: str) -> str:
     return (fake.root / "archive" / "carryon" / rel).read_text()
 
 
+def stored_setup_text(fake, home, machine, member: str) -> str:
+    """One member of the Setup the fake store holds, read through the seal.
+
+    A path under `setups/<machine>/` since ADR-0014 is not a path, so these
+    transport tests lost their cheapest observable: a plaintext file whose
+    content said whether a push really transferred anything. The sealed
+    object is the same observable one layer down, and it still answers the
+    question these tests ask - which is about rclone moving bytes, not about
+    the Setup's shape.
+    """
+    blob = (fake.root / "archive" / "carryon" / "setups"
+            / f"{machine}.tar.enc").read_bytes()
+    plain = crypto.unseal(blob, keyring.fetch_master(home=home),
+                          archive.setup_label(machine))
+    for name, data in archive.tar_members(plain):
+        if name == member:
+            return data.decode("utf-8")
+    raise AssertionError(
+        f"the stored Setup for {machine!r} holds no member {member!r}")
+
+
 def test_a_second_push_confirms_the_bytes_it_uploaded(tmp_path, monkeypatch,
                                                       capsys):
     """The confirmation asked the store's LISTING whether a key of that name
@@ -401,7 +423,7 @@ def test_a_second_push_confirms_the_bytes_it_uploaded(tmp_path, monkeypatch,
 
     So the same `dry_run = true` the module docstring names was caught on the
     first push and invisible on the second: exit 0, 'Sessions: 1 pushed',
-    'Setup: pushed to setups/mac-a/ (clean)', and an Archive still holding
+    'Setup: pushed', and an Archive still holding
     last week's CLAUDE.md. A stale object's seal verifies perfectly - a label
     binds identity, not revision - so nothing downstream notices either.
     """
@@ -410,7 +432,7 @@ def test_a_second_push_confirms_the_bytes_it_uploaded(tmp_path, monkeypatch,
     assert sync.init(ns(dest=SPEC, machine="mac-a"), home) == 0
     assert sync.push(ns(apply=True), home) == 0
     capsys.readouterr()
-    assert stored_text(fake, "setups/mac-a/claude/CLAUDE.md") == \
+    assert stored_setup_text(fake, home, "mac-a", "claude/CLAUDE.md") == \
         "Answer briefly.\n"
 
     (home / ".claude" / "CLAUDE.md").write_text("Answer at length.\n")
@@ -423,7 +445,7 @@ def test_a_second_push_confirms_the_bytes_it_uploaded(tmp_path, monkeypatch,
     assert "rclone" in str(exc.value)
     assert "Setup: pushed" not in out, \
         "a push that transferred nothing reported a stored Setup"
-    assert stored_text(fake, "setups/mac-a/claude/CLAUDE.md") == \
+    assert stored_setup_text(fake, home, "mac-a", "claude/CLAUDE.md") == \
         "Answer briefly.\n"
 
     # And the wedge that followed it: the vacuous push advanced this
@@ -433,7 +455,7 @@ def test_a_second_push_confirms_the_bytes_it_uploaded(tmp_path, monkeypatch,
     # carryon manufactured the rollback and then wedged itself on it.
     fake.copyto_writes_nothing(False)
     assert sync.push(ns(apply=True), home) == 0, capsys.readouterr().out
-    assert stored_text(fake, "setups/mac-a/claude/CLAUDE.md") == \
+    assert stored_setup_text(fake, home, "mac-a", "claude/CLAUDE.md") == \
         "Answer at length.\n"
 
 
@@ -441,15 +463,23 @@ def test_a_push_that_stored_some_objects_does_not_claim_it_stored_none(
         tmp_path, monkeypatch, capsys):
     """'Nothing was stored; the Archive is as it was.' is the sentence the
     user acts on, and it is false whenever the write that failed is not the
-    first. A filter declining one kind of object leaves the plaintext Setup
-    half in the Archive with no Index beside it - which is the shape ADR-0009
-    says a pull must refuse."""
+    first. A filter declining one kind of object leaves the Setup and the
+    Sessions in the Archive with no Index beside them - which is the shape
+    ADR-0009 says a pull must refuse.
+
+    The filter declines `index.enc` rather than `.tar.enc`, and the swap is
+    ADR-0014's: every object a push writes is now a sealed tar except the
+    Index, so declining that suffix declines the whole push and there is
+    nothing left over to be wrong about. The Index is also written last,
+    which makes it the sharpest version of this test - everything else has
+    already landed.
+    """
     fake = install_fake_rclone(tmp_path, monkeypatch)
     home = build_claude_home(tmp_path)
     assert sync.init(ns(dest=SPEC, machine="mac-a"), home) == 0
     capsys.readouterr()
 
-    fake.copyto_writes_nothing(suffix=".tar.enc")   # a --max-size rule
+    fake.copyto_writes_nothing(suffix="index.enc")   # an --exclude rule
     with pytest.raises(SystemExit) as exc:
         sync.push(ns(apply=True), home)
     capsys.readouterr()
@@ -505,13 +535,13 @@ def test_an_object_the_remote_will_not_serve_is_named_not_absent(tmp_path,
     capsys.readouterr()
 
     dest = RcloneDestination("fakeremote:archive")
-    key = "carryon/setups/mac-a/MANIFEST.json"
+    key = archive.setup_key("mac-a")
     assert key in dest.list(), dest.list()
     fake.fail("cat", code=6)     # rclone's "less serious errors"
 
     assert dest.read(key) is None
     out = capsys.readouterr().out
-    assert "MANIFEST.json" in out and "skipping" in out, \
+    assert "mac-a.tar.enc" in out and "skipping" in out, \
         "an object the remote holds and would not serve went unreported"
 
 
@@ -1187,21 +1217,30 @@ def test_a_listing_that_changes_between_two_calls_lands_the_rest(
     is this round's one unclosed silence and is recorded in the deviations -
     the rclone type cannot supply it, since 'absent' is also every fresh
     Archive's answer for index.enc.
+
+    Driven over `carryon/sessions` since ADR-0014, because `setups/<machine>`
+    is no longer a prefix with members under it - it is one object. Note that
+    this leaves read_tree with no caller in carryon at all: the Setup tree was
+    the last one, and what is exercised here is a Destination capability
+    nothing in the tool now uses.
     """
     fake = rclone_journey.fake
     honest = "\n".join(o.replace("archive/", "", 1)
                        for o in fake.objects()) + "\n"
-    ghost = "carryon/setups/mac-a/claude/ghost.md\n"
+    real = sorted(o.replace("archive/carryon/sessions/", "", 1)
+                  for o in fake.objects() if "carryon/sessions/" in o)
+    assert real, "the journey pushed no Session for this prefix to hold"
+    ghost = "carryon/sessions/ghost.tar.enc\n"
     fake.listing((honest + ghost).encode(), honest.encode())
 
     dest = RcloneDestination("fakeremote:archive")
     staging = pathlib.Path(rclone_journey.tmp_path) / "staging"
-    dest.read_tree("carryon/setups/mac-a", staging)
+    dest.read_tree("carryon/sessions", staging)
     out = capsys.readouterr().out
 
     landed = sorted(p.name for p in staging.rglob("*") if p.is_file())
-    assert "settings.json" in landed, out
-    assert "ghost.md" not in landed
+    assert landed == real, out
+    assert "ghost.tar.enc" not in landed
     assert "Traceback" not in out
 
 

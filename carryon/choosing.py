@@ -219,5 +219,7 @@ def report(dest) -> None:
         print(f"Destination checked: write, read and delete work at "
               f"{dest.describe()}.")
         print("That is all it says.", end=" ")
-    print("Nothing here can tell whether the storage is private, and a "
-          "Setup travels in the clear.")
+    print("Nothing here can tell whether the storage is private. What "
+          "carryon carries is sealed before it leaves this machine "
+          "(ADR-0014); the bytes this probe just wrote were not, which is "
+          "why they name no machine, no home and no time.")

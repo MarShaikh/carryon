@@ -38,9 +38,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import config, destinations, rekey, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_CLAUDE_MD, GOOD_COMMAND, GOOD_SETTINGS, SECRET,
-    SETUP_CATEGORIES, ListsOneExtraKey, author_setup, build_home_a,
-    build_home_b, file_keyring, files_containing, item, link_home, manifest,
-    ns, paired, reseal_setup, stored_setup)
+    SETUP_CATEGORIES, ListsOneExtraKey, archive_plaintext_containing,
+    author_setup, build_home_a, build_home_b, file_keyring, files_containing,
+    item, link_home, manifest, ns, paired, reread_setup, reseal_setup,
+    stored_setup)
 
 # Since the Setup gained its authentication tag (test_setup_auth.py), a tree
 # edited by a KEYLESS attacker is refused whole before any item is read. The
@@ -273,7 +274,7 @@ def test_a_full_push_leaves_no_home_path_anywhere_in_the_archive(
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the Archive names this machine's home (ADR-0006)"
 
     # and the report is still usable on the machine that reads it
@@ -298,13 +299,13 @@ def test_a_partial_push_leaves_no_home_path_anywhere_in_the_archive(
     sync.init(ns(dest=str(dest_root), machine="machine-c"), home)
 
     assert sync.push(ns(apply=True, category="capability"), home) == 0
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the first partial push named this machine's home"
 
     assert sync.push(ns(apply=True, category="capability"), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the merged MANIFEST or RESTORE.md named this machine's home"
     notes = (stored_setup(dest_root, "machine-c") / "RESTORE.md").read_text()
     assert "~/dotfiles/skills/shipping" in notes
@@ -502,19 +503,36 @@ def test_a_missing_packed_file_is_named_rather_than_silently_dropped(
         "a stored file the Destination removed is not reported at all"
 
 
-def test_a_bare_file_where_a_setup_tree_belongs_does_not_abort_the_pull(
+def test_a_pre_sealing_setup_tree_is_named_and_does_not_abort_the_pull(
         paired, capsys):
     """An attacker-triggered abort after the History has been laid down is
-    still an abort. A key that names no directory of its own is not a Setup."""
-    tree = paired.dest_root / "carryon" / "setups" / "machine-a"
-    for path in sorted(tree.rglob("*"), reverse=True):
-        path.unlink() if path.is_file() else path.rmdir()
-    tree.rmdir()
-    tree.write_text("not a Setup")
+    still an abort.
 
-    assert sync.pull(ns(apply=True), paired.home_b) == 0
+    This was the other way up: it asserted that a bare FILE where a Setup
+    tree belonged was not a Setup. ADR-0014 swapped which shape is correct -
+    a Setup is one object now - so the shape that has to be named and
+    survived is its opposite, a directory per machine, which is what an
+    Archive written before sealing holds.
+
+    It is not restored, and it must not be: nothing in a plaintext tree says
+    a key holder wrote it, which is the whole of why sealing happened. What
+    this pins is that it is refused BY NAME and the pull still finishes, so
+    an Archive from before the change fails loudly rather than either
+    silently restoring or taking the run down with it.
+    """
+    setups = paired.dest_root / "carryon" / "setups"
+    (setups / "machine-a.tar.enc").unlink()
+    legacy = setups / "machine-a" / "claude"
+    legacy.mkdir(parents=True)
+    (legacy / "settings.json").write_text(EVIL_SETTINGS)
+
+    assert sync.pull(ns(apply=True), paired.home_b) == 2
     out = capsys.readouterr().out
-    assert "Setup:" in out
+
+    assert "machine-a" in out, "the pre-sealing tree is not named at all"
+    assert "sealed" in out, "the report does not say why it cannot be used"
+    assert not (paired.home_b / ".claude" / "settings.json").exists(), \
+        "a plaintext Setup tree was restored (ADR-0014)"
 
 
 def test_a_machine_name_no_destination_key_can_hold_is_skipped_not_fatal(
@@ -543,10 +561,16 @@ def test_a_machine_name_no_destination_key_can_hold_is_skipped_not_fatal(
 def test_a_setup_named_dot_does_not_enter_the_catalogue(paired):
     """'.' passes require_key, so leaving the name check to it would admit a
     machine whose stored Setup is the setups/ directory itself - a competitor
-    in the tie-break that no push ever wrote."""
-    assert sync._machine_name_refusal(".", has_tree=True) is not None
-    assert sync._machine_name_refusal("..", has_tree=True) is not None
-    assert sync._machine_name_refusal("machine-a", has_tree=True) is None
+    in the tie-break that no push ever wrote.
+
+    `has_tree` has gone from the signature rather than from this assertion:
+    the second question it answered - whether anything was stored UNDER the
+    name - is meaningless now that a Setup IS one object, and the shape half
+    is the whole of what a name has to pass.
+    """
+    assert sync._machine_name_refusal(".") is not None
+    assert sync._machine_name_refusal("..") is not None
+    assert sync._machine_name_refusal("machine-a") is None
 
 
 def test_every_manifest_item_is_either_written_or_refused(tmp_path, paired):
@@ -611,9 +635,9 @@ def test_a_symlinked_home_is_still_neutralised(tmp_path, capsys):
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(real)) == [], \
+    assert archive_plaintext_containing(dest_root, str(real)) == [], \
         "the Archive names the machine's real home"
-    assert files_containing(dest_root, str(home)) == []
+    assert archive_plaintext_containing(dest_root, str(home)) == []
 
 
 def test_a_path_outside_home_is_withheld_from_the_archive(tmp_path, capsys):
@@ -634,7 +658,7 @@ def test_a_path_outside_home_is_withheld_from_the_archive(tmp_path, capsys):
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(shared)) == [], \
+    assert archive_plaintext_containing(dest_root, str(shared)) == [], \
         "an external path outside $HOME reached the Archive verbatim"
 
 
@@ -701,7 +725,7 @@ def test_a_captured_files_content_names_no_home(tmp_path, capsys):
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the captured files name this machine's home"
 
 
@@ -725,11 +749,11 @@ def test_a_file_that_is_not_utf8_does_not_carry_the_home_into_the_archive(
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     out = capsys.readouterr().out
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "a file that is not UTF-8 carried this machine's home to the Archive"
     assert "notes.bin" in out, \
         "a file the push declined to neutralise must be named in the report"
-    assert files_containing(dest_root, "Ship it.") != [], \
+    assert archive_plaintext_containing(dest_root, "Ship it.") != [], \
         "the rest of the skill still travels"
 
 

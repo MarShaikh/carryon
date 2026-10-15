@@ -34,7 +34,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import archive, crypto, keyring, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_CLAUDE_MD, GOOD_SETTINGS, SETUP_CATEGORIES,
-    build_home_a, build_home_b, file_keyring, link_home, ns, paired)
+    build_home_a, build_home_b, file_keyring, link_home, ns, paired,
+    stored_object, tamper_with_setup)
 
 
 def pull_report(home, capsys, code: int = 0) -> str:
@@ -47,17 +48,6 @@ def pull_report(home, capsys, code: int = 0) -> str:
     """
     assert sync.pull(ns(apply=True), home) == code
     return capsys.readouterr().out
-
-
-def stored_object(dest_root, machine="machine-a") -> pathlib.Path:
-    """The one object a machine's Setup is, as a path the attacker can write.
-
-    Not `hostile_archive.stored_setup`, which unseals into a scratch directory
-    for a test to read: this is the bytes at the Destination, which is all an
-    attacker has.
-    """
-    return (pathlib.Path(dest_root) / "carryon" / "setups"
-            / f"{machine}.tar.enc")
 
 
 def restored_nothing(home) -> bool:
@@ -75,9 +65,7 @@ def test_tampered_ciphertext_is_refused_whole_on_pull(paired, capsys):
     change bytes and hope. The seal catches it, and the refusal is WHOLE -
     the honest files do not land either, because a partial Setup is worse
     than none."""
-    blob = bytearray(stored_object(paired.dest_root).read_bytes())
-    blob[-1] ^= 0xFF
-    stored_object(paired.dest_root).write_bytes(bytes(blob))
+    tamper_with_setup(paired.dest_root)
 
     out = pull_report(paired.home_b, capsys, code=2)
 

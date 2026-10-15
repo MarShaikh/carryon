@@ -542,10 +542,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="carryon",
         # What a Setup carries is scanned against the credential shapes carryon
-        # knows and bounded in what it may read (ADR-0001, ADR-0008); neither
-        # proves it holds no secret, since a random token matches no rule. So
-        # this says what was checked, and that a Setup travels in the clear -
-        # which is what decides whether the storage needs to be private.
+        # knows and bounded in what it may read (ADR-0008); neither proves it
+        # holds no secret, since a random token matches no rule. So this claims
+        # nothing about the content and states the one thing that is true of
+        # every byte carryon publishes: it is sealed (ADR-0014). It used to end
+        # on "a Setup travels in the clear", which was the fact the storage
+        # promise had to be hedged around and is no longer a fact.
         description="Carry an AI coding agent's working life between "
                     "machines: the Setup that makes an agent yours, and the "
                     "History of what you did with it. carryon reports what it "

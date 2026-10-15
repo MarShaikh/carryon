@@ -273,9 +273,10 @@ class Capture:
         self.files = 0
         self.bytes = 0
         # Paths this machine would not hand over, named as they are met and
-        # counted at the end. Not the same thing as a credential finding: this
-        # capture is still clean, it just covers less than the adapters
-        # declare, and a user who is not told reads it as covering more.
+        # counted at the end. Not the same thing as a credential finding: the
+        # scan still reported nothing, and this says only that the capture
+        # covers less than the adapters declare - a user who is not told reads
+        # it as covering more.
         self.skipped = []
         # Development artifact directories left out of a vouched tree
         # (ADR-0013). A THIRD register, and the distinction is the point: a
@@ -556,9 +557,13 @@ def _capture_agent(cap: Capture, adapter, want_categories: set) -> dict:
     }
 
     for item in adapter.items:
-        # A chats item names where the History lives; it moves through the
-        # push pipeline, encrypted. The Setup engine never copies one, whatever
-        # categories were asked for - a Setup is clean, a History never is.
+        # A chats item names where the History lives, and the History has its
+        # own pipeline. The Setup engine never copies one, whatever categories
+        # were asked for. The reason used to be put as "a Setup is clean, a
+        # History never is", which ADR-0014 retired twice over: both halves are
+        # encrypted now, and the scan reports in both. What is left is simply
+        # that these are two different carriers, and a Transcript travelling as
+        # a Setup item would be one neither side's rules were written for.
         if item.kind == "chats":
             continue
         if item.category not in want_categories:
@@ -617,7 +622,7 @@ def _capture_agent(cap: Capture, adapter, want_categories: set) -> dict:
 
 def state_reads(want_agents, want_categories, home) -> list:
     """(item src, the path it reads, why) for every path this capture would
-    read that a Setup must not carry. Empty is clean.
+    read that a Setup must not carry. Empty means there is no such path.
 
     Asked over the selection `run` is about to walk - its categories, its
     --agent filter, never a chats item - minus the is_installed test, which is
@@ -821,9 +826,10 @@ def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
         print("SECRET SCAN: no credential patterns in the captured set")
 
     if cap.skipped:
-        # Beside the scan verdict rather than folded into it: the Setup is
-        # still clean, and what this says is that it covers less than the
-        # adapters declare. A user who is not told reads it as covering more.
+        # Beside the scan verdict rather than folded into it: the scan
+        # reported nothing, and what this says is that the capture covers less
+        # than the adapters declare. A user who is not told reads it as
+        # covering more.
         print(f"\n{len(cap.skipped)} path(s) NOT captured - this machine would "
               "not read them (named above)")
 

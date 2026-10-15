@@ -89,12 +89,11 @@ def stamped_or_none(staging):
     return archive.read_stamp(raw)
 
 
-def setup_freshness(staging, source, entry) -> tuple:
-    """(refusal, note) for a Setup that has already unsealed.
+def setup_freshness(staging, source, entry):
+    """Report lines refusing a Setup that has already unsealed, or None.
 
-    refusal is a list of report lines refusing the Setup WHOLE - a partial
-    Setup is worse than none, so this never salvages the files that still
-    match. note is a warning to print and then restore anyway.
+    The refusal is WHOLE - a partial Setup is worse than none, so this never
+    salvages the files that still match.
 
     What it no longer does is decide whether a key holder wrote the tree.
     `archive.get_setup` settled that by unsealing it under a label bound to
@@ -103,7 +102,26 @@ def setup_freshness(staging, source, entry) -> tuple:
     contradiction to resolve - both were shapes of the plaintext era, and a
     keyless push that could produce an unauthenticated Setup no longer exists.
 
-    One question is left, and it is the one sealing cannot answer.
+    One question is left, and it is the one sealing cannot answer: a sealed
+    object says 'a key holder wrote these bytes at some time', and a versioned
+    Destination keeps every one they ever pushed. Which is CURRENT is the
+    Index's stamp to answer.
+
+    It used to return `(refusal, note)`, where a note was a warning to print
+    and restore anyway, and two of its four branches produced one: a Setup
+    with no stamp and no Index record, and a stamp with no Index record to
+    check it against. Both were reachable only with a falsy `entry`, and the
+    one caller - the pull, sync's `setup_freshness(staging, source,
+    setups[source])` - passes a `_setup_catalogue` entry, which is always a
+    populated dict. So neither note could ever be printed, and the pull's
+    'restore it anyway' path had no way to be taken. The notes were a vestige
+    of ADR-0004: a keyless Archive genuinely had no Index record to check
+    against, and restoring behind a warning was the promise ADR-0014 withdrew.
+    A Setup nothing calls current is refused now, uniformly, at both doors -
+    so the note channel went with the branches that wrote to it.
+
+    (The `{}` entry §3 of the handoff describes is real, but it reaches
+    `_stale_stamp` directly from the push door in setup_out, not through here.)
     """
     stamped = stamped_or_none(staging)
     head = (f"the stored Setup for machine '{printable(source)}' is refused "
@@ -112,29 +130,14 @@ def setup_freshness(staging, source, entry) -> tuple:
             "machine that holds the master key, or investigate the "
             "Destination.")
     if stamped is None:
-        if not entry:
-            # No Index record and no stamp: an Archive written before ADR-0014,
-            # or by a carryon this one does not know. It opened under the
-            # master key, so it is a key holder's - but nothing says it is the
-            # current one, and saying so is better than implying safety.
-            return None, (
-                "this Setup opened under the master key, so a key holder "
-                "wrote it, but it carries no freshness stamp - nothing here "
-                "can tell it from an earlier one served back in its place. "
-                "Push it again from a machine that holds the master key")
         return [head + "the encrypted Index records a current Setup for it, "
                 "and the tree the Archive served carries no freshness stamp "
                 "at all - an Archive from before stamps existed, or a tree "
-                "assembled at the Destination." + tail], None
-    if not entry:
-        return None, (
-            "nothing in the encrypted Index records this Setup, so its stamp "
-            "has nothing to be checked against - it opened under the master "
-            "key, which proves who wrote it and not when")
+                "assembled at the Destination." + tail]
     if _stale_stamp(stamped, entry):
         return [head + "it opened under the master key, but it is the Setup "
                 f"pushed at {printable(stamped['pushed_at'] or 'no time')} "
                 "rather than the one the Index records as current "
                 f"({printable(entry.get('index_pushed_at') or 'no time')}) - "
-                "an earlier tree served back in place of it." + tail], None
-    return None, None
+                "an earlier tree served back in place of it." + tail]
+    return None

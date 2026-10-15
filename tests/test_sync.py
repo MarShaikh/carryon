@@ -20,8 +20,12 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import cli, config, keyring, rekey, restore, sync  # noqa: E402
+from carryon import archive, cli, config, keyring, rekey, restore, sync  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
+# The one helper this suite borrows: since ADR-0014 there is no stored Setup to
+# read off a Destination, and a second spelling of "unseal it and look" is a
+# second thing to keep in step.
+from tests.hostile_archive import reread_setup  # noqa: E402
 
 UUID_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"   # tree; B holds a byte-prefix
 UUID_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"   # codex rollout; B diverges
@@ -304,7 +308,7 @@ def test_push_twice_uploads_zero_session_objects_the_second_time(
     project_keys = dest.list("carryon/projects/")
     assert len(session_keys) == 4, "four Sessions on the pushing machine"
     assert len(project_keys) == 1, "one project residue"
-    assert "carryon/setups/machine-a/MANIFEST.json" in dest.list("carryon/setups/")
+    assert dest.list("carryon/setups/") == ["carryon/setups/machine-a.tar.enc"]
     assert dest.read("carryon/index.enc") is not None
 
     before = {k: dest.read(k) for k in session_keys + project_keys}
@@ -372,21 +376,34 @@ def test_partial_category_push_keeps_the_stored_manifest_whole(
     restores a Setup solely from what the MANIFEST names, so knowledge and
     capability entries have to survive a partial push."""
     home_a, dest_spec = pushed
-    dest = DirectoryDestination(tmp_path / "archive")
-    manifest = json.loads(dest.read("carryon/setups/machine-a/MANIFEST.json"))
-    srcs = {i["src"] for a in manifest["agents"].values() for i in a["items"]}
+    dest_root = tmp_path / "archive"
+
+    def stored_srcs():
+        """The srcs the Archive's stored MANIFEST names, read fresh.
+
+        Through the seal since ADR-0014, and re-read rather than cached: what
+        this test is about is that a second push did not drop entries from the
+        stored document, so reading a copy taken before that push would be
+        reading the answer it is trying to check.
+        """
+        stored = reread_setup(dest_root, "machine-a")
+        doc = json.loads((stored / "MANIFEST.json").read_text())
+        return ({i["src"] for a in doc["agents"].values() for i in a["items"]},
+                stored)
+
+    srcs, _ = stored_srcs()
     assert ".claude/CLAUDE.md" in srcs, "sanity: the full push mapped it"
 
     (home_a / ".claude" / "settings.json").write_text('{"model": "sonnet"}')
     capsys.readouterr()
     assert sync.push(ns(apply=True, category="config"), home_a) == 0
 
-    manifest = json.loads(dest.read("carryon/setups/machine-a/MANIFEST.json"))
-    srcs = {i["src"] for a in manifest["agents"].values() for i in a["items"]}
+    srcs, stored = stored_srcs()
     assert ".claude/CLAUDE.md" in srcs, \
         "the knowledge item survives a config-only push"
     assert ".claude/settings.json" in srcs
-    assert dest.read("carryon/setups/machine-a/claude/CLAUDE.md") is not None
+    assert (stored / "claude" / "CLAUDE.md").is_file(), \
+        "the MANIFEST still names the file and the object no longer holds it"
 
     home_b = tmp_path / "home_b_partial"
     home_b.mkdir()
@@ -430,43 +447,49 @@ def test_rekey_stats_are_reported_on_push_and_pull(tmp_path, capsys):
     assert "bare '~'" in out
 
 
-def test_setup_only_push_needs_no_master_key_and_pull_still_finds_it(
-        tmp_path, capsys):
-    """ADR-0004: only a History is encrypted, so `push --category config`
-    must work on a machine holding no master key - and a later pull must find
-    that Setup even though the encrypted Index never heard of it."""
+def test_a_keyless_setup_push_refuses_and_names_both_cures(tmp_path, capsys):
+    """The one capability ADR-0014 takes away, asserted where it used to be
+    asserted as a feature.
+
+    This was `..._setup_only_push_needs_no_master_key_and_pull_still_finds_it`
+    on ADR-0004's reasoning that only a History is encrypted. Sealing the
+    Setup removes the premise: there is nothing a keyless push could write,
+    so the warning it used to print becomes a refusal.
+
+    Both cures are pinned because a refusal that names neither is how this
+    decision turns into a user with no way forward - the objection ADR-0001
+    raised against fail-closed and ADR-0014 answers here. `init`/`pair` gets
+    the machine a key; `capture --out` gets the readable Setup that was the
+    honest reason to want a keyless push, on the machine that already holds
+    the secrets rather than in somebody else's storage.
+
+    And nothing lands: a refusal that had already written the Setup half would
+    leave an Archive in a state no key holder authored, which is precisely
+    what sealing is for.
+    """
     home = build_home_a(tmp_path)
     dest_spec = str(tmp_path / "archive")
     sync.init(ns(dest=dest_spec, machine="machine-a"), home)
-    master = keyring.fetch_master(home=home)
     (home / ".carryon" / "master.key").unlink()
     assert keyring.fetch_master(home=home) is None
     capsys.readouterr()
 
-    assert sync.push(ns(apply=True, category="config"), home) == 0
-    dest = DirectoryDestination(tmp_path / "archive")
-    assert "carryon/setups/machine-a/MANIFEST.json" in \
-        dest.list("carryon/setups/")
-    assert dest.read("carryon/index.enc") is None, \
-        "no key, so the encrypted Index is left untouched"
+    with pytest.raises(SystemExit) as exc:
+        sync.push(ns(apply=True, category="config"), home)
 
+    refusal = str(exc.value)
+    assert "carryon init" in refusal, "the refusal does not name the key cure"
+    assert "capture --out" in refusal, \
+        "the refusal does not name the readable-Setup cure"
+    dest = DirectoryDestination(tmp_path / "archive")
+    assert dest.list("carryon/setups/") == [], \
+        "a keyless push wrote a Setup it has no key to seal"
+
+    # A History push refused for the same reason before ADR-0014 and still
+    # does; the two halves now give one answer instead of two.
     with pytest.raises(SystemExit) as exc:
         sync.push(ns(apply=True), home)
-    assert "master key" in str(exc.value), "a History push still needs the key"
-
-    home_b = tmp_path / "home_b_nokey"
-    home_b.mkdir()
-    keyring.store_master(master, home=home_b)
-    cfg = config.default_config()
-    cfg["destination"] = dest_spec
-    cfg["machine"] = "machine-b"
-    config.save(cfg, home_b)
-    capsys.readouterr()
-    assert sync.pull(ns(apply=True), home_b) == 0
-    out = capsys.readouterr().out
-    assert "machine-a" in out
-    assert (home_b / ".claude" / "settings.json").read_text() == \
-        '{"model": "opus"}'
+    assert "master key" in str(exc.value)
 
 
 def test_push_dry_run_writes_nothing(tmp_path, capsys):
@@ -504,23 +527,50 @@ def test_push_reports_history_credentials_and_still_pushes(tmp_path, capsys):
         "a History credential is reported and carried, never a refusal"
 
 
-def test_push_refuses_a_setup_credential_but_the_history_still_moves(
+def test_push_reports_a_setup_credential_and_publishes_it_sealed(
         tmp_path, capsys):
+    """ADR-0014's central claim, measured on the push rather than argued.
+
+    This asserted exit 2, "REFUSED", and an empty setups/ - the posture the
+    ADR retired. What it is replaced by is the comparison the ADR actually
+    makes: refusing produced nothing at all, so the credential's best case was
+    that it never travelled because nothing did, and sealing is strictly
+    better than that. Better means the bytes cross and are unreadable where
+    they land, which is the pair of facts below.
+
+    The planted key is checked for absence in the stored object and presence
+    inside the seal. Absence alone would pass against a push that dropped the
+    file, and that is not the promise - a Setup carries settings.json because
+    settings.json is what makes an agent yours (ADR-0014: no Adapter change
+    can stop carrying it).
+    """
+    planted = '{"apiKey": "sk-ant-api03-PLANTEDPLANTEDPLANTEDPLANTED"}'
     home = build_home_a(tmp_path)
-    (home / ".claude" / "settings.json").write_text(
-        '{"apiKey": "sk-ant-api03-PLANTEDPLANTEDPLANTEDPLANTED"}')
+    (home / ".claude" / "settings.json").write_text(planted)
     sync.init(ns(dest=str(tmp_path / "archive"), machine="machine-a"), home)
+    master = keyring.fetch_master(home=home)
     capsys.readouterr()
 
     code = sync.push(ns(apply=True), home)
     out = capsys.readouterr().out
 
-    assert code == 2, "a Setup credential fails closed (ADR-0001)"
-    assert "REFUSED" in out
+    assert code == 0, "reported, not refused (ADR-0014)"
+    assert "settings.json" in out, "the credential was not named"
+    assert "anthropic-key" in out, "the report does not say what matched"
+
     dest = DirectoryDestination(tmp_path / "archive")
-    assert dest.list("carryon/setups/") == [], "no Setup was written"
+    assert dest.list("carryon/setups/") == \
+        ["carryon/setups/machine-a.tar.enc"], "the Setup was not published"
+    assert planted.encode() not in dest.read("carryon/setups/machine-a.tar.enc"), \
+        "the credential is readable at the Destination - the case for sealing"
+
+    opened = tmp_path / "opened"
+    archive.get_setup(dest, master, "machine-a", opened)
+    assert (opened / "claude" / "settings.json").read_text() == planted, \
+        "the reported file was dropped rather than carried"
+
     assert len(dest.list("carryon/sessions/")) == 4, \
-        "the encrypted History is unaffected by a Setup refusal"
+        "the encrypted History moved too"
 
 
 # --- pull: the union (ADR-0002) ----------------------------------------------

@@ -39,8 +39,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from carryon import capture, cli, config, keyring, sync  # noqa: E402
-from tests.hostile_archive import (build_home_a,  # noqa: E402
-                                   files_containing, ns)
+from tests.hostile_archive import (  # noqa: E402
+    archive_plaintext_containing, build_home_a, files_containing, ns)
 from tests.timeouts import time_limit  # noqa: E402
 
 
@@ -176,7 +176,7 @@ def test_a_hard_link_never_reaches_the_archives_plaintext_half(tmp_path):
                      home)
 
     assert code != 0
-    assert not files_containing(dest_root, secret), \
+    assert not archive_plaintext_containing(dest_root, secret), \
         "the master key landed in the Archive's plaintext half"
 
 
@@ -266,7 +266,7 @@ def test_a_member_link_out_of_home_never_reaches_the_archive(tmp_path):
                      home)
 
     assert code != 0
-    assert not files_containing(dest_root, "not this machine's to publish")
+    assert not archive_plaintext_containing(dest_root, "not this machine's to publish")
 
 
 def test_an_item_whose_own_root_is_linked_out_of_home_is_still_carried(

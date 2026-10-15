@@ -1,12 +1,21 @@
 """What a Destination serves as a Setup, turned into something either leg can
 act on.
 
-A `setups/<machine>/` directory is a claim, not a fact: the tree is plaintext
-and needs no master key to write (ADR-0004), so every name and every document
-here is input, refused one thing at a time (ADR-0009) - this directory, this
-catalogue entry, this stored MANIFEST - while the run carries on. The one field
-an attacker cannot forge is whether the encrypted Index vouches for a name, and
-that is what _choose_setup_source ranks on before any timestamp.
+A `setups/<machine>.tar.enc` key is a claim, not a fact, and ADR-0014 moved
+which part of it is the claim. The BYTES are now a fact: a Setup opens under
+the master key or it does not, so nobody without the key can author one and
+there is no plaintext tree left to edit a file inside. What stays a claim is
+everything that is not inside the seal - the NAME, which an attacker chooses
+freely because a key is where it is read from and a listing is how the user
+learns a machine exists at all, and the fact of being CURRENT, which no seal
+can carry: a versioned Destination keeps every sealed Setup ever pushed and
+all of them open. So a name is still input, refused one thing at a time
+(ADR-0009) while the run carries on, and what answers the second question is
+the Index's stamp rather than any timestamp a Destination serves.
+
+The one field an attacker cannot forge is still whether the encrypted Index
+vouches for a name, which is what _choose_setup_source weighs before the
+timestamp.
 
 The one non-obvious thing: the two readers of a stored MANIFEST are twins that
 refuse at different sizes, which is why they sit side by side here rather than
@@ -50,9 +59,11 @@ _JSON_REFUSALS = (ValueError, UnicodeDecodeError, AttributeError,
 def _stored_manifest(staging) -> tuple:
     """(manifest, None) for the stored Setup's MANIFEST, or (None, why).
 
-    It comes from the plaintext half of an untrusted Archive, so missing,
-    unparseable and not-an-object are report lines - not a traceback out of a
-    pull that has already laid a History down."""
+    It comes out of a sealed object an untrusted Archive served, so a key
+    holder wrote it - but a key holder's older or newer carryon, or one with a
+    bug, which is enough: missing, unparseable and not-an-object are report
+    lines, not a traceback out of a pull that has already laid a History
+    down."""
     path = pathlib.Path(staging) / "MANIFEST.json"
     if not path.is_file():
         return None, ("stored Setup has no MANIFEST.json - cannot map it "
@@ -136,28 +147,31 @@ def _machine_name_refusal(machine: str):
 
 
 def _vouched_machines(index, machines) -> dict:
-    """{stored directory name: the Index entry that vouches for it}.
+    """{listed machine name: the Index entry that vouches for it}.
 
-    The Index is encrypted, so a name recorded there was put there by a
-    master key holder - the one field in the Setup half an attacker cannot
-    forge, and the one _choose_setup_source ranks on before it looks at any
-    timestamp.
+    The Index is encrypted, so a name recorded there was put there by a master
+    key holder - the one thing about a listed Setup an attacker cannot forge,
+    since the key it sits at is theirs to choose.
 
     Exact names first, and a name listed exactly always answers for itself.
     Then the case-folded fallback, which exists because a Destination can
-    rename a directory and on a case-insensitive one (APFS, NTFS)
-    'setups/MACHINE-A' IS 'setups/machine-a' - the same directory holding the
-    same honest content, while index['setups'] is keyed by whatever spelling
-    the pushing machine used. Comparing exactly there let a rename take the
-    vouching off an honest Setup: add one invented directory beside it and
-    the pull restored nothing at all, at exit 0, with no key involved.
+    rename and on a case-insensitive one (APFS, NTFS) 'setups/MACHINE-A.tar.enc'
+    IS 'setups/machine-a.tar.enc' - the same object holding the same honest
+    bytes, while index['setups'] is keyed by whatever spelling the pushing
+    machine used. Comparing exactly there let a rename take the vouching off an
+    honest Setup: add one invented name beside it and the pull restored nothing
+    at all, at exit 0, with no key involved.
 
-    The fallback claims a vouched name only when exactly one listed directory
-    folds to it and nothing claimed it exactly. It grants an attacker nothing
-    they did not already have - anyone who can create 'setups/MACHINE-A' can
-    write into 'setups/machine-a' instead, since the tree is plaintext and
-    needs no master key (ADR-0004) - while on a case-SENSITIVE Destination,
-    where the two really are two directories, the exact branch keeps winning.
+    Since ADR-0014 the fallback is WORDING rather than a guard, and it is kept
+    deliberately rather than by oversight. The seal's label binds the machine
+    name, so a renamed object does not open under the Index's spelling whatever
+    this function says: with the fold the renamed name is chosen and the seal
+    refuses it, without the fold nothing is vouched and the pull says so
+    instead. Both exit non-zero, both restore nothing, and a planted Setup
+    claiming the year 9999 loses either way - so what the fold still changes is
+    only which sentence the user reads, and the one it produces names the
+    machine they were expecting. Removing it should be a decision, not a
+    side effect, which is why it is pinned by a test.
     """
     entries = index.get("setups", {})
     if not isinstance(entries, dict):
@@ -270,60 +284,59 @@ def _choose_setup_source(setups: dict, index_names, index_absent: bool
                          ) -> tuple:
     """(source, unvouched, ignored): whose Setup this pull restores.
 
-    A setups/<machine>/ directory is a claim, not a fact - the tree is
-    plaintext and needs no key to write (ADR-0004) - and the captured_at that
-    used to decide the winner sits inside it. So a timestamp only ever breaks
-    a tie between machines the encrypted Index vouches for.
+    A listed name is a claim and the Index is the only answer to it, so among
+    machines the Index vouches for the stamp breaks the tie, and a machine it
+    does not vouch for cannot win however new it says it is. The timestamp
+    being weighed is the Index's own, not one a Destination serves: ADR-0014
+    put the Setup inside a seal, so there is no captured_at in the clear left
+    to raise.
 
     This machine's own name buys nothing here. A machine name is
     socket.gethostname(), a guessable string rather than a secret, and a
     machine that holds the master key and pushed a Setup is already in
-    index['setups']; a keyless push (ADR-0004) is genuinely unvouched however
-    the directory is labelled, so it takes the flagged path like any other.
+    index['setups'].
 
-    Nothing vouched for at all is a legitimate state, because ADR-0004's
-    keyless push cannot record itself: one unvouched Setup is still restored,
-    flagged as unvouched, since there is nothing to choose between. Two or
-    more, with nothing to separate them but an attacker-writable timestamp,
-    and carryon restores none - the user can push a Setup from a machine that
-    holds the key and pull again.
+    `index_absent` and the branch it feeds are a VESTIGE, and the honest thing
+    is to say so here rather than let the code read as a live rule.
 
-    But 'nothing vouched for' has to mean there is no key holder's statement
-    here AT ALL, not that the statement happens to name no Setup. Two ways it
-    was read too narrowly, and both end in the same downgrade.
+    ADR-0004 had a keyless push: it wrote a plaintext tree and could not
+    record itself, so an Archive holding a Setup and no Index was a legitimate
+    state and one unvouched Setup had to be restored, flagged, because
+    refusing would have broken that promise. ADR-0014 withdrew the promise and
+    the state with it - a push needs the master key and a keyed push writes the
+    Index - so nothing can produce that Archive any more except the Index being
+    removed from one, which is an attack on storage anyone can write to.
 
-    Deleting the vouched directory and authoring one under a name the Index
-    has never heard of costs an attacker nothing - the tree is plaintext and
-    needs no key (ADR-0004) - and it used to land on this branch, which
-    restored their settings.json behind one note and skipped Setup
-    authentication entirely, because the flag that would have refused it hangs
-    off the Index entry they had just detached themselves from. index_names
-    closes that: a Setup with no tree behind it is a tree that went missing,
-    not a machine that never pushed.
+    What the branch does today is therefore choose-then-refuse: it returns a
+    source, the report prints its two notes, and the freshness door then
+    refuses it, because the seal proves a key holder wrote the bytes and says
+    nothing about when, so with no Index nothing calls them current. The
+    verdict is right and the route to it is not: the refusal arrives spelled as
+    a REPLAY - 'the Setup pushed at <t> rather than the one the Index records
+    as current (no time)' - which describes an Index that disagrees, not one
+    that is missing, and a user reading it is told the wrong thing about their
+    own Archive.
 
-    And index_names is empty for every Index written before the first keyed
-    Setup push - a History-only push, a push whose Setup half was refused, and
-    the empty catalogue `pair` seals so a joining machine has an anchor at all.
-    Those are authentic objects at revision 1 or more, which a versioned
-    Destination keeps forever (ADR-0009), and replaying one put a fully paired
-    machine on this branch with no rollback signal to notice by: seen and
-    served were the same number. So the question is whether an Index EXISTS.
-    A key holder's empty catalogue is a key holder saying "nothing here is
-    vouched for", which is an answer; no Index at all is nobody saying
-    anything, which is ADR-0004's keyless Archive and the only case this
-    branch was ever for."""
+    Whether to drop the branch so nothing is chosen and one sentence explains
+    it, or to keep choose-then-refuse and fix only the sentence, is an open
+    ADR-0014 amendment. It is left as it stands on purpose: the behaviour is
+    pinned by tests either way, each of which says in its docstring that it is
+    the one to change."""
     candidates = {m: e for m, e in setups.items() if e["vouched"]}
     if candidates:
-        # Authentication outranks any timestamp, and the timestamp only
-        # separates machines of the same standing. An unauthenticated vouched
-        # entry - an Archive from before Setups were authenticated, or a
-        # machine that has only pushed keylessly - reports the time its own
-        # plaintext MANIFEST claims, which anyone with write access can set to
-        # the year 9999; ranking on that alone let a freely editable tree beat
-        # one whose content a key holder had vouched for.
-        source = max(candidates,
-                     key=lambda m: (bool(candidates[m].get("authenticated")),
-                                    candidates[m]["pushed_at"]))
+        # The timestamp alone, because every candidate is now of the same
+        # standing. This used to rank on an 'authenticated' flag first: a
+        # vouched entry without one was an Archive from before Setups were
+        # authenticated, or a machine that had only pushed keylessly, and it
+        # reported the time its own plaintext MANIFEST claimed - which anyone
+        # with write access could set to the year 9999, so ranking on time
+        # alone let a freely editable tree beat a vouched one. ADR-0014
+        # removed both halves of that: the time comes from the sealed Index,
+        # not from a MANIFEST the Destination serves in the clear, and there
+        # is no keyless push to produce an unauthenticated entry. The flag was
+        # already dead weight here - `_setup_catalogue` stopped setting it, so
+        # the term was constantly falsy and ranked nothing.
+        source = max(candidates, key=lambda m: candidates[m]["pushed_at"])
         # About the source chosen, not about whether any candidate existed:
         # the flag is the one warning a user can act on, and reporting the
         # wrong thing suppresses it exactly when it matters.
@@ -338,33 +351,45 @@ def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
     """Why this pull restores no Setup, for the report.
 
     Three different situations reach it and they call for different sentences:
-    an Archive nobody has ever pushed a keyed Setup to, where the Setups are
-    simply indistinguishable; one where the Index names Setups the Archive no
-    longer holds - which is what deleting a vouched tree and re-authoring it
-    under another name looks like from here; and one where the Index exists
-    and vouches for nothing, which is a key holder saying so."""
+    an Index that exists and records no Setup push, which is a key holder
+    saying nothing here is vouched for; one where the Index names Setups the
+    Archive holds no object for, which is what a deletion looks like from
+    here; and no Index at all, where nothing says which of several Setups is
+    current.
+
+    Each sentence used to explain itself by ADR-0004's keyless push - 'a
+    directory under setups/ needs no key to write' - which ADR-0014 removed,
+    and the explanation mattered because it was the reason an unvouched Setup
+    was a legitimate thing to meet. It is not one any more: a name under
+    setups/ still costs an attacker nothing, but the bytes at it will not open
+    unless a key holder wrote them. So each sentence now says where the verdict
+    comes from rather than citing a capability that is gone."""
     held = ", ".join(printable(m) for m in sorted(setups))
     if not index_names and not index_absent:
         return (
             f"\nSetup: none restored - the Archive holds Setups for {held}, "
             "and the encrypted Index records no Setup push at all. The Index "
             "is sealed, so that is a master key holder saying nothing here is "
-            "vouched for, while a directory under setups/ needs no key to "
-            "write (ADR-0004). Push a Setup from a machine that holds the "
-            "master key, then pull again.")
+            "vouched for; since ADR-0014 a push cannot write a Setup without "
+            "the master key and a keyed push records itself, so a name under "
+            "setups/ that no push accounts for is one someone put there. Push "
+            "a Setup from a machine that holds the master key, then pull "
+            "again.")
     if index_names:
         missing = ", ".join(printable(m) for m in index_names)
         return (
             "\nSetup: none restored - the encrypted Index records Setup "
-            f"pushes for {missing}, and the Archive holds a tree for none of "
-            f"them. What it holds is {held}, which no master key holder ever "
-            "pushed: a directory under setups/ needs no key to write "
-            "(ADR-0004), so this is what a vouched Setup being deleted and "
-            "re-authored under another name looks like. Push a Setup from a "
-            "machine that holds the master key, then pull again.")
+            f"pushes for {missing}, and the Archive holds an object for none "
+            f"of them. What it holds is {held}, which no master key holder "
+            "ever pushed. The Index is the record of what was pushed here, so "
+            "this is what those objects being deleted - and a name nobody "
+            "vouches for being left in their place - looks like from this "
+            "machine. Push a Setup from a machine that holds the master key, "
+            "then pull again.")
     return (
-        f"\nSetup: none restored - the Archive holds Setups for {held}, the "
-        "encrypted Index vouches for none of them, and the only thing "
-        "separating them is a timestamp anyone who can write to the "
-        "Destination could have authored. Push a Setup from a machine that "
-        "holds the master key, then pull again.")
+        f"\nSetup: none restored - the Archive holds Setups for {held}, and "
+        "this Archive serves no Index at all, so there is no master key "
+        "holder's record here to say which of them is current. A Setup opens "
+        "under the master key or not at all, but the seal says who wrote it "
+        "and never when, so nothing left here can choose between these. Push "
+        "a Setup from a machine that holds the master key, then pull again.")

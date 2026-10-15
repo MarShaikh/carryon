@@ -1,13 +1,18 @@
 """The Index is the trust anchor, so deleting it must not be a downgrade.
 
-Setup authentication hangs off one field in the encrypted Index: a machine
-listed there as authenticated has its stored tree checked against a tag, and
-a machine the Index has never heard of is restored - once, flagged - because
-ADR-0004's keyless push genuinely cannot record itself. Stripping SETUP.mac
-is therefore useless to an attacker, which leaves them the shorter route:
-delete the Index and the whole question goes away. Every stored Setup becomes
-an unvouched one, and the pull restores an attacker-authored tree behind a
-note.
+What a stored Setup is worth rests on the encrypted Index twice: it records
+which machines a key holder pushed a Setup for, and it carries the stamp
+saying which of the trees that open is the current one. Neither statement can
+be composed by whoever holds the Destination, which makes deleting the Index
+the shortest attack there is - nothing forged, just the one record that
+answers removed.
+
+ADR-0014 narrowed what that buys without closing it. It used to turn every
+stored Setup into an unvouched one and let an attacker-authored plaintext tree
+restore behind a note; nobody can author a sealed Setup, so what it buys now
+is a DENIAL - the honest Setup becomes one nothing calls current, and the pull
+refuses it. A Setup half an attacker can switch off from the Destination is
+still a downgrade, and the same defence still answers it.
 
 Nothing on the Destination separates "this Archive never had an Index" from
 "its Index has been deleted": both are the absence of one object in a
@@ -18,8 +23,9 @@ pairing hands over inside the wrap, which is how a machine that has never
 pulled knows an Index was there.
 
 Every home is synthetic, the keychain is forced to the fallback file, and the
-"evil" Setup is invented text a keyless attacker could write with no more
-access than a shared folder.
+"evil" Setup is invented text pushed by a key-holding machine - the hostile
+source ADR-0014 leaves, and the only one that gets content into a sealed
+object at all. See `plant_setup`.
 """
 
 import json
@@ -76,10 +82,16 @@ def join_machine(tmp_path, home_a, dest_spec, capsys, machine="machine-b"):
 
 
 def plant_setup(tmp_path, machine, settings=EVIL_SETTINGS):
-    """Replace a stored Setup with one the attacker wrote: no key, no tag."""
-    root = archive_root(tmp_path)
-    shutil.rmtree(stored_setup(root, machine), ignore_errors=True)
-    author_setup(root, machine,
+    """Replace a stored Setup with a malicious one.
+
+    It used to be "no key, no tag" - the attacker authored a plaintext tree
+    with nothing at all. ADR-0014 removed that capability, so the hostile
+    source here holds the master key, which is a weaker attacker for these
+    tests and enough for all of them: what they are about is the DELETED
+    INDEX, and none of their defences turn on who wrote the Setup that lands
+    once the Index's record of it is gone.
+    """
+    author_setup(archive_root(tmp_path), machine,
                  [item(".claude/settings.json", "claude/settings.json")],
                  files={"claude/settings.json": settings})
 
@@ -212,24 +224,26 @@ def test_pairing_hands_over_the_revision_the_archive_stands_at(
     assert marks["destinations"][dest_spec]["index_revision"] == standing
 
 
-def test_pairing_writes_the_anchor_an_archive_pushed_keylessly_has_none_of(
+def test_pairing_writes_the_anchor_an_unpushed_archive_has_none_of(
         tmp_path, capsys):
-    """ADR-0004's keyless push cannot record itself in the encrypted Index,
-    so an Archive that has only ever had one holds no Index at all - and
-    there is nothing to tell that apart from an Index that has been deleted.
-    Pairing is a keyed operation against the same Destination, so it seals
-    the anchor if the Archive has none, and the ambiguity ends there rather
-    than being carried by every machine that joins afterwards."""
+    """An Archive with no Index is indistinguishable from one whose Index has
+    been deleted, so pairing - a keyed operation against the same
+    Destination - seals the anchor if the Archive has none. The ambiguity ends
+    there rather than being carried by every machine that joins afterwards.
+
+    The Archive gets into that state by being initialised and not pushed to.
+    It used to get there by a keyless Setup push, which ADR-0014 removed: a
+    push needs the master key now, and a keyed push writes the Index. `init`
+    is what is left, and it is the ordinary case rather than an exotic one -
+    `carryon init` then `carryon pair` on the same machine, before the first
+    push, is a reasonable thing for someone to do.
+    """
     home_a = build_home_a(tmp_path)
     dest_spec = str(archive_root(tmp_path))
     sync.init(ns(dest=dest_spec, machine="machine-a"), home_a)
-    master_file = home_a / ".carryon" / "master.key"
-    kept = master_file.read_bytes()
-    master_file.unlink()  # locked keychain: the push has no key to use
-    assert sync.push(ns(apply=True, category="config"), home_a) == 0
-    master_file.write_bytes(kept)
     dest = DirectoryDestination(archive_root(tmp_path))
-    assert dest.read(archive.INDEX_KEY) is None, "the keyless push wrote one"
+    assert dest.read(archive.INDEX_KEY) is None, \
+        "init wrote an Index, so this is not the no-anchor case"
     capsys.readouterr()
 
     home_b = join_machine(tmp_path, home_a, dest_spec, capsys)
@@ -243,37 +257,48 @@ def test_pairing_writes_the_anchor_an_archive_pushed_keylessly_has_none_of(
     assert not (home_b / ".claude" / "settings.json").exists()
 
 
-def test_an_archive_that_never_had_an_index_still_restores_its_one_setup(
-        tmp_path, capsys):
+def test_an_archive_with_no_index_restores_nothing_and_says_why(tmp_path,
+                                                                capsys):
     """The cost of the rule, stated as a test rather than left to be
-    discovered. A machine that has never seen an Index at this Destination
-    has nothing to say the Archive ever had one, and ADR-0004 promises a
-    keyless Setup push is pullable. It restores, and the note says plainly
-    that the Archive serves no Index at all - which is the only warning
-    available in the one case nothing can decide."""
+    discovered - and ADR-0014 moved which side the cost falls on.
+
+    This was `..._still_restores_its_one_setup`. A machine that has never
+    seen an Index at this Destination still has nothing to say the Archive
+    ever had one, so the ambiguity is unchanged; what changed is that the
+    promise resolving it in the Setup's favour has been withdrawn. ADR-0004
+    said a keyless Setup push must be pullable, so an Archive with a Setup
+    and no Index had to be restorable. ADR-0014 removed keyless push, so no
+    push produces that Archive - only the Index being removed from one does -
+    and the freshness rule refuses a Setup nothing calls current.
+
+    Both halves are asserted, because the refusal is only half the property:
+    a pull that refused in silence would be the same denial one report line
+    worse off, and this is the case where the note is all the user gets.
+    """
     home_a = build_home_a(tmp_path)
     dest_spec = str(archive_root(tmp_path))
     sync.init(ns(dest=dest_spec, machine="machine-a"), home_a)
-    (home_a / ".carryon" / "master.key").unlink()
     assert sync.push(ns(apply=True, category="config"), home_a) == 0
+    index_path(tmp_path).unlink()   # the one route left to this Archive
 
     home_b = build_home_b(tmp_path)
     # By hand rather than by pairing, because pairing is precisely what would
     # hand this machine the fact it is missing: this is a home that came by
     # the master key some way carryon does not offer.
-    keyring.store_master(crypto.new_recovery_key()[1], home=home_b)
+    keyring.store_master(keyring.fetch_master(home=home_a), home=home_b)
     cfg = config.default_config()
     cfg["destination"] = dest_spec
     cfg["machine"] = "machine-b"
     config.save(cfg, home_b)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
-    assert (home_b / ".claude" / "settings.json").read_text() == GOOD_SETTINGS
-    assert "no Index" in out, \
-        "the one case nothing can decide is restored without saying so"
+    assert not (home_b / ".claude" / "settings.json").exists(), \
+        "a Setup no Index calls current was restored"
+    assert "no Index at all" in out, \
+        "the one case nothing can decide is refused without saying so"
 
 
 # --- item 2: the Index's shape is checked where it is opened -----------------

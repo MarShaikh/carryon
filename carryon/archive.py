@@ -7,15 +7,29 @@ the master key - the Destination learns object counts and sizes, never a
 Session UUID or a project path - and the Index is an encrypted blob read first
 on every pull.
 
-The one non-obvious decision: Setups are stored as plaintext trees while
-everything else is encrypted. A Setup is clean by construction - ADR-0001 has
-carryon refuse to produce one containing a credential - and plaintext is what
-makes a git Destination worth having: each push diffs as readable changes to
-settings and skills instead of an opaque blob churning. A History has neither
-property, so it takes the encrypted path without exception. Plaintext is not
-the same as unauthenticated, though: a Setup's content is executable (hooks,
-skills), so a keyed push MACs a manifest of the tree into SETUP.mac and the
-encrypted Index records that it did - see the Setup-authentication section.
+There is no non-encrypted half any more (ADR-0014): every object a push writes
+is sealed, the Setup included, and the only bytes carryon ever puts at a
+Destination in the clear are the Probe's, which name no machine, no home and
+no time precisely so that they can be.
+
+It used to be the module's one non-obvious decision, and the reasoning is
+worth keeping because it is what ADR-0014 overturned. A Setup was stored as a
+plaintext tree so that a git Destination diffed as readable changes to settings
+and skills rather than an opaque blob churning, and that was thought safe
+because a Setup was "clean by construction" - ADR-0001 having carryon refuse to
+produce one containing a credential. The scan was never that proof: it matches
+the credential shapes it knows, and carryon's own master key is bare hex that
+matches none of them. Plaintext was not taken to mean unauthenticated either -
+a keyed push MACed a manifest of the tree into SETUP.mac and the Index recorded
+that it had - but a MAC over a tree an attacker can edit file by file protects
+the manifest and not the content, and the readable diff was being paid for in
+every item-level guard downstream of it.
+
+So a Setup is one sealed object per machine now, keyed setups/<machine>.tar.enc
+and sealed under setup_label(machine). What that cannot carry is WHEN it was
+pushed - a versioned Destination keeps every sealed Setup it has ever held and
+all of them open - so the Index's stamp is what says which one is current, and
+the freshness check is the door that uses it.
 
 Every encrypted object is sealed under a *label* - its logical identity, the
 same string its name is HMACed from - so a Destination cannot serve one

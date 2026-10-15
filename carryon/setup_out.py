@@ -1,8 +1,12 @@
 """A Setup on the way out - made machine-neutral, merged, overlaid and sealed.
 
-What leaves this machine for the Archive's one plaintext half. ADR-0006 says an
-Archive names no machine, and that is a whole-tree promise rather than a
-manifest-field one: a hook command in settings.json spells the home out as
+What leaves this machine as the Archive's Setup half - one sealed object per
+machine since ADR-0014. The neutralising below is not made redundant by the
+seal: ADR-0006 says an Archive names no machine, and an Archive is read by
+every machine paired to it, so a home path inside the ciphertext is still a
+home path published to all of them. ADR-0006 is a whole-tree promise rather
+than a manifest-field one: a hook command in settings.json spells the home out
+as
 readily as `source_home` does, so the neutralising runs over every file in the
 staged tree and the two generated documents are re-rendered from the result.
 What a rewrite cannot reach - a path outside $HOME, a spelling that differs
@@ -83,10 +87,13 @@ def _home_near_misses(text: str, home) -> int:
 # --- merging a partial capture onto what the Archive already holds -----------
 
 
-# What a MANIFEST holds at the top level. A stored one can hold anything -
-# the file is plaintext on untrusted storage - and a partial push writes its
-# merge back into the Archive, so a key the capture engine never produces is
-# dropped here rather than accumulated, signed and served on.
+# What a MANIFEST holds at the top level. A stored one can hold anything: it
+# comes out of a sealed object now (ADR-0014), so its author held the master
+# key, which narrows who can write one without making it carryon's own output
+# - a key holder's older or newer carryon, or a compromised machine, writes
+# whatever it likes. A partial push writes its merge back into the Archive, so
+# a key the capture engine never produces is dropped here rather than
+# accumulated, sealed and served on.
 _MANIFEST_FIELDS = ("tool", "version", "captured_at", "source_home",
                     "categories", "scope", "agents")
 
@@ -285,7 +292,7 @@ def _neutralise_manifest(manifest: dict, home) -> tuple:
     adapter or item kind added later can record another without anyone
     revisiting this function. That is right for a local `carryon capture`
     directory and wrong for the Archive, which is machine-neutral by ADR-0006
-    and whose setups/ tree is its one plaintext half.
+    whatever it is sealed with - every machine paired here opens it.
 
     Two steps, because rewriting alone cannot cover the second: a value under
     the home becomes '~', and a value that is still absolute afterwards is
@@ -332,7 +339,9 @@ def _neutralise_staged_setup(staging, manifest: dict, home) -> tuple:
     it was decided by the decoder rather than by intent, so it also covered
     every latin-1 note, every truncated log and every file with one stray
     byte in it, any of which can spell the home out and did travel verbatim
-    into the one plaintext half of the Archive. Nothing here can tell a PNG
+    into the Archive - in the clear when that was decided, and since ADR-0014
+    sealed to a key every paired machine holds, which ADR-0006 rules out
+    just the same. Nothing here can tell a PNG
     from a note, and a Setup that names this machine is what ADR-0006 rules
     out, so the file stays here and the push report names it. Deleting it
     from the staging tree is what withholds it: a full push mirrors that tree

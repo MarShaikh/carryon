@@ -200,11 +200,13 @@ def _index_removed_note(home, spec: str, index: dict):
         f"the Archive serves no Index at {archive.INDEX_KEY}, and this "
         f"machine has already read one there at revision {seen}. Only a "
         "master key holder can write that object, so it has been deleted at "
-        "the Destination - and with it the record of which machines' Setups "
-        "are authenticated, which is the whole of what a stored Setup is "
-        "checked against (ADR-0004). Every Setup in the Archive now reads as "
-        "a keyless push nothing can verify, which is exactly what deleting "
-        "it buys.")
+        "the Destination - and with it the record of which machines pushed a "
+        "Setup here and which tree is the current one. A Setup is sealed "
+        "(ADR-0014), so deleting the Index cannot make one open that should "
+        "not; what it does is take away the only thing that says which of the "
+        "Setups that DO open is the one meant for you now. Every Setup in the "
+        "Archive is therefore refused, which is exactly what deleting it "
+        "buys.")
 
 
 def _refuse_on_index_removal(home, spec: str, index: dict, verb: str) -> None:

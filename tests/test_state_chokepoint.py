@@ -64,8 +64,9 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from carryon import capture, config, history, keyring, rekey, sync  # noqa: E402
-from tests.hostile_archive import (build_home_a, files_containing,  # noqa: E402
-                                   link_home, ns)
+from tests.hostile_archive import (  # noqa: E402
+    archive_plaintext_containing, build_home_a, files_containing, link_home,
+    ns)
 from tests.timeouts import time_limit  # noqa: E402
 
 # 32 hex characters with nothing in front of them - the shape ADR-0001 names
@@ -375,7 +376,7 @@ def test_push_names_the_withheld_hard_link_and_still_pushes(tmp_path, capsys):
     assert code == 0, "one link in one project refused a whole History"
     assert "WITHHELD" in report
     assert f"{UUID_A}/notes.md" in report
-    assert not files_containing(tmp_path / "archive", secret), \
+    assert not archive_plaintext_containing(tmp_path / "archive", secret), \
         "the master key reached the Archive"
 
 
@@ -846,13 +847,28 @@ ALLOWED_READS = {
         ("read_bytes",)),
     ("stored_setup.py", "_stored_manifest"): (
         "the stored Setup in carryon's staging", ("read_text",)),
-    ("authentication.py", "_stored_setup_tag"): (
-        "the stored Setup in carryon's staging", ("read_bytes",)),
+    ("authentication.py", "stamped_or_none"): (
+        "SETUP.stamp out of a Setup that has already unsealed, so these bytes "
+        "were a master key holder's before this function saw them (ADR-0014). "
+        "It replaced ('authentication.py', '_stored_setup_tag'), which read "
+        "SETUP.mac out of a plaintext tree for the same reason and is gone "
+        "with the tag", ("read_bytes",)),
     ("setup_in.py", "_restore_setup_item"): (
         "the staged Setup being written out, an Archive's bytes on their way "
         "IN", ("read_bytes",)),
-    ("archive.py", "setup_tree_manifest"): (
-        "a Setup tree carryon staged", ("read_bytes",)),
+    ("archive.py", "put_setup"): (
+        "a Setup tree carryon staged, on its way to a Destination - the same "
+        "answer destinations/base.py's write_tree gives, for the sealed shape "
+        "that replaced the tree walk (ADR-0014). It replaced ('archive.py', "
+        "'setup_tree_manifest'), which read the same tree to hash it for a "
+        "MAC that no longer exists", ("read_bytes",)),
+    ("setup_out.py", "_push_partial_setup"): (
+        "the merged overlay tree, which is a TemporaryDirectory this call "
+        "made: the stored MANIFEST read back out of it to merge onto, and the "
+        "copy of this push's slice over the top. Both sides are carryon's "
+        "own - the stored half came out of a sealed object under the master "
+        "key, the staged half through the capture gate",
+        ("read_bytes", "shutil.copyfile")),
     ("archive.py", "tree_hash"): ("a Setup tree carryon staged",
                                   ("read_bytes",)),
     ("destinations/base.py", "write_tree"): (
@@ -918,6 +934,20 @@ ALLOWED_WRITES = {
                                    ("write",)),
     ("archive.py", "_put_object"): (
         "Destination.write, the Archive chokepoint", ("write",)),
+    ("archive.py", "put_setup"): (
+        "Destination.write, the Archive chokepoint - a Setup is one sealed "
+        "object now, so it goes out the same door a Session does (ADR-0014) "
+        "rather than through the tree walk", ("write",)),
+    ("archive.py", "unpack_into"): (
+        "a directory the CALLER just made and owns: a TemporaryDirectory in "
+        "_push_partial_setup, carryon's own staging root in sync.pull, both "
+        "answered for before this is called. What this function answers for "
+        "itself is the other half of the question - that no member of an "
+        "untrusted tar lands outside that directory, asked lexically by "
+        "tar_members and again against the resolved path here, because a "
+        "symlinked directory already standing inside the destination turns a "
+        "well-shaped member name into a write somewhere else",
+        ("write_bytes",)),
     ("archive.py", "put_pairing"): (
         "Destination.write, the Archive chokepoint", ("write",)),
     ("archive.py", "reachable"): (
@@ -933,8 +963,13 @@ ALLOWED_WRITES = {
         "descriptor the openat walk ended on (ADR-0009)",
         ("os.rename", "os.replace")),
     ("setup_out.py", "_push_partial_setup"): (
-        "carryon's own staging tree", ("write_bytes", "write_text",
-                                       "write_text")),
+        "the merged overlay tree, a TemporaryDirectory this call made: this "
+        "push's slice copied over the stored one, then the merged MANIFEST, "
+        "RESTORE.md and SETUP.stamp regenerated over it. Since ADR-0014 an "
+        "overlay is something carryon composes locally and seals, rather than "
+        "something the Destination did for it by accepting writes for some "
+        "keys and not others", ("shutil.copyfile", "write_bytes",
+                                "write_text", "write_text")),
     ("sync.py", "push"): ("carryon's own staging tree", ("write_bytes",)),
     ("crypto.py", "_run_bytes"): ("a TemporaryDirectory this call made",
                                   ("write_bytes",)),
@@ -994,6 +1029,14 @@ ALLOWED_REMOVALS = {
         "a file withheld from the staging tree so a full push clears one an "
         "earlier version published - carryon's own tree, on the push leg",
         ("unlink",)),
+    ("setup_out.py", "_push_partial_setup"): (
+        "the same withholding one function over, and the reason it has to be "
+        "a deletion here: a full push replaces the whole sealed object, so "
+        "removing a file from the staging tree is enough, while a partial "
+        "push merges onto the stored tree and the withheld copy would survive "
+        "underneath - with the source machine's home inside it - while the "
+        "report said it had gone. The tree is a TemporaryDirectory this call "
+        "made, and nothing under $HOME is reachable from it", ("unlink",)),
     ("sync.py", "push"): ("carryon's own staging tree, swept after a clean "
                           "push", ("shutil.rmtree",)),
 }

@@ -47,7 +47,7 @@ from carryon import (capture, config, external, history,  # noqa: E402
                      keyring, sync)
 from carryon.destinations.git_repo import GitDestination  # noqa: E402
 from tests.hostile_archive import (GOOD_SETTINGS, build_home_a,  # noqa: E402
-                                   link_home, ns)
+                                   link_home, ns, reread_setup)
 from tests.timeouts import time_limit  # noqa: E402
 
 MANAGED = "# managed by my dotfiles repo\n"
@@ -169,7 +169,7 @@ def test_an_ordinary_push_still_stages_and_publishes_a_setup(tmp_path, capsys):
     report = capsys.readouterr().out
 
     assert code == 0, report
-    stored = tmp_path / "archive" / "carryon" / "setups" / "machine-a"
+    stored = reread_setup(tmp_path / "archive", "machine-a")
     assert (stored / "claude" / "settings.json").read_text() == GOOD_SETTINGS
     assert not list((home / ".carryon" / "staging").glob("setup-*")), \
         "the staging tree was left behind by a clean push"

@@ -618,7 +618,14 @@ def test_an_interrupted_push_cannot_talk_a_later_one_into_an_overwrite(
     inside the loop and seals the Index once, after it, so between the two the
     Archive holds an object newer than the Index describes - permanently, if
     the push is interrupted. Another machine's push then reads an Index that
-    is the truth about an older object."""
+    is the truth about an older object.
+
+    Measured over the HISTORY objects, not over every `*.tar.enc` in the
+    Archive. ADR-0014 made the Setup one of those too, and machine-b's push
+    rewrites its own Setup object every time - correctly, since a full push
+    replaces it whole - so a whole-Archive comparison fails on the one change
+    that is meant to happen and says nothing about the one that is not.
+    """
     home_b = linked(tmp_path, "home_interrupt", ["one", "two"],
                     pushed.home_a, pushed.dest_spec, "machine-b")
     assert sync.push(ns(apply=True), home_b) == 0
@@ -636,8 +643,7 @@ def test_an_interrupted_push_cannot_talk_a_later_one_into_an_overwrite(
             sync.push(ns(apply=True), pushed.home_a)
     finally:
         sync.archive.save_index = real_save
-    blob_before = (pushed.root / "carryon").rglob("*.tar.enc")
-    blob_before = sorted(p.read_bytes() for p in blob_before)
+    blob_before = history_objects(pushed.root)
 
     b_main = main_path(home_b)
     b_main.write_text(b_main.read_text()
@@ -647,9 +653,7 @@ def test_an_interrupted_push_cannot_talk_a_later_one_into_an_overwrite(
     assert sync.push(ns(apply=True), home_b) == 0
     out = capsys.readouterr().out
 
-    after = sorted(p.read_bytes()
-                   for p in (pushed.root / "carryon").rglob("*.tar.enc"))
-    assert after == blob_before, \
+    assert history_objects(pushed.root) == blob_before, \
         "a stale Index authorised overwriting the object it does not describe"
     assert UUID_1 in out and "skip" in out
 
@@ -725,7 +729,7 @@ class DiesLikeGit:
 
     def __init__(self, inner, on):
         self._inner = inner
-        self._on = on  # 'setup-list' | 'read-tree' | 'session-read'
+        self._on = on  # 'setup-list' | 'setup-read' | 'session-read'
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -737,15 +741,33 @@ class DiesLikeGit:
         return self._inner.list(prefix)
 
     def read(self, key):
+        # 'setup-read' replaced a 'read-tree' mode, and the replacement is
+        # ADR-0014's: laying a Setup out was a read_tree over a prefix, and
+        # is now one dest.read of one sealed object. The hook has to move
+        # with it or the mode silently never fires - which is what happened,
+        # and the test that used it went on passing against a Destination
+        # that had stopped dying.
+        if self._on == "setup-read" and \
+                key.startswith(archive.SETUPS_PREFIX):
+            raise SystemExit(self.GIT_MSG)
         if self._on == "session-read" and \
                 key.startswith(archive.SESSIONS_PREFIX):
             raise SystemExit(self.GIT_MSG)
         return self._inner.read(key)
 
-    def read_tree(self, prefix, dst_dir):
-        if self._on == "read-tree":
-            raise SystemExit(self.GIT_MSG)
-        return self._inner.read_tree(prefix, dst_dir)
+
+def history_objects(root) -> list:
+    """The bytes of every Session and project-residue object, sorted.
+
+    Scoped to the History half on purpose. Since ADR-0014 the Setup is a
+    `*.tar.enc` as well, and it is replaced whole on every full push - so a
+    glob over the Archive mixes an object that is supposed to change with the
+    ones that are not.
+    """
+    return sorted(
+        p.read_bytes()
+        for prefix in ("sessions", "projects")
+        for p in (pathlib.Path(root) / "carryon" / prefix).glob("*.tar.enc"))
 
 
 def dying_destination(monkeypatch, on):
@@ -809,7 +831,7 @@ def test_a_destination_dying_while_laying_out_the_setup_is_one_refusal(
     Setup; SystemExit out of a git sync is a thing the transport raises."""
     home_b = empty_linked(tmp_path, "home_gittree", pushed.home_a,
                           pushed.dest_spec, "machine-b")
-    dying_destination(monkeypatch, "read-tree")
+    dying_destination(monkeypatch, "setup-read")
     capsys.readouterr()
 
     assert sync.pull(ns(apply=True), home_b) == 2
