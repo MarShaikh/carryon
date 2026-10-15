@@ -145,12 +145,12 @@ def test_an_archive_with_a_setup_and_no_index_restores_nothing(tmp_path,
     Archive - what does is the Index being removed from one, which is an
     attack on a Destination anyone can write to. The seal proves a key holder
     wrote the bytes and says nothing about when, so with no Index there is
-    nothing that calls this Setup current and the freshness rule refuses it.
+    nothing that calls this Setup current.
 
-    Marouf has this as an open question (handoff §4a) and the answer pinned
-    here is what the code does today - deliberately, since a refusal is the
-    consequence of removing keyless push rather than an oversight, but worth
-    knowing it is one test to change if he decides the other way.
+    It used to get there by choose-then-refuse: the Setup was chosen, flagged,
+    and refused by the freshness check in the words for a replay. ADR-0014's
+    amendment dropped that route, so nothing is chosen and the report says
+    once that there is no Index to choose by.
     """
     home_a = build_home_a(tmp_path)
     dest_root = tmp_path / "archive"
@@ -178,7 +178,9 @@ def test_an_archive_with_a_setup_and_no_index_restores_nothing(tmp_path,
         "a Setup nothing calls current was restored"
     assert "no Index at all" in out, \
         "the report does not say the Archive serves no Index"
-    assert "refuse" in out
+    assert "Setup: none restored" in out
+    assert "refused whole" not in out, \
+        "a Setup was chosen and then refused, rather than never chosen"
     assert "ADR-0004" not in out, \
         "the report still cites the keyless push ADR-0014 removed"
 

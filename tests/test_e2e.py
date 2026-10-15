@@ -1416,7 +1416,9 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
     # whether carryon notices the attacker's bytes - it cannot be handed any -
     # but whether an HONEST Setup behind a deleted Index is refused rather
     # than waved through on the one machine that cannot tell the deletion
-    # happened. It is refused, and the status says so.
+    # happened. It is never chosen, and the status says so. It used to be
+    # chosen and then refused as a replay, which told the user their Index
+    # disagreed when it was missing; ADR-0014's amendment dropped that route.
     marks = (home_b / ".carryon" / "state.json").read_text()
     (home_b / ".carryon" / "state.json").unlink()
     assert joined.dest.read(archive.setup_key("mac-a")) == \
@@ -1425,18 +1427,18 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
 
     assert sync.pull(ns(apply=True), home_b) == 2
     unmarked = capsys.readouterr().out
-    assert "refused whole" in unmarked, \
+    assert "Setup: none restored" in unmarked, \
         "a sealed Setup with no Index behind it restored on an unmarked machine"
-    assert "the Archive serves no Index at all" in unmarked
+    assert "this Archive serves no Index at all" in unmarked
     # The sentence only this arm reaches: the two refusals above fire on the
     # mark, so the report has to say the mark is absent rather than imply a
     # check it never ran.
     assert "has never read one at this Destination either" in unmarked, \
         "the report does not say the one thing that would have settled it"
+    assert "refused whole" not in unmarked, \
+        "the Setup was chosen and refused as a replay, not left unchosen"
     assert "ADR-0004" not in unmarked, \
         "the notes still cite the keyless push ADR-0014 removed"
-    assert "Setup: 0 file(s) written" in unmarked
-    assert "Setup: none of it landed" in unmarked
     assert tree_state(home_b / ".claude") == before, \
         "a Setup nothing calls current landed on a machine with no mark"
 

@@ -14,8 +14,8 @@ all of them open. So a name is still input, refused one thing at a time
 the Index's stamp rather than any timestamp a Destination serves.
 
 The one field an attacker cannot forge is still whether the encrypted Index
-vouches for a name, which is what _choose_setup_source weighs before the
-timestamp.
+vouches for a name, which is what _choose_setup_source requires before it
+weighs the timestamp.
 
 The one non-obvious thing: the two readers of a stored MANIFEST are twins that
 refuse at different sizes, which is why they sit side by side here rather than
@@ -272,17 +272,16 @@ def _index_setup_names(index) -> list:
     """Every machine the encrypted Index records a Setup push for, sorted.
 
     Non-empty means a master key holder has pushed a Setup to this Archive at
-    some point - the fact _choose_setup_source weighs an unvouched directory
-    against."""
+    some point - the fact _no_setup_source_note uses to tell a deletion from
+    an Archive that never held one."""
     entries = index.get("setups") if isinstance(index, dict) else None
     if not isinstance(entries, dict):
         return []
     return sorted(name for name in entries if isinstance(name, str))
 
 
-def _choose_setup_source(setups: dict, index_names, index_absent: bool
-                         ) -> tuple:
-    """(source, unvouched, ignored): whose Setup this pull restores.
+def _choose_setup_source(setups: dict) -> tuple:
+    """(source, ignored): whose Setup this pull restores, or None.
 
     A listed name is a claim and the Index is the only answer to it, so among
     machines the Index vouches for the stamp breaks the tie, and a machine it
@@ -296,32 +295,12 @@ def _choose_setup_source(setups: dict, index_names, index_absent: bool
     machine that holds the master key and pushed a Setup is already in
     index['setups'].
 
-    `index_absent` and the branch it feeds are a VESTIGE, and the honest thing
-    is to say so here rather than let the code read as a live rule.
-
-    ADR-0004 had a keyless push: it wrote a plaintext tree and could not
-    record itself, so an Archive holding a Setup and no Index was a legitimate
-    state and one unvouched Setup had to be restored, flagged, because
-    refusing would have broken that promise. ADR-0014 withdrew the promise and
-    the state with it - a push needs the master key and a keyed push writes the
-    Index - so nothing can produce that Archive any more except the Index being
-    removed from one, which is an attack on storage anyone can write to.
-
-    What the branch does today is therefore choose-then-refuse: it returns a
-    source, the report prints its two notes, and the freshness door then
-    refuses it, because the seal proves a key holder wrote the bytes and says
-    nothing about when, so with no Index nothing calls them current. The
-    verdict is right and the route to it is not: the refusal arrives spelled as
-    a REPLAY - 'the Setup pushed at <t> rather than the one the Index records
-    as current (no time)' - which describes an Index that disagrees, not one
-    that is missing, and a user reading it is told the wrong thing about their
-    own Archive.
-
-    Whether to drop the branch so nothing is chosen and one sentence explains
-    it, or to keep choose-then-refuse and fix only the sentence, is an open
-    ADR-0014 amendment. It is left as it stands on purpose: the behaviour is
-    pinned by tests either way, each of which says in its docstring that it is
-    the one to change."""
+    No Index vouches for nothing, so it chooses nothing (ADR-0014's
+    amendment). There used to be an exception for one unvouched Setup in an
+    Archive with no Index, kept for ADR-0004's keyless push. Once that push
+    was gone, the exception chose a Setup only for the freshness check to
+    refuse it as a replay, which told the user their Index disagreed when it
+    was missing. _no_setup_source_note now says what happened, once."""
     candidates = {m: e for m, e in setups.items() if e["vouched"]}
     if candidates:
         # The timestamp alone, because every candidate is now of the same
@@ -337,14 +316,8 @@ def _choose_setup_source(setups: dict, index_names, index_absent: bool
         # already dead weight here - `_setup_catalogue` stopped setting it, so
         # the term was constantly falsy and ranked nothing.
         source = max(candidates, key=lambda m: candidates[m]["pushed_at"])
-        # About the source chosen, not about whether any candidate existed:
-        # the flag is the one warning a user can act on, and reporting the
-        # wrong thing suppresses it exactly when it matters.
-        return (source, not candidates[source]["vouched"],
-                sorted(set(setups) - set(candidates)))
-    if len(setups) == 1 and not index_names and index_absent:
-        return next(iter(setups)), True, []
-    return None, True, sorted(setups)
+        return source, sorted(set(setups) - set(candidates))
+    return None, sorted(setups)
 
 
 def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
@@ -354,7 +327,7 @@ def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
     an Index that exists and records no Setup push, which is a key holder
     saying nothing here is vouched for; one where the Index names Setups the
     Archive holds no object for, which is what a deletion looks like from
-    here; and no Index at all, where nothing says which of several Setups is
+    here; and no Index at all, where nothing says whether any Setup is
     current.
 
     Each sentence used to explain itself by ADR-0004's keyless push - 'a
@@ -386,10 +359,19 @@ def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
             "vouches for being left in their place - looks like from this "
             "machine. Push a Setup from a machine that holds the master key, "
             "then pull again.")
+    # Only a machine with no record of an Index here gets this far:
+    # _refuse_on_index_removal stops the pull before the Setup leg on any
+    # machine that has read one. So saying so is a fact, not a guess, and it
+    # is the fact that would otherwise have settled the case.
+    some, which = (("a Setup", "whether it is current") if len(setups) == 1
+                   else ("Setups", "which of them is current"))
     return (
-        f"\nSetup: none restored - the Archive holds Setups for {held}, and "
+        f"\nSetup: none restored - the Archive holds {some} for {held}, and "
         "this Archive serves no Index at all, so there is no master key "
-        "holder's record here to say which of them is current. A Setup opens "
-        "under the master key or not at all, but the seal says who wrote it "
-        "and never when, so nothing left here can choose between these. Push "
-        "a Setup from a machine that holds the master key, then pull again.")
+        f"holder's record here to say {which}. This machine has never read "
+        "one at this Destination either, which would have settled it. A Setup "
+        "opens under the master key or not at all, but the seal says who "
+        "wrote it and never when. Since ADR-0014 a keyed push always writes "
+        "the Index, so an Archive with a Setup and no Index is most likely "
+        "one the Index was removed from. Push a Setup from a machine that "
+        "holds the master key, then pull again.")

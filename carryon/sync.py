@@ -1362,8 +1362,7 @@ def pull(args, home) -> int:
             setups_unreachable = str(exc)
         index_names = _index_setup_names(index)
         index_absent = archive.index_is_absent(index)
-        source, unvouched, ignored = _choose_setup_source(setups, index_names,
-                                                          index_absent)
+        source, ignored = _choose_setup_source(setups)
         if setups_unreachable is not None:
             source = None
             setup_refused += 1
@@ -1474,49 +1473,6 @@ def pull(args, home) -> int:
             # unprintable or unexpected in them.
             print(f"  refuse   a stored Setup named '{printable(name)}': {why}")
         if source is not None:
-            if unvouched:
-                # It used to say "a keyless Setup push (ADR-0004) looks like
-                # this, and so does a planted one", which named two causes
-                # that are both gone: a keyless push cannot write a Setup
-                # since ADR-0014, and an attacker cannot seal one. What is
-                # left is a Setup a key holder wrote and the Index does not
-                # record, which on a Destination anyone can write to means
-                # the record was removed - and the freshness rule below
-                # refuses it for exactly that reason, so this line has to
-                # lead there rather than sound like a shrug.
-                print(f"  note     nothing in the encrypted Index vouches for "
-                      f"'{printable(source)}' - it opened under the master "
-                      "key, so a key holder wrote it, and nothing here says "
-                      "it is the one they mean you to have now")
-                if archive.index_is_absent(index):
-                    # The residue nothing can decide, said out loud rather than
-                    # left implicit in the line above. This machine has never
-                    # read an Index here - or _refuse_on_index_removal would
-                    # have stopped the pull - so a deleted Index and an Archive
-                    # that never had one are the same two objects on the same
-                    # Destination, and the user is the only party who knows
-                    # which of the two they are looking at.
-                    #
-                    # It used to end on "what is left is whatever
-                    # authentication tag the stored Setup carries, and a
-                    # keyless Archive (ADR-0004) carries none", which was the
-                    # one thing still separating the two cases. ADR-0014 took
-                    # BOTH away: the tag is gone, and a keyless Archive with a
-                    # Setup in it is no longer a state any push produces - a
-                    # push needs the master key and a keyed push writes the
-                    # Index. So the two are not separable any more, and what
-                    # is actually left is the freshness rule, which refuses a
-                    # Setup no Index calls current. This line says where the
-                    # verdict comes from rather than implying there is none.
-                    print("  note     and the Archive serves no Index at all, so "
-                          "there is no master key holder's record here to check "
-                          "any of it against. This machine has never read one at "
-                          "this Destination either, which would have settled it. "
-                          "Since ADR-0014 a push cannot write a Setup without "
-                          "the master key, and a keyed push writes the Index - "
-                          "so an Archive holding one without the other is one "
-                          "the record has been removed from, and the freshness "
-                          "check below is what answers it")
             for other in ignored:
                 print(f"  ignored  a stored Setup named '{printable(other)}' - "
                       "no master key holder ever pushed a Setup under that "

@@ -274,6 +274,12 @@ def test_an_archive_with_no_index_restores_nothing_and_says_why(tmp_path,
     Both halves are asserted, because the refusal is only half the property:
     a pull that refused in silence would be the same denial one report line
     worse off, and this is the case where the note is all the user gets.
+
+    And the note has to be about THIS case. The pull used to choose the one
+    Setup, print two notes about it, and let the freshness check refuse it as
+    a replay - 'rather than the one the Index records as current' - which
+    describes an Index that disagrees, not one that is missing. ADR-0014's
+    amendment dropped that route: no Index chooses no Setup.
     """
     home_a = build_home_a(tmp_path)
     dest_spec = str(archive_root(tmp_path))
@@ -299,6 +305,10 @@ def test_an_archive_with_no_index_restores_nothing_and_says_why(tmp_path,
         "a Setup no Index calls current was restored"
     assert "no Index at all" in out, \
         "the one case nothing can decide is refused without saying so"
+    assert "the Index records as current" not in out, \
+        "a missing Index was reported as one that disagrees"
+    assert "nothing in the encrypted Index vouches" not in out, \
+        "a Setup was chosen with no Index to choose it"
 
 
 # --- item 2: the Index's shape is checked where it is opened -----------------

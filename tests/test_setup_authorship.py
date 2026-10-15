@@ -299,8 +299,9 @@ def test_deleting_the_vouched_setup_and_planting_nothing_is_still_a_refusal(
     """The same attack with the second half left off, which is the cheaper
     and the one nothing caught.
 
-    `index_names` was added to `_choose_setup_source` for the test above, and
-    it is only consulted once the catalogue holds something: deleting the
+    `index_names` was added to `_choose_setup_source` for the test above (it
+    feeds the report's sentences now, since ADR-0014's amendment), and it was
+    only consulted once the catalogue held something: deleting the
     object WITHOUT planting anything beside it leaves the catalogue empty, so
     the pull took the "none in the Archive" branch - the sentence for an
     Archive nobody ever pushed a Setup to - and exited 0. Anyone with write
@@ -344,25 +345,18 @@ def test_deleting_the_vouched_setup_and_planting_nothing_is_still_a_refusal(
 # refused by the seal and the stamp before any ranking happens.
 
 
-def test_an_unvouched_setup_wins_only_where_there_is_no_index_at_all():
-    """The rule, stated on its own. ADR-0004's keyless push writes a plaintext
-    tree and no Index, so one unvouched Setup in an Archive that serves no
-    Index is still restored, flagged - and that is the only case.
+def test_an_unvouched_setup_never_wins():
+    """The rule, stated on its own: only the Index vouches, so a Setup it
+    does not vouch for is ignored, including when there is no Index at all.
 
-    An Index that EXISTS and names no Setup is not that case, and reading it
-    as one was the whole of the replay: every Index written before the first
-    keyed Setup push carries revision >= 1 and an empty catalogue, a versioned
-    Destination keeps every one of them forever (ADR-0009), and replaying one
-    put a fully paired machine on this branch with no rollback signal to
-    notice by. A sealed empty catalogue is a key holder saying 'nothing here
-    is vouched for'; no Index at all is nobody saying anything.
+    This was `..._wins_only_where_there_is_no_index_at_all`. ADR-0004's
+    keyless push wrote a plaintext tree and no Index, so one unvouched Setup
+    in an Archive that served no Index was restored, flagged. ADR-0014
+    removed keyless push, and its amendment removed the exception with it:
+    the exception had become choose-then-refuse, with the freshness check
+    refusing the chosen Setup as a replay.
     """
     setups = {"laptop": {"pushed_at": "2026-01-01T00:00:00Z",
                          "vouched": False}}
 
-    source, unvouched, _ = sync._choose_setup_source(setups, [], True)
-    assert (source, unvouched) == ("laptop", True)
-
-    assert sync._choose_setup_source(setups, [], False)[0] is None, \
-        "a sealed empty catalogue is an answer, not an absence"
-    assert sync._choose_setup_source(setups, ["machine-a"], True)[0] is None
+    assert sync._choose_setup_source(setups) == (None, ["laptop"])

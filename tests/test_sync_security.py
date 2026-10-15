@@ -356,19 +356,18 @@ def test_an_unvouched_setup_named_after_this_machine_does_not_break_the_tie(
         "an unvouched Setup was restored because it carried this machine's name"
 
 
-def test_the_unvouched_flag_describes_the_chosen_source(paired):
-    """The one warning a user can act on must be about the Setup actually
-    restored, not about whether any candidate existed at all."""
+def test_a_newer_unvouched_setup_is_ignored_not_chosen(paired):
+    """A claimed year 9999 buys an unvouched Setup nothing: the vouched one is
+    chosen and the other is named as ignored.
+
+    This was `test_the_unvouched_flag_describes_the_chosen_source`. The flag
+    went with ADR-0014's amendment, because a chosen Setup is now always a
+    vouched one."""
     setups = {"machine-a": {"pushed_at": "2026-01-01T00:00:00Z",
                             "vouched": True},
               "machine-b": {"pushed_at": "9999-12-31T23:59:59Z",
                             "vouched": False}}
-    source, unvouched, ignored = sync._choose_setup_source(setups,
-                                                           ["machine-a"],
-                                                           False)
-    assert source == "machine-a"
-    assert unvouched is False
-    assert ignored == ["machine-b"]
+    assert sync._choose_setup_source(setups) == ("machine-a", ["machine-b"])
 
 
 # --- src: what a stored MANIFEST is allowed to name --------------------------
