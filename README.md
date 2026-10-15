@@ -4,14 +4,19 @@ Carries an AI coding agent's working life between machines: the Setup that
 makes an agent yours — settings, skills, subagents, instructions, plugin
 lists — and the History of what you did with it.
 
-The two halves have opposite safety properties. A Setup travels plaintext, and
-carryon refuses to produce one when a credential pattern matches, when the
-capture set reads carryon's own state or anything outside `$HOME`, or when it
-cannot tell whether it read its own state. That is a scan and a boundary
-rather than a proof — an opaque token matches no pattern — and a Setup is
-personal whether or not it holds a secret, so it belongs in private storage. A
-History is unredacted by nature: it is always encrypted, and a credential
-found there is reported and carried, never redacted or blocked.
+carryon reports what it sees and encrypts what it carries. Both halves are
+sealed under a master key before they leave the machine, so a credential found
+in either — an API key in `settings.json`'s `env` block, a token echoed into a
+transcript — is reported and carried, never redacted or blocked. The scan is a
+list of shapes it recognises rather than a proof (an opaque token matches
+none), which is why the promise rests on encryption and not on the scan.
+
+What a capture may *read* is still bounded: carryon refuses a Setup whose
+capture set reads its own state or anything outside `$HOME`, or when it cannot
+tell whether it did. And a Setup carries what makes an agent yours, not what
+built it: inside a tree an Adapter declares, development artifacts such as a
+skill's test suite are left out and named, while a path you add to `carry`
+yourself is carried whole.
 
 Supports Claude Code, Codex CLI, Cursor, and the `~/.agents` skills
 convention; a History moves for Claude Code and Codex, the two whose session
@@ -33,13 +38,13 @@ pip install git+https://github.com/MarShaikh/carryon
 | Command | Effect |
 | --- | --- |
 | `init` | set up this machine: Destination, recovery key, config. In a terminal it asks where the Archive should live; `--dest SPEC` says so outright, and `--join CODE` pairs with an existing Archive instead |
-| `push` | push this machine's Snapshot: the Setup plaintext, the History encrypted, changed Sessions only — never one the Archive is ahead on |
+| `push` | push this machine's Snapshot, encrypted: the Setup as one sealed object, the History as changed Sessions only — never one the Archive is ahead on. Needs the master key |
 | `pull` | lay the Archive down here: union the History, replace the Setup after a backup |
 | `sync` | carry the History both ways in one pass: pull what the Archive has, then push what it lacks — pull first, on purpose, and it never merges a Session two machines extended at once |
 | `pair` | mint a one-time code that hands another machine the master key, via the Destination |
 | `list` | show detected agents and what would be captured |
 | `doctor` | check for layout changes: entries no adapter recognises |
-| `capture --out DIR` | capture a Setup into a directory: no Destination, no key, no History |
+| `capture --out DIR` | capture a Setup into a local directory, in the clear, to read or diff: no Destination, no key, no History |
 | `encrypt` / `decrypt` | encrypt any file with a passphrase — a standalone cipher, nothing to do with an Archive |
 
 ```bash
@@ -75,11 +80,17 @@ ordinary file.
 ## Destinations
 
 carryon holds no credentials for a Destination; it borrows whatever you
-already have. A synced folder needs no account at all. The Archive's History
-is encrypted wherever it lands; its Setup half is plaintext there, so the
-storage still needs to be private — and a Setup pushed by a machine holding
-the master key carries an authentication tag, so a pull refuses one that was
-edited at the Destination. A push without a key writes no tag and says so.
+already have. A synced folder needs no account at all. Everything in the
+Archive is sealed wherever it lands — encrypted, and checked before it is
+opened — so a pull refuses an object that was edited at the Destination. What the Destination can still see
+is the shape: how many objects, how large, when they changed, and the machine
+names in each Setup's key. A pull also refuses an older Setup served back in
+place of the current one, which an encrypted object alone cannot rule out.
+
+An Archive pushed before the Setup was sealed holds it as a plaintext tree, and
+a pull refuses that tree by name. One full `carryon push --apply` replaces it
+with the sealed object and removes the plaintext files. On a git Destination
+they stay in the repository's history.
 
 | Spec | Where the Archive lives |
 | --- | --- |
