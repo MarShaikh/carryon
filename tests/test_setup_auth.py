@@ -182,6 +182,104 @@ def test_a_partial_push_refuses_to_launder_a_replayed_setup(paired, capsys):
         "the refused push wrote to the Archive anyway"
 
 
+def test_a_partial_push_onto_a_setup_it_cannot_open_is_refused(paired,
+                                                               capsys):
+    """A partial push merges onto the stored tree, so one that cannot open
+    the tree must not carry on as if there were none.
+
+    It used to treat every refusal from get_setup as 'nothing to overlay
+    onto' and seal this push's slice alone, which dropped every category it
+    did not select from the Archive at exit 0. That is the harm
+    _stored_setup_manifest stops the push over, arriving one step earlier.
+    """
+    tamper_with_setup(paired.dest_root)
+    damaged = stored_object(paired.dest_root).read_bytes()
+
+    with pytest.raises(SystemExit) as exc:
+        sync.push(ns(apply=True, category="config"), paired.home_a)
+
+    assert "refusing a partial Setup push" in str(exc.value)
+    assert "integrity check" in str(exc.value), \
+        "the refusal does not say why the stored Setup could not be read"
+    assert stored_object(paired.dest_root).read_bytes() == damaged, \
+        "the refused push wrote to the Archive anyway"
+
+
+def test_a_partial_push_is_refused_when_the_destination_fails_to_serve(
+        paired, capsys, monkeypatch):
+    """A transport that fails on the read is not an Archive with no Setup.
+    Reading it as one wrote this push's slice over the whole stored Setup."""
+    before = stored_object(paired.dest_root).read_bytes()
+
+    def failing(*args, **kwargs):
+        raise archive.ObjectRefused(
+            "the Destination failed while serving the Setup for machine "
+            "'machine-a': connection reset")
+    monkeypatch.setattr(archive, "get_setup", failing)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.push(ns(apply=True, category="config"), paired.home_a)
+
+    assert "connection reset" in str(exc.value)
+    assert stored_object(paired.dest_root).read_bytes() == before
+
+
+def test_a_partial_push_is_refused_when_the_indexed_setup_was_deleted(
+        paired, capsys):
+    """The Index records a Setup for this machine and the Archive holds no
+    object for it: a deletion, not a first push. Writing the slice alone
+    would make the deletion permanent for every category not selected."""
+    stored_object(paired.dest_root).unlink()
+
+    with pytest.raises(SystemExit) as exc:
+        sync.push(ns(apply=True, category="config"), paired.home_a)
+
+    assert "refusing a partial Setup push" in str(exc.value)
+    assert "records" in str(exc.value)
+    assert not stored_object(paired.dest_root).exists()
+
+
+def test_a_first_partial_push_still_writes_what_it_captured(tmp_path,
+                                                            capsys):
+    """The control for the three refusals above: with no stored Setup and
+    no Index record of one, there is nothing to overlay onto, and a partial
+    push is how a machine sends its first category."""
+    home_a = build_home_a(tmp_path)
+    sync.init(ns(dest=str(tmp_path / "archive"), machine="machine-a"),
+              home_a)
+    capsys.readouterr()
+
+    assert sync.push(ns(apply=True, category="config"), home_a) == 0
+
+    assert "nothing to overlay onto" in capsys.readouterr().out
+    assert stored_object(tmp_path / "archive").exists()
+
+
+def test_a_push_removes_a_plaintext_setup_left_from_before_sealing(paired,
+                                                                   capsys):
+    """An Archive pushed before ADR-0014 holds this machine's Setup as a
+    plaintext tree under setups/<machine>/. The sealed object does not
+    replace it, because it is written at a different key, so the push has to
+    remove it - otherwise the Setup ADR-0014 exists to hide stays readable at
+    the Destination for good. A neighbour's tree is not this push's to touch.
+    """
+    root = paired.dest_root / "carryon" / "setups"
+    mine = root / "machine-a" / "claude" / "settings.json"
+    other = root / "machine-z" / "claude" / "settings.json"
+    for path in (mine, other):
+        path.parent.mkdir(parents=True)
+        path.write_text('{"env": {"ANTHROPIC_API_KEY": "sk-ant-old"}}')
+
+    assert sync.push(ns(apply=True, category=SETUP_CATEGORIES),
+                     paired.home_a) == 0
+    out = capsys.readouterr().out
+
+    assert not mine.exists(), "the plaintext Setup is still at the Destination"
+    assert "plaintext" in out, "the push removed files without saying so"
+    assert other.exists(), "a push removed another machine's files"
+    assert stored_object(paired.dest_root).exists()
+
+
 # --- the honest path still works ---------------------------------------------
 
 

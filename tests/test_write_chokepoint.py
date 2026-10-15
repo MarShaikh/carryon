@@ -113,17 +113,25 @@ def test_a_link_at_the_staging_root_is_not_written_through(tmp_path, capsys,
         "a plaintext Setup was staged inside a tree carryon does not own:\n"
         + "\n".join(files_under(victim)))
     assert "SETUP REFUSED" in report, report
+    # The summary line used to blame a credential for every Setup refusal,
+    # which since ADR-0014 is the one cause that can never produce one.
+    assert "Setup: REFUSED - the Setup could not be staged" in report, report
+    assert "credential is in the capture set" not in report, report
 
 
 def test_a_refused_setup_is_never_left_in_a_tree_carryon_does_not_own(
         tmp_path, capsys):
     """The permanent case, and the worst one.
 
-    A capture that meets a credential keeps its staging tree on purpose, for
-    the user to inspect - so the one Setup carryon refuses to publish is the
-    one that stays behind. Through a link at ~/.carryon/staging that is a
-    refused Setup deposited inside a repository, under a report line telling
-    the user not to transfer it."""
+    A refused capture keeps its staging tree on purpose, for the user to
+    inspect - so the one Setup carryon refuses to publish is the one that
+    stays behind. Through a link at ~/.carryon/staging that is a refused
+    Setup deposited inside a repository, under a report line telling the
+    user not to transfer it.
+
+    The planted key no longer causes the refusal - ADR-0014 names a
+    credential and carries it - so what refuses here is the staging link
+    itself. The property is unchanged: nothing lands in the victim tree."""
     home, _ = initialised(tmp_path)
     (home / ".claude" / "CLAUDE.md").write_text(PLANTED_KEY)
     victim = victim_tree(tmp_path)

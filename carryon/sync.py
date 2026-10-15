@@ -90,7 +90,7 @@ from .setup_in import (_declared_paths, _restore_setup_item,  # noqa: F401
                        _setup_target, _setup_writes)
 from .setup_out import (_canon_home, _home_forms,  # noqa: F401
                         _neutralise_manifest, _neutralise_staged_setup,
-                        _push_partial_setup)
+                        _note_plaintext_removed, _push_partial_setup)
 from .stored_setup import (_choose_setup_source,  # noqa: F401
                            _index_setup_names, _machine_name_refusal,
                            _no_setup_source_note, _setup_catalogue,
@@ -541,7 +541,9 @@ def push(args, home) -> int:
                     # this line.
                     (staging / archive.SETUP_STAMP_NAME).write_bytes(
                         archive.stamp_bytes(now, setup_stamp))
-                    archive.put_setup(dest, master, machine, staging)
+                    _note_plaintext_removed(
+                        machine,
+                        archive.put_setup(dest, master, machine, staging))
                 else:
                     # A partial Setup overlays rather than mirrors, so the
                     # items not selected this time survive in the Archive -
@@ -806,7 +808,10 @@ def push(args, home) -> int:
                   "state or a file outside $HOME (named above); nothing was "
                   "captured and nothing was written to the Archive's Setup")
         elif setup_code != 0:
-            print("Setup: REFUSED - a credential is in the capture set (see "
+            # Not a credential: since ADR-0014 a credential is named and
+            # carried, never refused. What gets here is a staging directory
+            # carryon will not write into, or capture's own refusal.
+            print("Setup: REFUSED - the Setup could not be staged (named "
                   "above); nothing was written to the Archive's Setup")
         else:
             print(f"Setup: {verb} to {archive.setup_key(machine)} "

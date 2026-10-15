@@ -100,11 +100,11 @@ def _stored_setup_manifest(raw, prefix):
     if raw is None:
         return None
     unusable = SystemExit(
-        f"the Archive's stored {prefix}/MANIFEST.json will not parse, and a "
-        "partial push has to merge onto it - carrying on would drop every "
-        "item this push did not select from the stored Setup. Push the whole "
-        "Setup (`carryon push --apply` with no --category or --agent) to "
-        "replace it, or repair the file at the Destination.")
+        f"the MANIFEST.json inside the Archive's stored Setup "
+        f"({prefix}.tar.enc) will not parse, and a partial push has to merge "
+        "onto it - carrying on would drop every item this push did not "
+        "select from the stored Setup. Push the whole Setup (`carryon push "
+        "--apply` with no --category or --agent) to replace it.")
     try:
         stored = json.loads(raw.decode("utf-8"))
     except _JSON_REFUSALS:

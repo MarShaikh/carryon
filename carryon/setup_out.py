@@ -412,7 +412,10 @@ def _push_partial_setup(dest, master, machine, staging, manifest,
 
     A Destination with no stored Setup for this machine is not a refusal: it is
     every first partial push. It is named, and this push writes what it
-    captured.
+    captured. That holds only while the Index records no Setup for the
+    machine either; a stored Setup that is missing despite that record, will
+    not open, or was not served is refused, because merging onto nothing
+    drops every category this push did not select.
     """
     prefix = archive.setup_prefix(machine)
     staging = pathlib.Path(staging)
@@ -421,14 +424,33 @@ def _push_partial_setup(dest, master, machine, staging, manifest,
         raw = None
         try:
             archive.get_setup(dest, master, machine, base)
-        except archive.ObjectRefused as exc:
-            # No stored Setup, or one this machine cannot open. Either way
-            # there is nothing to overlay ONTO, so this push writes what it
-            # captured and says so - the alternative is refusing a push whose
-            # only problem is that the Archive has no Setup for this machine
-            # yet, which is every first partial push.
+        except archive.SetupMissing as exc:
+            if index_entry:
+                # The Index records a Setup the Archive no longer holds - a
+                # deletion, not a first push. Sealing the slice alone would
+                # make the deletion permanent for every category not
+                # selected.
+                raise SystemExit(
+                    "refusing a partial Setup push: the encrypted Index "
+                    f"records a Setup for '{printable(machine)}' and the "
+                    "Archive holds no object for it, so a partial push has "
+                    "nothing to merge onto and would drop every item it did "
+                    "not select. Push the whole Setup (`carryon push "
+                    "--apply` with no --category or --agent) to replace it.")
+            # No stored Setup and no record of one: every first partial push.
             print(f"  note     {printable(prefix)} - nothing to overlay onto "
                   f"({exc})")
+        except archive.ObjectRefused as exc:
+            # A Setup that will not open, or a Destination that failed to
+            # serve it, is not an Archive with no Setup. Reading it as one
+            # sealed this push's slice over the whole stored Setup at exit 0
+            # - the harm _stored_setup_manifest stops the push over.
+            raise SystemExit(
+                "refusing a partial Setup push: the stored Setup could not "
+                f"be read to merge onto ({exc}). Carrying on would drop "
+                "every item this push did not select. Push the whole Setup "
+                "(`carryon push --apply` with no --category or --agent) to "
+                "replace it.")
         else:
             stamped = stamped_or_none(base)
             if stamped is None or _stale_stamp(stamped, index_entry or {}):
@@ -478,4 +500,18 @@ def _push_partial_setup(dest, master, machine, staging, manifest,
             (base / "RESTORE.md").write_text(restore.build_restore(merged))
         (base / archive.SETUP_STAMP_NAME).write_bytes(
             archive.stamp_bytes(pushed_at, stamp))
-        archive.put_setup(dest, master, machine, base)
+        _note_plaintext_removed(
+            machine, archive.put_setup(dest, master, machine, base))
+
+
+def _note_plaintext_removed(machine: str, count: int) -> None:
+    """Say so when a push removed a Setup left in the clear before ADR-0014.
+
+    Deleting files at the Destination without a word would leave the user
+    wondering where they went, and the fact they existed is worth knowing:
+    the Setup was readable there until this push."""
+    if count:
+        print(f"  removed  {count} plaintext file(s) under "
+              f"{printable(archive.setup_prefix(machine))}/ - a Setup "
+              "pushed before ADR-0014 sealed it, readable at the "
+              "Destination until now")

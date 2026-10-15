@@ -50,7 +50,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import (config, external, history, keyring,  # noqa: E402
+from carryon import (archive, config, external, keyring,  # noqa: E402
                      rekey, sync)
 from tests.timeouts import time_limit  # noqa: E402
 
@@ -348,7 +348,7 @@ def test_a_tar_member_that_spells_state_is_still_refused_whole(tmp_path):
     key. There is no honest reading of it, so it refuses rather than
     deferring."""
     home = pulling_home(tmp_path)
-    tar = history._tar_bytes([("master.key", b"deadbeef\n")])
+    tar = archive.pack([("master.key", b"deadbeef\n")])
 
     with pytest.raises(SystemExit) as exc:
         sync._extract_tree(tar, home / ".carryon", home, [])

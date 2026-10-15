@@ -89,6 +89,16 @@ class ObjectRefused(SystemExit):
     """
 
 
+class SetupMissing(ObjectRefused):
+    """The Archive holds no Setup object for this machine at all.
+
+    Its own type because a partial push answers it differently from every
+    other refusal: an absent Setup with no Index record of one is a first
+    push, while one that will not open, or a Destination that failed to
+    serve it, is a Setup the push would be overwriting blind.
+    """
+
+
 # --- what `init` asks a Destination before it finishes (ADR-0011) ------------
 #
 # Two questions, and they are here rather than on the Destination base class
@@ -801,8 +811,8 @@ def _tar_files(tar_bytes: bytes, label: str):
             f"not a tar carryon can read ({why}). The seal proves a master "
             "key holder wrote those bytes, so this is damage at the "
             "Destination rather than tampering - nothing was read from it. "
-            "Push the Session again from a machine that still holds it, or "
-            "restore an earlier copy of the Archive.")
+            "Push it again from a machine that still holds it, or restore "
+            "an earlier copy of the Archive.")
 
 
 def tar_members(tar_bytes: bytes, what=None):
@@ -848,9 +858,9 @@ def tar_members(tar_bytes: bytes, what=None):
                 f"{why}. The seal proves a master key holder wrote those "
                 "bytes, so this is an Archive with something wrong in it "
                 "rather than an attack - nothing was read from it, and "
-                "nothing it holds was written. Push the Session again from a "
-                "machine that still holds it, or restore an earlier copy of "
-                "the Archive.")
+                "nothing it holds was written. Push it again from a machine "
+                "that still holds it, or restore an earlier copy of the "
+                "Archive.")
     yield from walk
 
 
@@ -961,14 +971,19 @@ def setup_key(machine: str) -> str:
     return setup_prefix(machine) + ".tar.enc"
 
 
-def put_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
+def put_setup(dest, master_key: bytes, machine: str, local_dir) -> int:
     """Seal the staged Setup and store it as ONE object for this machine.
 
-    No stale-key sweep any more, and that is the shape doing the work rather
-    than a check being dropped: the Archive keeps the most recent Setup per
-    machine, and one object replacing one object is that, with no set of
-    leftover keys to reason about. A skill deleted locally cannot resurrect on
-    the next pull because it is simply not in the tar.
+    One object replacing one object needs no stale-key sweep: a skill deleted
+    locally cannot resurrect on the next pull because it is not in the tar.
+
+    One sweep is left, and it is not about staleness. An Archive pushed
+    before ADR-0014 holds this machine's Setup as a plaintext tree under
+    setups/<machine>/, which the sealed object does not overwrite because it
+    lives at a different key. Leaving it would keep readable at the
+    Destination the very Setup ADR-0014 exists to hide. It is removed after
+    the sealed object is written, so a failed write never leaves the machine
+    with no Setup at all, and the count comes back for the report.
 
     The walk still excludes symlinks, for ADR-0006's reason: home-path
     neutralisation deliberately leaves links alone, so publishing one would
@@ -982,6 +997,10 @@ def put_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
                         path.read_bytes()))
     dest.write(setup_key(machine),
                crypto.seal(pack(entries), master_key, setup_label(machine)))
+    plaintext = dest.list(setup_prefix(machine) + "/")
+    for key in plaintext:
+        dest.delete(key)
+    return len(plaintext)
 
 
 def get_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
@@ -1011,7 +1030,7 @@ def get_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
             f"the Destination failed while serving the Setup for machine "
             f"'{printable(machine)}': {exc}")
     if blob is None:
-        raise ObjectRefused(
+        raise SetupMissing(
             f"the Archive holds no Setup for machine '{printable(machine)}'")
     try:
         tar_bytes = crypto.unseal(blob, master_key, setup_label(machine))
