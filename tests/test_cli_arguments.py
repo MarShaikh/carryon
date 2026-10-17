@@ -1039,3 +1039,26 @@ def test_the_help_text_still_names_both_halves_and_the_one_promise():
     description = cli.build_parser().description.lower()
     assert "setup" in description and "history" in description
     assert "encrypt" in description
+
+
+def _subcommand_help(name: str) -> str:
+    """The one-line help `carryon --help` lists beside a subcommand."""
+    parser = cli.build_parser()
+    for action in parser._subparsers._group_actions:
+        for choice in action._choices_actions:
+            if choice.dest == name:
+                return choice.help.lower()
+    raise AssertionError(f"no subcommand {name!r}")
+
+
+def test_the_push_help_says_the_setup_is_sealed():
+    """`push` described the Setup it publishes as plaintext for a whole
+    release after ADR-0014 sealed it, because nothing pinned the line. A
+    user deciding whether to push a Setup holding a token reads this line,
+    so it states the one promise, and never the withdrawn one."""
+    text = _subcommand_help("push")
+    assert "encrypt" in text and "setup" in text and "history" in text
+    for withdrawn in ("plaintext", "in the clear", "unencrypted"):
+        assert withdrawn not in text, (
+            f"`push` help calls the pushed Setup {withdrawn!r}; ADR-0014 "
+            "seals it")

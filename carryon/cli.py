@@ -586,8 +586,9 @@ def build_parser() -> argparse.ArgumentParser:
     ini.set_defaults(func=cmd_init)
 
     pus = sub.add_parser(
-        "push", help="push this machine's Snapshot: the Setup plaintext, "
-                     "the History encrypted, changed Sessions only")
+        "push", help="push this machine's Snapshot, encrypted: the Setup "
+                     "as one sealed object, the History as changed Sessions "
+                     "only")
     pus.add_argument("--apply", action="store_true",
                      help="actually push (default: dry run)")
     pus.add_argument("--agent", metavar="A,B",
