@@ -51,10 +51,12 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import archive, destinations, keyring, rekey, sync  # noqa: E402
+from carryon import (archive, config, destinations, keyring,  # noqa: E402
+                     rekey, sync)
 from tests.hostile_archive import (EVIL_SETTINGS, author_setup,  # noqa: E402
                                    build_home_a, build_home_b, item,
-                                   link_home, ns, stored_setup)
+                                   link_home, ns, reread_setup, stored_object,
+                                   stored_setup)
 
 SETUP_CATEGORIES = "config,capability,knowledge"
 PAIR_CODE = re.compile(r"carryon init --join (\S+)")
@@ -127,46 +129,60 @@ def test_a_replayed_empty_index_cannot_downgrade_a_paired_machines_pull(
     assert "none restored" in out
 
 
-def test_an_archive_that_never_held_an_index_still_restores_its_one_setup(
-        tmp_path, capsys):
-    """The control, and the reason the branch exists at all: ADR-0004's
-    keyless push writes a plaintext tree and no Index, and a machine that has
-    never seen an Index here cannot tell that from a deletion. One Setup, no
-    Index at all, restored with the unvouched note said plainly.
+def test_an_archive_with_a_setup_and_no_index_restores_nothing(tmp_path,
+                                                               capsys):
+    """Was `..._that_never_held_an_index_still_restores_its_one_setup`, and it
+    is the same situation with the opposite verdict.
 
-    The keyless push is performed rather than simulated. This used to push
-    WITH the key and then delete the Index, which is not a keyless Archive at
-    all: that push also wrote a SETUP.mac, and a tag is a statement only a
-    master key holder can make. Leaving one in the tree while calling the
-    Archive keyless described a state no push produces - and it is precisely
-    the state a deleted Index does produce, so the control was standing on the
-    attack. Refusing that tree is now the rule (sync._detached_tag_refusal),
-    which would have made this pass for the wrong reason and then fail.
+    It was the control for ADR-0004's keyless push: that push wrote a
+    plaintext tree and no Index, so an Archive holding a Setup and no Index
+    was a legitimate state, and a machine that had never seen an Index here
+    could not tell it from a deletion. It restored, flagged, because refusing
+    would have broken a promise ADR-0004 made.
+
+    ADR-0014 withdrew the promise and the state with it. A push needs the
+    master key and a keyed push writes the Index, so no push produces this
+    Archive - what does is the Index being removed from one, which is an
+    attack on a Destination anyone can write to. The seal proves a key holder
+    wrote the bytes and says nothing about when, so with no Index there is
+    nothing that calls this Setup current.
+
+    It used to get there by choose-then-refuse: the Setup was chosen, flagged,
+    and refused by the freshness check in the words for a replay. ADR-0014's
+    amendment dropped that route, so nothing is chosen and the report says
+    once that there is no Index to choose by.
     """
     home_a = build_home_a(tmp_path)
     dest_root = tmp_path / "archive"
     sync.init(ns(dest=str(dest_root), machine="machine-a"), home_a)
-    key_file = home_a / ".carryon" / "master.key"
-    saved = key_file.read_bytes()
-    key_file.unlink()          # a locked keychain: ADR-0004's keyless push
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home_a) == 0
-    key_file.write_bytes(saved)
-    assert not index_object(dest_root).exists(), \
-        "a keyless push wrote an Index, so this is not the keyless case"
-    assert not (stored_setup(dest_root, "machine-a")
-                / archive.SETUP_MAC_NAME).exists(), \
-        "a keyless push wrote an authentication tag it has no key for"
+    # The one route left to this Archive: the record removed from it.
+    index_object(dest_root).unlink()
 
+    # By hand rather than by pairing, because pairing is what would hand this
+    # machine the fact it is missing - it seals an anchor if the Archive has
+    # none. This is a home that came by the master key some way carryon does
+    # not offer, which is the only way to reach the branch at all.
     home_b = build_home_b(tmp_path)
-    link_home(home_b, str(dest_root), "machine-b", master_from=home_a)
+    keyring.store_master(keyring.fetch_master(home=home_a), home=home_b)
+    cfg = config.default_config()
+    cfg["destination"] = str(dest_root)
+    cfg["machine"] = "machine-b"
+    config.save(cfg, home_b)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
-    assert (home_b / ".claude" / "settings.json").read_text() == \
-        '{"model": "opus"}'
-    assert "nothing in the encrypted Index vouches" in out
+    assert not (home_b / ".claude" / "settings.json").exists(), \
+        "a Setup nothing calls current was restored"
+    assert "no Index at all" in out, \
+        "the report does not say the Archive serves no Index"
+    assert "Setup: none restored" in out
+    assert "refused whole" not in out, \
+        "a Setup was chosen and then refused, rather than never chosen"
+    assert "ADR-0004" not in out, \
+        "the report still cites the keyless push ADR-0014 removed"
 
 
 # --- the rollback ------------------------------------------------------------
@@ -268,19 +284,22 @@ def test_a_partial_push_cannot_relabel_a_replayed_tree(tmp_path, capsys):
     dest_root = tmp_path / "archive"
     sync.init(ns(dest=str(dest_root), machine="machine-a"), home_a)
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home_a) == 0
-    keep = snapshot(dest_root)
+    # The earlier object exactly as a key holder sealed it, which is what a
+    # versioned Destination hands an attacker. Kept as BYTES since ADR-0014:
+    # copying the materialised tree aside would copy a scratch directory
+    # nothing at the Destination reads, so the replay would reach nothing and
+    # the pull below would restore happily.
+    replayed = stored_object(dest_root, "machine-a").read_bytes()
 
-    # the user revokes the command; a full push sweeps it from the Archive
+    # the user revokes the command; a full push replaces the object without it
     (home_a / ".claude" / "commands" / "deploy.md").unlink()
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home_a) == 0
-    assert not (stored_setup(dest_root, "machine-a")
+    assert not (reread_setup(dest_root, "machine-a")
                 / "claude" / "commands" / "deploy.md").exists()
 
-    # the attacker replays the whole earlier tree, tag and all, and leaves the
-    # CURRENT Index in place
-    shutil.rmtree(stored_setup(dest_root, "machine-a"))
-    shutil.copytree(stored_setup(keep, "machine-a"),
-                    stored_setup(dest_root, "machine-a"))
+    # the attacker replays the whole earlier object and leaves the CURRENT
+    # Index in place
+    stored_object(dest_root, "machine-a").write_bytes(replayed)
 
     home_b = build_home_b(tmp_path)
     link_home(home_b, str(dest_root), "machine-b", master_from=home_a)
@@ -294,7 +313,7 @@ def test_a_partial_push_cannot_relabel_a_replayed_tree(tmp_path, capsys):
     # select from the Archive.
     with pytest.raises(SystemExit) as exc:
         sync.push(ns(apply=True, category="config"), home_a)
-    assert "served back in place of it" in str(exc.value)
+    assert "served back in its place" in str(exc.value)
     assert not (home_b / ".claude" / "commands" / "deploy.md").exists()
 
     capsys.readouterr()
@@ -363,25 +382,41 @@ def test_an_index_entry_with_no_object_field_is_a_report_line(tmp_path,
 
 def test_an_index_setup_entry_with_a_numeric_time_is_a_report_line(tmp_path,
                                                                    capsys):
-    """max(captured, known) over a str and an int is a TypeError, and it
-    escapes the one `except SystemExit` wrapped around the catalogue read."""
+    """max(captured, known) over a str and an int was a TypeError, and it
+    escaped the one `except SystemExit` wrapped around the catalogue read -
+    a traceback out of a pull that had already written a History to $HOME.
+
+    ADR-0014 removed the max() with the plaintext captured_at it compared
+    against, and `_setup_catalogue` keeps the isinstance guard on purpose:
+    the value still reaches a report line. So what this test measures is
+    unchanged and its expected exit code is not.
+
+    It asserted 2, which came from the crash rather than from a decision.
+    A malformed `pushed_at` is a report field; `stamp` is the field that says
+    which tree is current, and it is untouched here - so the honest Setup is
+    still the current one and still restores. The number must simply not
+    reach the report as a number, and nothing may raise.
+    """
     home_a = build_home_a(tmp_path)
     dest_root = tmp_path / "archive"
     sync.init(ns(dest=str(dest_root), machine="machine-a"), home_a)
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home_a) == 0
     index = open_index(home_a, dest_root)
     index["setups"]["machine-a"]["pushed_at"] = 17
-    index["setups"]["machine-a"]["authenticated"] = False
     seal_index(home_a, dest_root, index)
 
     home_b = build_home_b(tmp_path)
     link_home(home_b, str(dest_root), "machine-b", master_from=home_a)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 2
+    assert sync.pull(ns(apply=True), home_b) == 0
     out = capsys.readouterr().out
 
     assert "Setup:" in out, "the pull ended before its report"
+    assert "pushed 17" not in out, \
+        "a number the Index should not hold was rendered as a timestamp"
+    assert (home_b / ".claude" / "settings.json").is_file(), \
+        "a malformed report field denied a Setup the stamp still calls current"
 
 
 def test_an_index_setup_entry_that_is_not_an_object_is_a_report_line(

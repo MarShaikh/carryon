@@ -104,6 +104,33 @@ this ADR creates is to read "it unsealed" as "it is current", which is precisely
 the confusion `_stale_stamp`'s own docstring was written against after one
 ordinary `push --category config` laundered a replayed tree.
 
+## An Archive with no Index restores no Setup, and says so once
+
+> Amendment, 2026-10-15.
+
+ADR-0004's keyless push wrote a plaintext tree and no Index, so an Archive
+holding one Setup and no Index was a legitimate state, and `pull` restored that
+Setup, flagged, because refusing would have broken ADR-0004's promise. The
+section below withdraws keyless push, and the state goes with it: a push needs
+the master key and a keyed push writes the Index. Nothing produces that Archive
+any more except the Index being removed from one.
+
+The branch that served it survived the conversion and went on choosing that one
+Setup, and the freshness check then refused it, because with no Index nothing
+calls it current. The verdict was right. The route printed two notes about a
+Setup it was about to restore, then refused it in the words for a **replay**: "the
+Setup pushed at <t> rather than the one the Index records as current". That
+sentence describes an Index that disagrees. This Index is missing, so the user
+was told the wrong thing about their own Archive.
+
+So no Index chooses no Setup. The pull says why once: there is no Index, so
+nothing records which Setup is current, and the seal shows who wrote the
+object but not when. It still exits non-zero, because carryon was offered a
+Setup it would not use. Fixing only the sentence was the alternative. It was
+rejected because it keeps a branch whose every outcome is a refusal, and the
+two notes printed before that refusal still announce a restore that never
+happens.
+
 ## A keyless push refuses, and the recovery key waits
 
 Settled: a push needs a master key. There is nothing to write without one, so

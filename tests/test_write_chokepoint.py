@@ -47,7 +47,7 @@ from carryon import (capture, config, external, history,  # noqa: E402
                      keyring, sync)
 from carryon.destinations.git_repo import GitDestination  # noqa: E402
 from tests.hostile_archive import (GOOD_SETTINGS, build_home_a,  # noqa: E402
-                                   link_home, ns)
+                                   link_home, ns, reread_setup)
 from tests.timeouts import time_limit  # noqa: E402
 
 MANAGED = "# managed by my dotfiles repo\n"
@@ -113,17 +113,25 @@ def test_a_link_at_the_staging_root_is_not_written_through(tmp_path, capsys,
         "a plaintext Setup was staged inside a tree carryon does not own:\n"
         + "\n".join(files_under(victim)))
     assert "SETUP REFUSED" in report, report
+    # The summary line used to blame a credential for every Setup refusal,
+    # which since ADR-0014 is the one cause that can never produce one.
+    assert "Setup: REFUSED - the Setup could not be staged" in report, report
+    assert "credential is in the capture set" not in report, report
 
 
 def test_a_refused_setup_is_never_left_in_a_tree_carryon_does_not_own(
         tmp_path, capsys):
     """The permanent case, and the worst one.
 
-    A capture that meets a credential keeps its staging tree on purpose, for
-    the user to inspect - so the one Setup carryon refuses to publish is the
-    one that stays behind. Through a link at ~/.carryon/staging that is a
-    refused Setup deposited inside a repository, under a report line telling
-    the user not to transfer it."""
+    A refused capture keeps its staging tree on purpose, for the user to
+    inspect - so the one Setup carryon refuses to publish is the one that
+    stays behind. Through a link at ~/.carryon/staging that is a refused
+    Setup deposited inside a repository, under a report line telling the
+    user not to transfer it.
+
+    The planted key no longer causes the refusal - ADR-0014 names a
+    credential and carries it - so what refuses here is the staging link
+    itself. The property is unchanged: nothing lands in the victim tree."""
     home, _ = initialised(tmp_path)
     (home / ".claude" / "CLAUDE.md").write_text(PLANTED_KEY)
     victim = victim_tree(tmp_path)
@@ -169,7 +177,7 @@ def test_an_ordinary_push_still_stages_and_publishes_a_setup(tmp_path, capsys):
     report = capsys.readouterr().out
 
     assert code == 0, report
-    stored = tmp_path / "archive" / "carryon" / "setups" / "machine-a"
+    stored = reread_setup(tmp_path / "archive", "machine-a")
     assert (stored / "claude" / "settings.json").read_text() == GOOD_SETTINGS
     assert not list((home / ".carryon" / "staging").glob("setup-*")), \
         "the staging tree was left behind by a clean push"

@@ -38,7 +38,7 @@ from .destinations.base import printable
 # The three files a Setup carries about itself rather than for restoring: the
 # manifest, the notes rendered from it, and the tag over the tree. No captured
 # Item is ever written to one, on either leg.
-SETUP_OWN_FILES = ("MANIFEST.json", "RESTORE.md", archive.SETUP_MAC_NAME)
+SETUP_OWN_FILES = ("MANIFEST.json", "RESTORE.md", archive.SETUP_STAMP_NAME)
 
 # What every filesystem carryon runs on will hold: 255 bytes per name, and a
 # path far shorter than any PATH_MAX. Shape is not the whole check - a path
@@ -142,13 +142,14 @@ def _setup_target(src, home, declared) -> tuple:
     """(target, None) for where a stored Setup item may be written, or
     (None, why) refusing it.
 
-    The Setup half of the Archive is plaintext and unauthenticated by design
-    - pushing one needs no master key at all (ADR-0004) - so a stored
-    MANIFEST is input from an untrusted Destination, not carryon's own
-    output. `home / src` silently *becomes* an absolute src (pathlib drops
-    the left operand), and a '..' walks out of $HOME the way
-    config._relative_to_home warns about; either one turns a restore into a
-    write anywhere on this machine.
+    A stored MANIFEST is input, not carryon's own output. It opens under the
+    master key (ADR-0014), so its author holds one - which is a narrower set
+    of people and not a trustworthy one. A key holder's older or newer carryon
+    writes shapes this version never would, a compromised machine writes
+    whatever it likes, and either way `home / src` silently *becomes* an
+    absolute src (pathlib drops the left operand) and a '..' walks out of $HOME
+    the way config._relative_to_home warns about. Either one turns a restore
+    into a write anywhere on this machine.
 
     Three checks, narrowing. Lexical containment first, judged on the
     unresolved path because a ~/.claude/settings.json symlinked into a

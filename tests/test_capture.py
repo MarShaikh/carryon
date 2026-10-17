@@ -80,15 +80,36 @@ def test_cursor_authinfo_is_stripped(tmp_path):
     assert item["stripped_keys"] == ["authInfo"]
 
 
-def test_planted_credential_fails_closed(tmp_path):
+def test_a_planted_credential_is_named_and_the_capture_still_writes(tmp_path,
+                                                                    capsys):
+    """A credential in the capture set is reported, and the Setup is written
+    anyway (ADR-0014).
+
+    This asserted the opposite until ADR-0014 - exit 2 and no MANIFEST.json -
+    and the reversal is the decision rather than a slackening of it. Refusing
+    was load-bearing because a Setup went to the Archive in the clear; sealing
+    stands there now. And refusing could not fix the case it was written for:
+    settings.json's `env` block is where an API key goes, and no Adapter
+    change can stop carrying a CONFIG Item.
+
+    Pinned on both halves on purpose. The report alone would pass against a
+    carryon that named the file and then refused, and the written MANIFEST
+    alone would pass against one that had stopped scanning - and this is the
+    one path where the bytes really are in the clear, so a silent scanner here
+    is the worst of the two failures.
+    """
     home = build_home(tmp_path)
     (home / ".claude" / "settings.json").write_text(
         '{"apiKey": "sk-ant-api03-PLANTEDPLANTEDPLANTEDPLANTED"}')
     out = tmp_path / "bundle"
     code, _ = run(home, out)
 
-    assert code == 2, "a credential in the capture set must not produce a Setup"
-    assert not (out / "MANIFEST.json").exists()
+    printed = capsys.readouterr().out
+    assert "settings.json" in printed, "the credential was not named"
+    assert "anthropic-key" in printed, "the report does not say what matched"
+    assert code == 0, "reported, not refused (ADR-0014)"
+    assert (out / "MANIFEST.json").exists(), \
+        "the capture produced no Setup - the refusal ADR-0014 retired"
 
 
 def test_dry_run_writes_nothing(tmp_path):
@@ -243,13 +264,22 @@ def test_success_output_keeps_setup_and_history_promises_apart(tmp_path, capsys)
     assert "carryon push" in text
 
 
-def test_refusal_output_says_setup_not_bundle(tmp_path, capsys):
+def test_the_credential_report_says_setup_not_bundle(tmp_path, capsys):
+    """The same vocabulary rule as the test above, on the path that prints an
+    extra block.
+
+    It was the *refusal* output that had to say Setup, and there is no refusal
+    any more - but the report path is still a second exit from the same
+    command with its own closing lines, which is exactly where a retired word
+    survives a rename. `bundle` is retired for a Setup (CONTEXT.md), so this
+    stays as a check on the words rather than on the posture.
+    """
     home = build_home(tmp_path)
     (home / ".claude" / "settings.json").write_text(
         '{"apiKey": "sk-ant-api03-PLANTEDPLANTEDPLANTEDPLANTED"}')
     code, _ = run(home, tmp_path / "setup")
 
-    assert code == 2
+    assert code == 0
     text = capsys.readouterr().out
     assert "bundle" not in text.lower()
     assert "Setup" in text

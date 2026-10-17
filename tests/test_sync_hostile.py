@@ -36,15 +36,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import config, destinations, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_CLAUDE_MD, GOOD_COMMAND, GOOD_SETTINGS, SECRET,
-    SETUP_CATEGORIES, ListsOneExtraKey, author_setup, build_home_a,
-    file_keyring, files_containing, item, manifest, ns, paired, remac_setup,
-    stored_setup)
+    SETUP_CATEGORIES, ListsOneExtraKey, archive_plaintext_containing,
+    author_setup, build_home_a, file_keyring, files_containing, item,
+    manifest, ns, paired, reread_setup, reseal_setup, stored_setup)
 
 # Since the Setup gained its authentication tag (test_setup_auth.py), a tree
 # edited without the master key is refused whole before any item is read.
 # The string-vs-syscall guards here still have to hold for a tree a key
 # holder DID stamp - a compromised source machine is exactly that - so each
-# tamper of the vouched tree below is re-stamped with remac_setup, keeping
+# tamper of the vouched tree below is re-stamped with reseal_setup, keeping
 # those guards the thing under test.
 
 # A forged report line, spelled the way pull spells the real one.
@@ -83,7 +83,7 @@ def test_a_dst_the_kernel_will_not_take_does_not_abort_the_pull(
         item(".claude/settings.json", dst),
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ], files={"claude/CLAUDE.md": GOOD_CLAUDE_MD})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -101,7 +101,7 @@ def test_a_src_the_kernel_will_not_take_does_not_abort_the_pull(paired,
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ], files={"claude/settings.json": GOOD_SETTINGS,
               "claude/CLAUDE.md": GOOD_CLAUDE_MD})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -130,7 +130,7 @@ def test_a_src_that_is_only_too_long_once_joined_to_home_is_refused(
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ], files={"claude/settings.json": GOOD_SETTINGS,
               "claude/CLAUDE.md": GOOD_CLAUDE_MD})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -153,7 +153,7 @@ def test_a_src_below_a_local_file_does_not_abort_the_pull(paired, capsys):
         item(".claude/commands/ship.md/evil.md", "claude/settings.json"),
     ], files={"claude/CLAUDE.md": GOOD_CLAUDE_MD,
               "claude/settings.json": EVIL_SETTINGS})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -177,7 +177,7 @@ def test_a_file_item_naming_a_local_directory_does_not_abort_the_pull(
         item(".claude/commands", "claude/settings.json"),
     ], files={"claude/CLAUDE.md": GOOD_CLAUDE_MD,
               "claude/settings.json": EVIL_SETTINGS})
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -200,7 +200,7 @@ def test_a_deeply_nested_stored_manifest_does_not_abort_the_pull(paired,
     none of the three."""
     (stored_setup(paired.dest_root, "machine-a")
      / "MANIFEST.json").write_text(NESTED)
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     # code=2: no abort, and no false success either - the Setup carryon chose
     # could not be used, and the status says so while the report survives.
@@ -296,12 +296,19 @@ def test_a_hostile_stored_manifest_does_not_traceback_out_of_a_push(
 
 def test_a_partial_push_really_withholds_what_it_says_it_withheld(tmp_path,
                                                                   capsys):
-    """Withholding is done by deleting the file from staging, and only a FULL
-    push's stale-key sweep turns that into a deletion in the Archive. On a
-    partial push the overlay never deletes, so a copy an earlier version
-    published stays in the plaintext half with the source machine's home in
-    it - while the report says "They stayed here and a pull elsewhere will be
-    without them"."""
+    """Withholding is done by deleting the file from staging, and on a full
+    push that is enough - the whole object is replaced. A partial push merges
+    onto the stored tree, so a copy an earlier version published would survive
+    underneath with the source machine's home inside it, while the report said
+    "They stayed here and a pull elsewhere will be without them".
+
+    The leftover is sealed back in rather than dropped into a directory,
+    because since ADR-0014 there is no directory: the earlier version that
+    published it held the master key, so an earlier version's leftover is one
+    that unseals. And what the Archive holds afterwards is read through
+    `reread_setup`, since the cached tree this test edited is not what the
+    push wrote.
+    """
     home = (tmp_path / "home_w").resolve()
     skill = home / ".claude" / "skills" / "shipping"
     skill.mkdir(parents=True)
@@ -314,57 +321,98 @@ def test_a_partial_push_really_withholds_what_it_says_it_withheld(tmp_path,
     assert sync.push(ns(apply=True, category="capability"), home) == 0
 
     # what an earlier version of carryon left in the Archive
-    published = (stored_setup(dest_root, "machine-w")
-                 / "claude" / "skills" / "shipping" / "notes.bin")
+    leftover = ("claude", "skills", "shipping", "notes.bin")
+    published = stored_setup(dest_root, "machine-w").joinpath(*leftover)
     published.parent.mkdir(parents=True, exist_ok=True)
     published.write_bytes(b"\xff\xfe" + f"cache lives at {home}/.cache\n"
                           .encode())
+    reseal_setup(dest_root, "machine-w", home)
     capsys.readouterr()
 
     assert sync.push(ns(apply=True, category="capability"), home) == 0
     out = capsys.readouterr().out
 
     assert "notes.bin" in out, "the withheld file is not named"
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "a partial push left a file naming this machine's home in the Archive"
-    assert not published.exists(), \
+    assert not reread_setup(dest_root, "machine-w").joinpath(*leftover).exists(), \
         "the report says the file stayed here; the Archive still holds it"
 
 
-# --- the one field an attacker cannot forge, compared the wrong way ----------
+# --- a case rename, and what answers it now ----------------------------------
+#
+# These two pinned a rescue. The vouched lookup compared machine names exactly,
+# so on a case-insensitive Destination renaming setups/machine-a to
+# setups/MACHINE-A took the vouching off a directory that was the SAME
+# directory with the same honest content - and the pull then restored nothing,
+# at exit 0, with no key involved. The case-folded fallback in
+# `_vouched_machines` put the vouching back.
+#
+# ADR-0014 answers the rename somewhere else and differently. The key is
+# `setups/<machine>.tar.enc` and the seal's label binds the machine name, so a
+# renamed object does not open under the name it is now served at - there is no
+# honest content behind the new name to rescue, whatever the Index says. What
+# the fallback still does is decide WHICH refusal happens: with it the renamed
+# name is chosen and the seal refuses it by name, without it nothing is vouched
+# and the pull says so. Both land on exit 2 and neither restores anything, so
+# the fallback is a difference in wording rather than a guard, and it is
+# kept deliberately: it names the renamed object in the refusal.
+#
+# The half that DID have to be fixed was "at exit 0", and it was fixed by the
+# exit-status rule rather than by vouching: a Setup carryon was offered and
+# would not use is 2 under --apply, whichever door refuses it.
 
 
-def test_a_case_variant_setup_directory_is_still_vouched_for(paired, capsys):
-    """The '.carryon' carve-out beside this one case-folds and calls that the
-    spelling of the rule to copy; the vouched lookup then compares machine
-    names exactly. On a case-insensitive Destination, renaming
-    setups/machine-a to setups/MACHINE-A is the SAME directory on disk with
-    the same honest content, and index['setups'] is keyed exactly - so the one
-    field ADR-0009 says an attacker cannot forge reads false, for a rename."""
+def test_a_case_renamed_setup_is_refused_and_a_planted_one_does_not_win(
+        paired, capsys):
+    """The whole attack, and what happens to it now.
+
+    Renaming the vouched object is still the cheap half; the expensive half
+    was planting one beside it with a timestamp in the year 9999 and having
+    that win. It does not. The renamed name is still the one carryon chooses -
+    the Index vouches for it through the fold - and the seal then refuses it,
+    so nothing lands and the planted Setup is never reached.
+
+    Both halves are asserted because either alone passes for the wrong
+    reason: "nothing landed" is what a pull that refused everything does too,
+    and "EVIL_SETTINGS did not land" is true of a pull that crashed.
+    """
     setups = paired.dest_root / "carryon" / "setups"
-    os.rename(setups / "machine-a", setups / "MACHINE-A")
+    os.rename(setups / "machine-a.tar.enc", setups / "MACHINE-A.tar.enc")
     author_setup(paired.dest_root, "evil",
                  [item(".claude/settings.json", "claude/settings.json")],
                  captured_at="9999-12-31T23:59:59Z",
                  files={"claude/settings.json": EVIL_SETTINGS})
 
-    out = pull_report(paired.home_b, capsys)
+    out = pull_report(paired.home_b, capsys, code=2)
 
-    assert (paired.home_b / ".claude" / "settings.json").read_text() == \
-        GOOD_SETTINGS, "a rename denied the Setup restore at exit 0"
-    assert "evil" in out
+    landed = paired.home_b / ".claude" / "settings.json"
+    assert not landed.exists() or landed.read_text() != EVIL_SETTINGS, \
+        "the planted Setup won once the vouched one was renamed"
+    assert "MACHINE-A" in out, "the renamed Setup is not named in the report"
+    assert "does not authenticate" in out, \
+        "the seal's label did not refuse an object served under another name"
 
 
 def test_the_catalogue_vouches_for_a_case_variant_of_a_known_machine(paired):
-    """Stated directly, because the pull above could pass for other reasons."""
+    """The fold itself, stated directly, because the pull above reaches it
+    only as the reason a particular refusal happens rather than another.
+
+    What this pins is `_vouched_machines`, not a safety property - see the
+    note above. It is kept so that removing the fold is a decision someone
+    makes on purpose, with a test to change, rather than a branch that
+    quietly stops being taken.
+    """
     setups = paired.dest_root / "carryon" / "setups"
-    os.rename(setups / "machine-a", setups / "MACHINE-A")
+    os.rename(setups / "machine-a.tar.enc", setups / "MACHINE-A.tar.enc")
     dest = destinations.from_spec(paired.dest_spec, paired.home_b)
     index = {"setups": {"machine-a": {"pushed_at": "2026-01-01T00:00:00Z"}}}
 
     catalogue, _refused = sync._setup_catalogue(dest, index)
 
     assert catalogue["MACHINE-A"]["vouched"] is True
+    assert catalogue["MACHINE-A"]["index_name"] == "machine-a", \
+        "the fold vouched for the name without recording whose entry it used"
 
 
 VOUCHING_INDEX = {"setups": {"machine-a": {"pushed_at": "2026-01-01T00:00:00Z"}}}
@@ -468,7 +516,7 @@ def test_a_manifest_agent_key_cannot_forge_a_line_of_the_pull_report(
     doc["agents"] = {f"claude-code\n{FORGERY}\nz": doc["agents"]["claude-code"]}
     (stored_setup(paired.dest_root, "machine-a")
      / "MANIFEST.json").write_text(json.dumps(doc, indent=2))
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 
@@ -484,7 +532,7 @@ def test_a_stored_tree_member_cannot_forge_a_line_of_the_pull_report(
     fields does not reach it."""
     stored = stored_setup(paired.dest_root, "machine-a")
     (stored / "claude" / "commands" / f"a\n{FORGERY}\nb.md").write_text("hi\n")
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     out = pull_report(paired.home_b, capsys)
 

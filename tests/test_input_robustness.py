@@ -34,8 +34,10 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import (archive, config, destinations, keyring, rekey,  # noqa: E402
-                     restore, sync)
+from carryon import (archive, config, crypto, destinations,  # noqa: E402
+                     keyring, rekey, restore, sync)
+from tests.hostile_archive import (SETUP_CATEGORIES,  # noqa: E402
+                                   reread_setup, reseal_setup, stored_setup)
 
 # A lone high surrogate. Legal in JSON, legal in a Python str, and impossible
 # to encode as UTF-8 - which is what every writer in carryon does. It is
@@ -177,34 +179,44 @@ def fresh_manifest(target: str) -> dict:
 # --- 1. a stored MANIFEST string carryon cannot write back out ---------------
 
 
-def plant_stored_manifest(dest_root, machine, agents) -> str:
-    """Author the plaintext MANIFEST a partial push reads back and merges.
+def plant_stored_manifest(dest_root, machine, agents, home_with_key) -> str:
+    """Author the MANIFEST a partial push reads back and merges.
 
-    No key involved: ADR-0004 makes the Setup half plaintext so that
-    `push --category config` works on a machine that never paired, which is
-    the same property that lets anyone with write access to the Destination
-    author this file. Returned as text so the test can assert the bytes are
-    ordinary ASCII - json.dumps escapes the surrogate on the way out, so
-    nothing about the file on disk looks unusual.
+    It went into a plaintext tree, on ADR-0004's reasoning that the Setup
+    half needed no key - which was also what let anyone with write access
+    author it. ADR-0014 sealed the Setup, so it goes in through the seal and
+    the author is a key holder: an older or newer carryon at this Archive, or
+    this user's own. The defect is unchanged and so is the rule - a string
+    carryon cannot render must be dropped and named rather than crashing a
+    push - and it is now an ordinary shape rather than an attack.
+
+    Returned as text so the test can assert the bytes are ordinary ASCII:
+    json.dumps escapes the surrogate on the way out, so nothing between the
+    file and the crash is looking at anything unusual.
     """
     doc = {"tool": "carryon", "version": "0.1.0",
            "captured_at": "2026-07-29T12:00:00Z", "source_home": "~",
            "categories": ["config"], "agents": agents}
     raw = json.dumps(doc, indent=2)
-    base = pathlib.Path(dest_root) / "carryon" / "setups" / machine
-    base.mkdir(parents=True, exist_ok=True)
+    base = stored_setup(dest_root, machine)
     (base / "MANIFEST.json").write_text(raw)
+    reseal_setup(dest_root, machine, home_with_key)
     return raw
 
 
 @pytest.fixture
-def keyless(tmp_path):
-    """A machine with a Destination and no master key at all (ADR-0004)."""
+def pushed_setup(tmp_path):
+    """A machine that has pushed a Setup and still holds the master key.
+
+    Was `keyless`, a machine with a Destination and no key at all (ADR-0004).
+    That state can no longer reach a partial push - ADR-0014 refuses one
+    before it gets here - and the rendering guard these tests are about sits
+    downstream of the refusal either way.
+    """
     home = build_home_a(tmp_path)
     dest_spec = str(tmp_path / "archive")
     sync.init(ns(dest=dest_spec, machine="machine-a"), home)
-    (home / ".carryon" / "master.key").unlink()
-    assert keyring.fetch_master(home=home) is None
+    assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     return types.SimpleNamespace(home=home, dest_spec=dest_spec,
                                  dest_root=tmp_path / "archive")
 
@@ -222,31 +234,33 @@ def keyless(tmp_path):
                               "why": LONE_SURROGATE}]}}, "an exclusion note"),
 ])
 def test_a_stored_manifest_string_that_will_not_render_is_dropped_and_named(
-        keyless, capsys, agents, what):
+        pushed_setup, capsys, agents, what):
     """A partial push regenerates RESTORE.md from the MERGED manifest, and the
     merge takes agents the capture did not produce straight out of the stored
     document. `_carryable_agent` was written for exactly that rendering - one
     key left out of a planted entry used to be a KeyError out of
     `push --category` - and it asks `isinstance(x, str)`, which a lone
     surrogate answers yes to. write_text then encodes it, strictly, and
-    UnicodeEncodeError comes out of a push on a machine holding no key.
+    UnicodeEncodeError came out of the push.
 
-    The plant is pure ASCII valid JSON in the Archive's plaintext half, so
-    the whole of it is available to anyone with write access to the
-    Destination and no key at all - the only item in this suite an attacker
-    can drive.
+    The plant is pure ASCII valid JSON, which is the part that matters and is
+    unchanged by sealing: nothing between the stored document and the crash
+    looks at bytes, so a key holder's carryon writing a string this one
+    cannot encode reaches the same place an attacker's did.
     """
-    raw = plant_stored_manifest(keyless.dest_root, "machine-a", agents)
+    raw = plant_stored_manifest(pushed_setup.dest_root, "machine-a", agents,
+                                pushed_setup.home)
     assert all(ord(c) < 128 for c in raw), \
         "the plant is meant to be ordinary ASCII on disk"
 
-    assert sync.push(ns(apply=True, category="config"), keyless.home) == 0, \
+    assert sync.push(ns(apply=True, category="config"),
+                     pushed_setup.home) == 0, \
         f"{what} that will not encode ended the push"
     out = capsys.readouterr().out
 
     assert "codex" in out, \
         f"{what} was dropped from the Archive's MANIFEST without a word"
-    stored = keyless.dest_root / "carryon" / "setups" / "machine-a"
+    stored = reread_setup(pushed_setup.dest_root, "machine-a")
     assert (stored / "RESTORE.md").is_file(), "the push wrote no RESTORE.md"
     # The whole entry goes when the unrenderable string is the agent's own,
     # the one item goes when it is an item's - what matters either way is
@@ -256,18 +270,19 @@ def test_a_stored_manifest_string_that_will_not_render_is_dropped_and_named(
 
 
 def test_a_stored_manifest_the_push_can_render_still_carries_its_agents(
-        keyless, capsys):
+        pushed_setup, capsys):
     """The other half of the same rule: an agent the capture did not produce
     still survives a partial push, which is the whole reason the merge reads
     the stored document. A guard that dropped every uncaptured agent would
     pass the test above and silently empty the Archive's MANIFEST."""
-    plant_stored_manifest(keyless.dest_root, "machine-a", {
-        "codex": {"name": "Codex", "items": [], "excluded": []}})
+    plant_stored_manifest(pushed_setup.dest_root, "machine-a", {
+        "codex": {"name": "Codex", "items": [], "excluded": []}},
+        pushed_setup.home)
 
-    assert sync.push(ns(apply=True, category="config"), keyless.home) == 0
+    assert sync.push(ns(apply=True, category="config"), pushed_setup.home) == 0
     capsys.readouterr()
 
-    stored = keyless.dest_root / "carryon" / "setups" / "machine-a"
+    stored = reread_setup(pushed_setup.dest_root, "machine-a")
     merged = json.loads((stored / "MANIFEST.json").read_text())
     assert "codex" in merged["agents"], \
         "a renderable stored agent was dropped from the merge"
@@ -573,10 +588,30 @@ def test_state_nested_past_the_recursion_limit_is_nothing_seen_yet(
 # --- 5. the walk in archive that followed a link -----------------------------
 
 
+def packed_members(tmp_path, tree) -> list:
+    """The member names `put_setup` actually publishes for `tree`.
+
+    The sibling walk `tree_hash` is measured against used to be
+    `archive.setup_tree_manifest`, a function that returned the names. ADR-0014
+    deleted it along with the MAC it fed, and the walk it held moved inline
+    into `put_setup` - so the only way left to ask what that walk excluded is
+    to seal a tree and read the members back. Which is the better question
+    anyway: what matters is what leaves the machine, not what an intermediate
+    helper listed.
+    """
+    dest = destinations.from_spec(str(tmp_path / "drift-archive"),
+                                  tmp_path / "drift-home")
+    archive.put_setup(dest, bytes(range(32)), "drift", tree)
+    blob = dest.read(archive.setup_key("drift"))
+    plain = crypto.unseal(blob, bytes(range(32)),
+                          archive.setup_label("drift"))
+    return sorted(name for name, _data in archive.tar_members(plain))
+
+
 def test_tree_hash_does_not_follow_a_symlink(tmp_path):
-    """put_setup and setup_tree_manifest both walk a tree with `p.is_file()
-    and not p.is_symlink()`; tree_hash walks the same shape of tree with
-    is_file() alone, and is_file() follows.
+    """put_setup walks a tree with `p.is_file() and not p.is_symlink()`;
+    tree_hash walks the same shape of tree with is_file() alone, and
+    is_file() follows.
 
     It has no caller in carryon today, which is the reason to fix it rather
     than leave it: a link-following walk sitting in the module whose whole
@@ -596,8 +631,8 @@ def test_tree_hash_does_not_follow_a_symlink(tmp_path):
     (linked / "stolen.txt").symlink_to(secret)
 
     assert archive.tree_hash(linked) == archive.tree_hash(plain), \
-        "tree_hash read through a symlink the sibling walks exclude"
-    assert list(archive.setup_tree_manifest(linked)) == ["main.jsonl"], \
+        "tree_hash read through a symlink the sibling walk excludes"
+    assert packed_members(tmp_path, linked) == ["main.jsonl"], \
         "the sibling walk this one is measured against has drifted"
 
 

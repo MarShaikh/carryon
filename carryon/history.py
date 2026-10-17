@@ -41,13 +41,11 @@ from __future__ import annotations
 import dataclasses
 import errno
 import hashlib
-import io
 import json
 import os
 import pathlib
 import re
 import stat
-import tarfile
 
 from . import archive, config, external, rekey, secrets
 
@@ -740,22 +738,6 @@ def expand_member(rel: str, data: bytes, home, maps=()):
     return out, None, stats, is_utf8
 
 
-def _tar_bytes(entries) -> bytes:
-    # Normalised metadata: identical content packs to identical bytes, so
-    # nothing about the pushing machine (owner, timestamps) leaks into the tar.
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tar:
-        for rel, data in entries:
-            info = tarfile.TarInfo(rel)
-            info.size = len(data)
-            info.mtime = 0
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            info.mode = 0o644
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
-
-
 class MemberUnreadable(Exception):
     """A member the walk found and the read did not get.
 
@@ -839,7 +821,7 @@ def pack_session(session, home):
 
     report = PackReport(len(entries), rewritten, text_replaced, malformed,
                         near, bare, non_utf8, tuple(credential_members))
-    return _tar_bytes(entries), report
+    return archive.pack(entries), report
 
 
 # --- unpack ------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 carryon maintains a local clone under ~/.carryon/git/<slug> and treats the
 remote as truth: every read is preceded by fetch plus hard reset to the
-remote head, every write batch ends with add/commit/push. Authentication is
+remote head, every write or delete ends with add/commit/push. Authentication is
 whatever the user's git already has - an ssh key, a credential helper -
 and GIT_TERMINAL_PROMPT=0 on every call means git fails fast instead of
 hanging on a password prompt inside a tool that never reads one.
@@ -84,8 +84,7 @@ So the ignore machinery is turned off rather than worked around - `add
 --force`, and `clean -fdqx` so an ignored file cannot survive the reset either
 - and the write is confirmed against the COMMIT, not against the working tree.
 What the confirmation compares is git's own object id for the bytes, computed
-here, so one `ls-tree` answers for a whole batch and no filter can sit between
-the question and the answer.
+here, so no filter can sit between the question and the answer.
 
 A committed `.gitattributes` is the same class of thing one step further out:
 it is the remote choosing what every reader's checkout lays down. With '* text
@@ -111,7 +110,6 @@ and `.git` is asked about by `lstat` rather than through.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import os
 import pathlib
@@ -189,11 +187,6 @@ class GitDestination(LocalTreeDestination):
         self.home = pathlib.Path(home) if home else pathlib.Path.home()
         self.slug = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
         self.clone_dir = self.home / ".carryon" / "git" / self.slug
-        self._batching = False
-        # key -> the object ids git would give the bytes just written, held
-        # until there is a commit to compare them against. Ids rather than the
-        # bytes, so a whole Setup tree costs one hash each rather than a copy.
-        self._pending = {}
 
     def _clone_room(self) -> None:
         """Make the clone's own directory, having asked whose it is to make.
@@ -318,8 +311,6 @@ class GitDestination(LocalTreeDestination):
         correctly. One extra fetch on the run that clones is what a single
         answer costs.
         """
-        if self._batching:
-            return  # the batch synced once, before any of its keys
         self._clone_room()
         fresh = not self._cloned()
         if fresh:
@@ -408,8 +399,6 @@ class GitDestination(LocalTreeDestination):
         return "refs/heads/" + (name or "main")
 
     def _commit_push(self, message: str) -> None:
-        if self._batching:
-            return  # the batch commits once, after all of its keys
         # --force, because an ignore rule must not be able to decide what an
         # Archive holds. `add -A` alone is a successful no-op for anything a
         # committed .gitignore or the user's own core.excludesFile matches,
@@ -426,36 +415,12 @@ class GitDestination(LocalTreeDestination):
         self._git_or_die("push", "--quiet", "origin",
                          "HEAD:" + self._push_ref())
 
-    @contextlib.contextmanager
-    def _batch(self, message=None):
-        """One sync before a whole tree operation, one commit after it.
-
-        That batching is the only thing git needs to do differently from the
-        base tree implementations, and doing it this way keeps it the only
-        difference. read_tree used to be re-implemented here to get it, and
-        the copy drifted: it lost the key validation and the containment
-        check the base version does, which is a straight write-anywhere from
-        a listing this class does not control.
-        """
-        self._sync()
-        self._batching = True
-        try:
-            yield
-        finally:
-            self._batching = False
-        if message is not None:
-            self._commit_push(message)
-        # After the commit, never before it: inside the batch there is nothing
-        # to compare against yet, which is why `_confirm_write` defers here
-        # rather than answering per key.
-        self._confirm_pending()
-
     # -- what the commit actually holds ---------------------------------------
 
     def _committed(self) -> dict:
         """{key: object id} for everything at the local HEAD.
 
-        One call for a whole batch. `-z` so a path is NUL-terminated rather
+        `-z` so a path is NUL-terminated rather
         than quoted - git quotes a name with a control character in it, and a
         name is the remote's bytes here as everywhere else in this module.
         A repository with no commit yet answers non-zero, which is an empty
@@ -503,42 +468,25 @@ class GitDestination(LocalTreeDestination):
         the cache ever reaches the Archive.
 
         Against git's own object id rather than a read-back of the working
-        tree, for two reasons. A read-back of the clone passes on the machine
-        that wrote it even when nothing was committed - the ignored file is
-        still sitting there. And an id can be computed from the bytes without
-        a subprocess, so a whole Setup tree is confirmed by one `ls-tree`
-        rather than by one `cat-file` per member.
+        tree: a read-back of the clone passes on the machine that wrote it
+        even when nothing was committed - the ignored file is still sitting
+        there.
         """
-        self._pending[key] = _object_ids(data)
-        if self._batching:
+        stored = self._committed().get(key)
+        if stored in _object_ids(data):
             return
-        self._confirm_pending()
+        raise SystemExit(self._not_stored(
+            key, "is not in the commit at all" if stored is None else
+                 "holds something other than what was written"))
 
     def _confirm_delete(self, key: str) -> bool:
-        """The same question in the other direction: gone from the commit.
-
-        A delete is never inside a batch - only write_tree and read_tree
-        batch, and neither deletes - so there is always a commit to ask.
-        """
+        """The same question in the other direction: gone from the commit."""
         if key not in self._committed():
             return True
         report_skipped(self.describe(), key,
                        "carryon removed it and the commit still holds it, so "
                        "it is still in the Archive")
         return False
-
-    def _confirm_pending(self) -> None:
-        pending, self._pending = self._pending, {}
-        if not pending:
-            return
-        committed = self._committed()
-        for key in sorted(pending):
-            stored = committed.get(key)
-            if stored in pending[key]:
-                continue
-            raise SystemExit(self._not_stored(
-                key, "is not in the commit at all" if stored is None else
-                     "holds something other than what was written"))
 
     def _not_stored(self, key: str, what: str) -> str:
         return (f"{self.describe()} took a write of {key} and the commit "
@@ -571,14 +519,6 @@ class GitDestination(LocalTreeDestination):
     def _list_keys(self, prefix: str) -> list:
         self._sync()
         return self._local_keys(prefix)
-
-    def write_tree(self, prefix: str, src_dir) -> None:
-        with self._batch(f"carryon: write tree {prefix}"):
-            super().write_tree(prefix, src_dir)
-
-    def read_tree(self, prefix: str, dst_dir) -> None:
-        with self._batch():
-            super().read_tree(prefix, dst_dir)
 
     def describe(self) -> str:
         return f"git repository {self.url}"

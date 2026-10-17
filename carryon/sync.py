@@ -2,9 +2,11 @@
 
 This module exists so the two halves of a Snapshot stay distinct all the way
 to the Destination: a Setup goes through the existing fail-closed capture
-engine and lands as a plaintext tree, a History goes through
-discover/pack/encrypt and lands as one object per Session (ADR-0003), and
-only this file sequences the two.
+engine and lands as one sealed object per machine (ADR-0014), a History goes
+through discover/pack/encrypt and lands as one object per Session (ADR-0003),
+and only this file sequences the two. They are both encrypted now and still
+distinct, because what separates them was never the storage - it is that a
+Setup is a replacement and a History accumulates.
 
 Sequences is now the whole of it. The rules each command asks live one module
 down; what is left here is the four commands, the order they ask in, and the
@@ -68,8 +70,8 @@ from .destinations.base import printable
 # Looking unused is the normal state of this band. A name may go only when
 # neither a body below calls it nor a caller says sync.X, which is a question
 # about the whole tree and not one this file can answer about itself.
-from .authentication import (_detached_tag_refusal,  # noqa: F401
-                             _index_setup_entry, _setup_authentication)
+from .authentication import (_index_setup_entry,  # noqa: F401
+                             setup_freshness)
 from .highwater import (_STATE_REPORTED, _begin_command,  # noqa: F401
                         _index_removed_note, _load_state, _no_state,
                         _record_revision, _refuse_on_index_removal,
@@ -88,7 +90,7 @@ from .setup_in import (_declared_paths, _restore_setup_item,  # noqa: F401
                        _setup_target, _setup_writes)
 from .setup_out import (_canon_home, _home_forms,  # noqa: F401
                         _neutralise_manifest, _neutralise_staged_setup,
-                        _push_partial_setup)
+                        _note_plaintext_removed, _push_partial_setup)
 from .stored_setup import (_choose_setup_source,  # noqa: F401
                            _index_setup_names, _machine_name_refusal,
                            _no_setup_source_note, _setup_catalogue,
@@ -175,13 +177,27 @@ def _open_destination(home):
     return cfg, destinations.from_spec(cfg["destination"], home)
 
 
-def _require_master(home) -> bytes:
+def _require_master(home, for_push: bool = False) -> bytes:
+    """The master key, or a refusal naming what to do about not having one.
+
+    `for_push` adds the cure that is only a cure on the way OUT. Since
+    ADR-0014 a Setup is sealed like everything else, so a push with no key
+    writes nothing at all - and a user who wanted a readable Setup rather than
+    a published one has somewhere to put it that is not somebody else's
+    storage. Saying so here is the difference between a refusal that reads as
+    a dead end and one that names the thing they were actually after.
+    """
     master = keyring.fetch_master(home=home)
     if master is None:
-        raise SystemExit(
-            "this machine holds no master key - run `carryon init`, or "
-            "`carryon init --join CODE --dest SPEC` with a code from "
-            "`carryon pair` on an already-paired machine")
+        cure = ("this machine holds no master key - run `carryon init`, or "
+                "`carryon init --join CODE --dest SPEC` with a code from "
+                "`carryon pair` on an already-paired machine")
+        if for_push:
+            cure += (". Everything carryon carries is encrypted, a Setup "
+                     "included, so there is nothing a keyless push could "
+                     "write. For a Setup you can read, `carryon capture --out "
+                     "DIR --apply` writes one here in the clear")
+        raise SystemExit(cure)
     return master
 
 
@@ -370,7 +386,7 @@ def _join(args, home, machine) -> int:
 def _captured_state_reads(effective: dict, want_agents, categories,
                           home) -> list:
     """(item src, path it reads, why) for every path this push's Setup half
-    would read that a Setup must not carry. Empty is clean.
+    would read that a Setup must not carry. Empty means there is no such path.
 
     Run BEFORE the capture engine rather than over the manifest it produces,
     so that on a hit the key is never copied anywhere at all - not into the
@@ -403,22 +419,18 @@ def push(args, home) -> int:
                         else want_categories & set(SETUP_CATEGORIES))
     do_history = want_categories is None or HISTORY in want_categories
 
-    # Only a History is encrypted (ADR-0004), so a Setup-only push must work
-    # with no master key at all - locked keychain, machine never paired.
-    # Without a key the encrypted Index cannot be read or written, so such a
-    # push records nothing there; pull learns of the Setup from the plaintext
-    # tree's own MANIFEST instead.
-    master = (_require_master(home) if do_history
-              else keyring.fetch_master(home=home))
+    # Every push needs the key, History or not (ADR-0014): with both halves
+    # sealed there is nothing a keyless push could write. A machine whose
+    # keychain entry is gone pairs again rather than publishing in the clear.
+    master = _require_master(home, for_push=True)
 
     print(f"{'PUSH PLAN (dry run)' if not apply else 'PUSHING'} -> "
           f"{dest.describe()}\n")
 
     # Before a byte is written anywhere, Setup half included: a push onto an
     # Index this machine has already seen past destroys catalogue entries
-    # rather than merely hiding them. A keyless Setup-only push has no Index
-    # to check, which is ADR-0004's cost and is reported at the end.
-    index = archive.load_index(dest, master) if master is not None else None
+    # rather than merely hiding them.
+    index = archive.load_index(dest, master)
     index_refused = archive.index_refusals(index)
     # A record load_index set aside is still a record: the Archive holds a
     # Session, and the entry describing it is the thing this machine could not
@@ -432,7 +444,7 @@ def push(args, home) -> int:
         name: {refusal.key for refusal in index_refused
                if refusal.catalogue == name}
         for name in ("sessions", "projects")}
-    if index is not None and apply:
+    if apply:
         # Removal first: it is the more specific reading of the same missing
         # number, and it names what actually happened.
         _refuse_on_index_removal(home, cfg["destination"], index, "push")
@@ -443,7 +455,7 @@ def push(args, home) -> int:
         # to change anything worth sealing.
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
-    elif index is not None:
+    else:
         note = (_index_removed_note(home, cfg["destination"], index)
                 or _rollback_note(home, cfg["destination"], index))
         if note:
@@ -477,10 +489,13 @@ def push(args, home) -> int:
             print(f"     ~/{printable(rel)} - {why}")
         print("\nThe fallback master key under ~/.carryon is bare hex that no")
         print("credential pattern matches, and the config beside it names the")
-        print("Destination - so a Setup carrying either would publish them in")
-        print("the Archive's one plaintext half; a file from outside $HOME is")
-        print("one this machine never agreed to publish. Remove the link, or")
-        print("drop the path from `carry` (ADR-0008). Nothing was captured.\n")
+        print("Destination. ADR-0008's rule is about what a capture may READ,")
+        print("so sealing the Setup (ADR-0014) does not answer it: a key")
+        print("carried into the Archive is sealed under ITSELF, which every")
+        print("machine paired here can open, and `carryon capture` writes the")
+        print("same tree in the clear. A file from outside $HOME is one this")
+        print("machine never agreed to publish. Remove the link, or drop the")
+        print("path from `carry` (ADR-0008). Nothing was captured.\n")
     staging_root = why_staging = None
     if setup_categories and not state_reads:
         # The one place a Setup is materialised in the clear, and the
@@ -513,18 +528,14 @@ def push(args, home) -> int:
                     _neutralise_staged_setup(staging, manifest, home)
                 if (setup_categories == set(SETUP_CATEGORIES)
                         and want_agents is None):
-                    # The MAC goes INTO staging before the mirror, so the
-                    # tree and its tag land in one put_setup and the stale-key
-                    # sweep keeps rather than deletes it. A keyless push
-                    # writes no tag - there is no key to derive one from -
-                    # which is ADR-0004's cost, reported below.
-                    if master is not None:
-                        (staging / archive.SETUP_MAC_NAME).write_bytes(
-                            archive.seal_setup_manifest(
-                                master, machine,
-                                archive.setup_tree_manifest(staging), now,
-                                setup_stamp))
-                    archive.put_setup(dest, machine, staging)
+                    # The stamp goes INTO staging before the pack, so the tree
+                    # and the value that says which tree it is are sealed
+                    # together in one object (ADR-0014).
+                    (staging / archive.SETUP_STAMP_NAME).write_bytes(
+                        archive.stamp_bytes(now, setup_stamp))
+                    _note_plaintext_removed(
+                        machine,
+                        archive.put_setup(dest, master, machine, staging))
                 else:
                     # A partial Setup overlays rather than mirrors, so the
                     # items not selected this time survive in the Archive -
@@ -686,25 +697,23 @@ def push(args, home) -> int:
             index["projects"][cwd] = meta
             index_changed = True
 
-    if apply and setup_pushed and index is not None:
-        # authenticated is unconditionally True on this path: index is only
-        # non-None when a master key is held, and every keyed Setup push -
-        # full or partial - wrote a SETUP.mac above (or refused). This flag
-        # is what a pull checks the MAC's presence against, and it lives in
-        # the encrypted Index precisely because the MAC file itself sits in
-        # the plaintext half an attacker can strip (ADR-0009). The stamp is
-        # here for the same reason and answers the next question after
-        # 'authenticated': which of the trees that verify is the current one.
-        index["setups"][machine] = {"pushed_at": now, "authenticated": True,
-                                    "stamp": setup_stamp}
+    if apply and setup_pushed:
+        # The seal already says a key holder wrote this Setup (ADR-0014).
+        # What the Index has to carry is the question no seal answers: WHICH
+        # of the Setups that open is the current one.
+        index["setups"][machine] = {"pushed_at": now, "stamp": setup_stamp}
         index_changed = True
     if apply and index_changed:
         archive.save_index(dest, master, index)
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
 
-    # The report, in one place, so the two halves' different promises stay
-    # side by side: a Setup is clean or refused, a History is encrypted.
+    # The report, in one place, so the two halves stay side by side. Both are
+    # encrypted (ADR-0014); they differ in the unit they are refused in,
+    # which is what a user has to read
+    # off this report: a Setup is a replacement and lands whole or not at all,
+    # while a History accumulates, so it reports per Session and carries the
+    # rest (ADR-0001, ADR-0002).
     print()
     print("-" * 74)
     verb = "pushed" if apply else "to push"
@@ -783,10 +792,14 @@ def push(args, home) -> int:
                   "state or a file outside $HOME (named above); nothing was "
                   "captured and nothing was written to the Archive's Setup")
         elif setup_code != 0:
-            print("Setup: REFUSED - a credential is in the capture set (see "
+            # Not a credential: since ADR-0014 a credential is named and
+            # carried, never refused. What gets here is a staging directory
+            # carryon will not write into, or capture's own refusal.
+            print("Setup: REFUSED - the Setup could not be staged (named "
                   "above); nothing was written to the Archive's Setup")
         else:
-            print(f"Setup: {verb} to setups/{machine}/ (clean)")
+            print(f"Setup: {verb} to {archive.setup_key(machine)} "
+                  "(encrypted)")
             if setup_withheld:
                 print(f"  {setup_withheld} path(s) withheld from the MANIFEST "
                       "- they name a directory on this machine and an Archive "
@@ -799,17 +812,12 @@ def push(args, home) -> int:
             if setup_undecodable:
                 print(f"  {len(setup_undecodable)} file(s) WITHHELD - not "
                       "UTF-8, so carryon cannot read one to tell whether it "
-                      "spells this machine's home out, and the Archive's one "
-                      "plaintext half names no machine (ADR-0006). They "
-                      "stayed here and a pull elsewhere will be without them; "
-                      "the rest of the Setup went:")
+                      "spells this machine's home out, and an Archive names "
+                      "no machine's directories (ADR-0006). They stayed here "
+                      "and a pull elsewhere will be without them; the rest "
+                      "of the Setup went:")
                 for rel in setup_undecodable:
                     print(f"  -- {rel}")
-            if apply and setup_pushed and master is None:
-                print("  warning: pushed without a master key, so this Setup "
-                      "carries no authentication tag and cannot be verified "
-                      "by the machines that pull it (ADR-0004; the encrypted "
-                      "Index was not touched)")
     else:
         # The same line pull prints for the same skip, because the reasoning
         # cuts both ways: a leg that merely vanishes reads as a push that
@@ -1339,8 +1347,7 @@ def pull(args, home) -> int:
             setups_unreachable = str(exc)
         index_names = _index_setup_names(index)
         index_absent = archive.index_is_absent(index)
-        source, unvouched, ignored = _choose_setup_source(setups, index_names,
-                                                          index_absent)
+        source, ignored = _choose_setup_source(setups)
         if setups_unreachable is not None:
             source = None
             setup_refused += 1
@@ -1351,9 +1358,9 @@ def pull(args, home) -> int:
                   "Destination is reachable.")
         elif rolled_back is not None:
             # A rollback only WARNED, and the Setup half of a pull is
-            # executable content. Replay a superseded Index, its tree and its
-            # SETUP.mac together and every check downstream agrees - the tag
-            # verifies, the stamp matches the Index, the tree matches the
+            # executable content. Replay a superseded Index and its sealed
+            # Setup together and every check downstream agrees - the seal
+            # opens, the stamp matches the Index, the tree matches the
             # manifest - so a hook the user removed between two pushes comes
             # back at exit 0. Nothing in the Archive can tell that from the
             # current state; the one party that can is this machine's own
@@ -1388,8 +1395,48 @@ def pull(args, home) -> int:
                   f"deliberate, drop this Destination's entry from "
                   f"{_state_path(home)} to accept it.")
         elif not setups:
-            print("\nSetup: none in the Archive" if not unusable
-                  else "\nSetup: nothing under setups/ that carryon can use")
+            # Three cases reach here and they do not give the same answer.
+            # The sentence told two of them apart already while the exit
+            # status told none of them apart, so all three exited 0.
+            #
+            # An Archive with nothing under setups/ and no record of one is a
+            # pull that did all it was asked - ADR-0002 puts a Setup-less
+            # Archive squarely inside normal, and a status that fired on it
+            # would be one users learn to ignore.
+            #
+            # Every key under setups/ refused is a Setup carryon was offered
+            # and would not use, which is the sentence `setup_denied` exists
+            # for and the same fact the summary reports as 'refused and not
+            # written'. ADR-0014 made it ordinary rather than exotic: a
+            # pre-sealing Archive is a directory per machine and every one of
+            # them is refused, so this is now what a whole Archive from
+            # before the change looks like.
+            #
+            # And the Index recording Setup pushes for machines the Archive
+            # holds nothing for is the deletion `index_names` was added to
+            # _choose_setup_source to catch - the same downgrade, arriving by
+            # a shorter route. Deleting the object without planting anything
+            # beside it leaves `setups` empty, so that reasoning never ran
+            # and the Setup half of a pull could be denied outright at exit 0
+            # by anyone with write access to the Destination. A key holder's
+            # record of a Setup is a statement the Destination cannot author
+            # (ADR-0009), and an Archive contradicting it is the Archive's
+            # problem to report, not carryon's to pass over in silence.
+            setup_denied = bool(unusable or index_names)
+            if unusable:
+                print("\nSetup: nothing under setups/ that carryon can use")
+            elif index_names:
+                missing = ", ".join(printable(m) for m in index_names)
+                setup_refused += 1
+                print("\nSetup: none restored - the encrypted Index records "
+                      f"Setup pushes for {missing}, and the Archive holds an "
+                      "object for none of them. The Index is sealed, so that "
+                      "record was written by a master key holder and this "
+                      "Destination is missing something it was given. Push "
+                      "the Setup again from a machine that holds the master "
+                      "key, or investigate the Destination.")
+            else:
+                print("\nSetup: none in the Archive")
         elif source is None:
             # The Archive holds Setups and carryon will use none of them - a
             # vouched tree deleted and an unvouched one left under another
@@ -1411,52 +1458,24 @@ def pull(args, home) -> int:
             # unprintable or unexpected in them.
             print(f"  refuse   a stored Setup named '{printable(name)}': {why}")
         if source is not None:
-            if unvouched:
-                print(f"  note     nothing in the encrypted Index vouches for "
-                      f"'{printable(source)}' - a keyless Setup push (ADR-0004) "
-                      "looks like "
-                      "this, and so does a planted one")
-                if archive.index_is_absent(index):
-                    # The residue nothing can decide, said out loud rather than
-                    # left implicit in the line above. This machine has never
-                    # read an Index here - or _refuse_on_index_removal would
-                    # have stopped the pull - so a deleted Index and an Archive
-                    # that never had one are the same two objects on the same
-                    # Destination, and the user is the only party who knows
-                    # which of the two they are looking at.
-                    #
-                    # 'Nothing left to check against' is the accurate reading only
-                    # once the stored Setup's own tag has been asked, which
-                    # happens below: a tag is a key holder's statement and a
-                    # keyless Archive carries none, so the two ARE separable when
-                    # one is there. This line prints before that read, so it says
-                    # what is left rather than claiming nothing is.
-                    print("  note     and the Archive serves no Index at all, so "
-                          "there is no master key holder's record here to check "
-                          "any of it against. This machine has never read one at "
-                          "this Destination either, which would have settled it; "
-                          "what is left is whatever authentication tag the stored "
-                          "Setup carries, and a keyless Archive (ADR-0004) "
-                          "carries none")
             for other in ignored:
                 print(f"  ignored  a stored Setup named '{printable(other)}' - "
-                      "no master key holder ever pushed a Setup under that name, "
-                      "so its timestamp cannot win")
+                      "no master key holder ever pushed a Setup under that "
+                      "name, so nothing here says it is yours to restore")
             with tempfile.TemporaryDirectory(prefix="carryon-setup-") as staging_s:
                 staging = pathlib.Path(staging_s)
                 manifest = why = refusal = None
                 try:
-                    archive.get_setup(dest, source, staging)
+                    archive.get_setup(dest, master, source, staging)
                 except archive.ObjectRefused as exc:
                     why = str(exc)
                 else:
-                    # Authentication runs on the materialised tree, before a byte
+                    # Freshness runs on the materialised tree, before a byte
                     # moves towards $HOME - the staging dir is carryon's own and
-                    # is discarded with the refusal.
-                    refusal, note = _setup_authentication(staging, master,
-                                                          source, setups[source])
-                    if note:
-                        print(f"  note     {note}")
+                    # is discarded with the refusal. Authorship needed no check
+                    # here: get_setup above unsealed it (ADR-0014).
+                    refusal = setup_freshness(staging, source,
+                                              setups[source])
                     if refusal is None:
                         manifest, why = _stored_manifest(staging)
                 if refusal is not None:

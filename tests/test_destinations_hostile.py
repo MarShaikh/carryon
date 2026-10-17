@@ -69,6 +69,9 @@ from tests.timeouts import time_limit  # noqa: E402
 SECRET = b"-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n"
 HONEST = b'{"model": "opus"}'
 SETUP_PREFIX = "carryon/setups/mac"
+# Invented, and the only key this module needs: ADR-0014 made put_setup and
+# get_setup take one, and nothing here is about what a real key looks like.
+MASTER = bytes(range(32))
 
 # A forged report line, spelled the way pull spells the real one.
 FORGERY = "  Setup: 6 file(s) written, 0 refused"
@@ -415,18 +418,6 @@ def test_a_hard_link_is_not_an_archive_object(tmp_path, capsys):
     assert "CLAUDE.md" in listed and "CLAUDE.md" in read
 
 
-def test_a_hard_link_never_reaches_staging(tmp_path):
-    dest, setup = archive_with(tmp_path)
-    os.link(secret_file(tmp_path), setup / "CLAUDE.md")
-    staging = tmp_path / "staging"
-
-    dest.read_tree(SETUP_PREFIX, staging)
-
-    staged = {p.name: p.read_bytes() for p in staging.rglob("*")
-              if p.is_file()}
-    assert staged == {"settings.json": HONEST}
-
-
 def test_the_archive_objects_carryon_writes_are_still_readable(tmp_path):
     """The regression guard on the hard-link rule: nothing carryon writes has
     a second link, so no ordinary object may be caught by it."""
@@ -498,36 +489,27 @@ def test_a_directory_swapped_mid_read_cannot_redirect_it(tmp_path):
 # --- a staged symlink must not be published ----------------------------------
 
 
-def test_write_tree_does_not_publish_the_target_of_a_staged_symlink(tmp_path):
-    """The last is_file() in the layer that follows a link. A push reading
-    through one would put the target's bytes in the Archive's one plaintext
-    half, past the home-path neutralisation that deliberately skips
-    symlinks."""
+def test_put_setup_does_not_publish_through_a_staged_symlink(tmp_path):
+    """`is_file()` follows a link, so a staged one would publish its target's
+    bytes - past the home-path neutralisation that deliberately leaves links
+    alone (ADR-0006). Measured inside the seal: the link's target must not be
+    a member of the tar, which a listing of one object cannot say.
+    """
     dest = DirectoryDestination(tmp_path / "archive")
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "settings.json").write_bytes(HONEST)
     os.symlink(secret_file(tmp_path), staging / "CLAUDE.md")
 
-    dest.write_tree(SETUP_PREFIX, staging)
+    archive.put_setup(dest, MASTER, "mac", staging)
 
-    assert dest.read(SETUP_PREFIX + "/CLAUDE.md") is None
-    assert dest.list(SETUP_PREFIX + "/") == [SETUP_PREFIX + "/settings.json"]
-
-
-def test_put_setup_does_not_publish_or_sweep_through_a_staged_symlink(tmp_path):
-    """put_setup builds its stale-key set from the same is_file() walk, so a
-    staged link both published its target and kept the published copy alive
-    through the sweep."""
-    dest = DirectoryDestination(tmp_path / "archive")
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    (staging / "settings.json").write_bytes(HONEST)
-    os.symlink(secret_file(tmp_path), staging / "CLAUDE.md")
-
-    archive.put_setup(dest, "mac", staging)
-
-    assert dest.list(SETUP_PREFIX + "/") == [SETUP_PREFIX + "/settings.json"]
+    assert dest.list("carryon/setups/") == ["carryon/setups/mac.tar.enc"]
+    opened = tmp_path / "opened"
+    archive.get_setup(dest, MASTER, "mac", opened)
+    assert [str(p.relative_to(opened)) for p in sorted(opened.rglob("*"))
+            if p.is_file()] == ["settings.json"], \
+        "a staged symlink published its target's bytes into the Setup"
+    assert SECRET not in dest.read("carryon/setups/mac.tar.enc")
 
 
 # --- git gets the same rules --------------------------------------------------
@@ -553,18 +535,19 @@ def test_git_reports_an_object_it_cannot_read(tmp_path, capsys):
     assert "pipe.md" in capsys.readouterr().out
 
 
-def test_git_refuses_a_hard_link_planted_in_the_clone(tmp_path, capsys):
-    """Planted inside a batch, which is the window a shared clone directory
-    actually has: read_tree syncs once and then reads every key without
-    re-syncing, so `git clean` is not what is refusing this one."""
+def test_git_refuses_a_hard_link_planted_in_the_clone(tmp_path, capsys,
+                                                     monkeypatch):
+    """Planted between the sync and the read, which is the window a shared
+    clone directory actually has. The sync is stubbed out so that `git clean`
+    is not what is refusing this one: the walk's own rule has to."""
     dest = make_git_dest(tmp_path)
     capsys.readouterr()
+    monkeypatch.setattr(dest, "_sync", lambda: None)
 
-    with dest._batch():
-        os.link(secret_file(tmp_path),
-                dest.clone_dir / "carryon" / "setups" / "mac" / "CLAUDE.md")
-        assert dest.read(SETUP_PREFIX + "/CLAUDE.md") is None
-        assert "CLAUDE.md" in capsys.readouterr().out
+    os.link(secret_file(tmp_path),
+            dest.clone_dir / "carryon" / "setups" / "mac" / "CLAUDE.md")
+    assert dest.read(SETUP_PREFIX + "/CLAUDE.md") is None
+    assert "CLAUDE.md" in capsys.readouterr().out
 
 
 def test_git_write_is_still_atomic_and_committed(tmp_path):
@@ -580,21 +563,22 @@ def test_git_write_is_still_atomic_and_committed(tmp_path):
         "a tmp file was left in the clone for git to commit"
 
 
-def test_a_tree_of_refusals_still_stages_the_one_real_object(tmp_path):
+def test_a_prefix_of_refusals_still_serves_the_one_real_object(tmp_path):
     """Every refusal above is a report line or a SystemExit; none of them is
     an OSError escaping the layer, and none of them costs the honest object
-    beside it."""
+    beside it. Listed and then read key by key, the way every caller walks a
+    prefix."""
     dest, setup = archive_with(tmp_path)
     os.mkfifo(setup / "pipe.md")
     os.symlink(setup / "nowhere", setup / "gone.md")
     os.link(secret_file(tmp_path), setup / "linked.md")
-    staging = tmp_path / "staging"
 
-    with time_limit(what="read_tree never came back from the pipe in it"):
-        dest.read_tree(SETUP_PREFIX, staging)  # must not raise, must return
+    with time_limit(what="a read never came back from the pipe beside it"):
+        served = {key: dest.read(key)
+                  for key in dest.list(SETUP_PREFIX + "/")}
 
-    assert {p.name: p.read_bytes() for p in staging.rglob("*")
-            if p.is_file()} == {"settings.json": HONEST}
+    assert {k: v for k, v in served.items() if v is not None} == \
+        {SETUP_PREFIX + "/settings.json": HONEST}
 
 
 # =============================================================================
@@ -902,10 +886,8 @@ def test_a_dirty_clone_left_by_an_interrupted_push_does_not_reach_the_archive(
 
 def test_a_tree_that_changes_between_two_fetches_answers_with_the_second(
         tmp_path):
-    """Every unbatched operation fetches, so a remote is free to change under
-    a run. What matters is that the change is a change and not a crash, and
-    that a batch - which syncs once and then reads every key - is not
-    re-synced underneath itself."""
+    """Every operation fetches, so a remote is free to change under a run.
+    What matters is that the change is a change and not a crash."""
     origin = bare_origin(tmp_path)
     dest = GitDestination(str(origin), home=tmp_path / "home")
     dest.write("carryon/setups/mac/settings.json", HONEST)
@@ -916,11 +898,6 @@ def test_a_tree_that_changes_between_two_fetches_answers_with_the_second(
 
     assert dest.read("carryon/setups/mac/settings.json") == \
         b'{"model": "haiku"}'
-
-    with dest._batch():
-        other.write("carryon/setups/mac/settings.json", b'{"model": "sonnet"}')
-        assert dest.read("carryon/setups/mac/settings.json") == \
-            b'{"model": "haiku"}', "a batch re-synced in the middle of itself"
 
 
 def test_a_repository_that_is_not_a_repository_is_a_sentence(tmp_path):
@@ -970,15 +947,11 @@ def test_core_symlinks_false_does_not_turn_a_committed_link_into_a_read(
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
     dest = GitDestination(str(origin), home=tmp_path / "home")
 
-    staging = tmp_path / "staging"
-    dest.read_tree(SETUP_PREFIX, staging)
-    staged = {p.name: p.read_bytes()
-              for p in staging.rglob("*") if p.is_file()}
-    assert staged.get("settings.json") == HONEST
-    assert SECRET not in staged.values(), \
-        "core.symlinks=false read a committed link through to its target"
-    for content in staged.values():
-        assert SECRET not in content
+    served = {key: dest.read(key) for key in dest.list(SETUP_PREFIX + "/")}
+    assert served.get(SETUP_PREFIX + "/settings.json") == HONEST
+    for content in served.values():
+        assert content is None or SECRET not in content, \
+            "core.symlinks=false read a committed link through to its target"
 
 
 def test_a_committed_symlink_at_a_directory_position_hides_what_is_under_it(
@@ -1415,10 +1388,10 @@ def test_a_hostile_listing_is_refused_key_by_key_not_wholesale(tmp_path,
 def test_a_listing_that_changes_between_two_calls_in_one_run(tmp_path,
                                                              monkeypatch,
                                                              capsys):
-    """A remote is free to answer differently twice, and read_tree lists and
-    then reads. A key that has gone by the time it is read is absent, which
-    is the ordinary silent case; what may not happen is the run ending on
-    it."""
+    """A remote is free to answer differently twice, and every walk of a
+    prefix lists and then reads. A key that has gone by the time it is read
+    is absent, which is the ordinary silent case; what may not happen is the
+    run ending on it."""
     store = install_rclone_store(tmp_path, monkeypatch)
     dest = RcloneDestination("fakeremote:archive")
     dest.write("carryon/setups/mac/settings.json", HONEST)
@@ -1427,12 +1400,11 @@ def test_a_listing_that_changes_between_two_calls_in_one_run(tmp_path,
                    b"carryon/setups/mac/gone.json\n"))
 
     assert dest.list() == ["carryon/setups/mac/settings.json"]
-    staging = tmp_path / "staging"
-    dest.read_tree(SETUP_PREFIX, staging)   # the second listing offers a ghost
+    # the second listing offers a ghost
+    served = {key: dest.read(key) for key in dest.list(SETUP_PREFIX + "/")}
 
-    staged = {p.name: p.read_bytes()
-              for p in staging.rglob("*") if p.is_file()}
-    assert staged == {"settings.json": HONEST}
+    assert served == {"carryon/setups/mac/settings.json": HONEST,
+                      "carryon/setups/mac/gone.json": None}
 
 
 def test_an_empty_listing_that_is_really_a_refusal_is_not_an_empty_archive(
@@ -2072,25 +2044,6 @@ def test_a_commit_that_never_happened_stops_the_write_by_name(tmp_path,
     assert "carryon/index.enc" in message and "commit" in message
     assert (dest.clone_dir / "carryon" / "index.enc").read_bytes() == b"sealed", \
         "the clone was serving the bytes, so a local read-back proves nothing"
-
-
-def test_a_tree_write_is_confirmed_after_the_batch_commits(tmp_path,
-                                                           monkeypatch):
-    """Inside a batch there is nothing to compare against yet, so the
-    confirmation defers to the end of it - and still has to fire. A Setup is
-    pushed as a tree, so a check that only worked per blob would cover the
-    Index and none of the Setup."""
-    origin = bare_origin(tmp_path)
-    dest = GitDestination(str(origin), home=tmp_path / "home")
-    staging = tmp_path / "staging"
-    (staging / "claude").mkdir(parents=True)
-    (staging / "claude" / "settings.json").write_bytes(HONEST)
-    monkeypatch.setattr(GitDestination, "_commit_push",
-                        lambda self, message: None)
-
-    with pytest.raises(SystemExit) as exc:
-        dest.write_tree("carryon/setups/mac", staging)
-    assert "carryon/setups/mac/claude/settings.json" in str(exc.value)
 
 
 def test_a_delete_the_commit_did_not_take_is_named_and_answered(tmp_path,

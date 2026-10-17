@@ -67,7 +67,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import cli, config, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, SETUP_CATEGORIES, build_home_a, build_home_b, file_keyring,
-    link_home, ns, paired, stored_setup)
+    link_home, ns, paired, stored_setup, tamper_with_setup)
 from tests.timeouts import time_limit  # noqa: E402
 
 # Nested past any interpreter's recursion limit. json.loads answers this with
@@ -323,22 +323,31 @@ def test_a_pull_that_restored_its_setup_exits_zero(paired, capsys):
     assert (paired.home_b / ".claude" / "settings.json").exists()
 
 
-def test_a_pull_whose_setup_failed_authentication_does_not_exit_zero(
-        paired, capsys):
-    """A forged tree: settings.json is a declared path whose hooks are shell
-    commands, so editing the stored copy is the attack the tag exists for. The
-    refusal was correct and printed - and the process exited 0, so a script
-    that pulls and then trusts its Setup could not tell this run from one that
-    restored."""
-    (stored_setup(paired.dest_root, "machine-a")
-     / "claude" / "settings.json").write_text(EVIL_SETTINGS)
+def test_a_pull_whose_setup_was_refused_does_not_exit_zero(paired, capsys):
+    """The refusal was correct and printed - and the process exited 0, so a
+    script that pulls and then trusts its Setup could not tell this run from
+    one that restored. That defect, and this test, are about the exit status
+    rather than about any particular attack.
+
+    Which is why only the trigger changed under ADR-0014. It used to edit
+    settings.json in the stored tree, because a Setup was plaintext and its
+    hooks are shell commands the agent executes; a sealed object cannot be
+    edited that way, so the refusal is provoked by tampering with the
+    ciphertext instead - the one thing an attacker can still do to it.
+
+    The old spelling of this test now runs against `stored_setup`, which since
+    ADR-0014 is a scratch directory rather than the Destination, so the edit
+    reached nothing and the pull restored happily. Worth saying because that
+    failure mode is silent in the other direction: a test written that way
+    passes while asserting nothing.
+    """
+    tamper_with_setup(paired.dest_root)
 
     code = sync.pull(ns(apply=True), paired.home_b)
     report = capsys.readouterr().out
 
     assert "refuse" in report, report
-    assert code == 2, (
-        "a Setup refused on authentication reported success:\n" + report)
+    assert code == 2, ("a refused Setup reported success:\n" + report)
 
 
 def test_a_dry_run_that_would_refuse_a_setup_says_so_in_its_status(paired,
@@ -347,8 +356,7 @@ def test_a_dry_run_that_would_refuse_a_setup_says_so_in_its_status(paired,
     that found something it would refuse is 1, an applied run that refused is
     2. A dry run is what a script runs to decide whether to run the real one.
     """
-    (stored_setup(paired.dest_root, "machine-a")
-     / "claude" / "settings.json").write_text(EVIL_SETTINGS)
+    tamper_with_setup(paired.dest_root)
 
     code = sync.pull(ns(apply=False), paired.home_b)
     report = capsys.readouterr().out

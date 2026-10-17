@@ -7,15 +7,16 @@ the master key - the Destination learns object counts and sizes, never a
 Session UUID or a project path - and the Index is an encrypted blob read first
 on every pull.
 
-The one non-obvious decision: Setups are stored as plaintext trees while
-everything else is encrypted. A Setup is clean by construction - ADR-0001 has
-carryon refuse to produce one containing a credential - and plaintext is what
-makes a git Destination worth having: each push diffs as readable changes to
-settings and skills instead of an opaque blob churning. A History has neither
-property, so it takes the encrypted path without exception. Plaintext is not
-the same as unauthenticated, though: a Setup's content is executable (hooks,
-skills), so a keyed push MACs a manifest of the tree into SETUP.mac and the
-encrypted Index records that it did - see the Setup-authentication section.
+There is no non-encrypted half (ADR-0014): every object a push writes
+is sealed, the Setup included, and the only bytes carryon ever puts at a
+Destination in the clear are the Probe's, which name no machine, no home and
+no time precisely so that they can be.
+
+A Setup is one sealed object per machine, keyed setups/<machine>.tar.enc
+and sealed under setup_label(machine). What that cannot carry is WHEN it was
+pushed - a versioned Destination keeps every sealed Setup it has ever held and
+all of them open - so the Index's stamp is what says which one is current, and
+the freshness check is the door that uses it.
 
 Every encrypted object is sealed under a *label* - its logical identity, the
 same string its name is HMACed from - so a Destination cannot serve one
@@ -36,7 +37,7 @@ import tarfile
 from typing import NamedTuple
 
 from . import crypto
-from .destinations.base import printable, require_key
+from .destinations.base import is_inside, printable, require_key
 
 PREFIX = "carryon"
 INDEX_KEY = PREFIX + "/index.enc"
@@ -72,6 +73,16 @@ class ObjectRefused(SystemExit):
 
     The Index is the one object with no such option, and load_index raises a
     plain SystemExit for it: there is nothing to skip on to.
+    """
+
+
+class SetupMissing(ObjectRefused):
+    """The Archive holds no Setup object for this machine at all.
+
+    Its own type because a partial push answers it differently from every
+    other refusal: an absent Setup with no Index record of one is a first
+    push, while one that will not open, or a Destination that failed to
+    serve it, is a Setup the push would be overwriting blind.
     """
 
 
@@ -787,8 +798,8 @@ def _tar_files(tar_bytes: bytes, label: str):
             f"not a tar carryon can read ({why}). The seal proves a master "
             "key holder wrote those bytes, so this is damage at the "
             "Destination rather than tampering - nothing was read from it. "
-            "Push the Session again from a machine that still holds it, or "
-            "restore an earlier copy of the Archive.")
+            "Push it again from a machine that still holds it, or restore "
+            "an earlier copy of the Archive.")
 
 
 def tar_members(tar_bytes: bytes, what=None):
@@ -834,10 +845,63 @@ def tar_members(tar_bytes: bytes, what=None):
                 f"{why}. The seal proves a master key holder wrote those "
                 "bytes, so this is an Archive with something wrong in it "
                 "rather than an attack - nothing was read from it, and "
-                "nothing it holds was written. Push the Session again from a "
-                "machine that still holds it, or restore an earlier copy of "
-                "the Archive.")
+                "nothing it holds was written. Push it again from a machine "
+                "that still holds it, or restore an earlier copy of the "
+                "Archive.")
     yield from walk
+
+
+def pack(entries) -> bytes:
+    """(relative path, bytes) pairs as one tar, with nothing of this machine
+    in it.
+
+    The packing side of `tar_members`, and it lives here for that function's
+    own reason: a call site does not get to spell the tar. It was `history.
+    _tar_bytes`, private to the half that packs Sessions, while the Setup
+    half published a directory - so sealing the Setup would have grown a
+    second spelling of a format both halves now share.
+
+    Normalised metadata, which is not cosmetic: identical content packs to
+    identical bytes, so an object's size and hash say nothing about the owner,
+    the mode or the clock of the machine that pushed it.
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for rel, data in entries:
+            info = tarfile.TarInfo(rel)
+            info.size = len(data)
+            info.mtime = 0
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def unpack_into(tar_bytes: bytes, dst_dir, what=None) -> int:
+    """Write every member of a stored tar below dst_dir; returns the count.
+
+    `tar_members` has already refused the object whole if any member is
+    named something that walks out of a tree, and it does that before the
+    first pair is handed out - so nothing is written from a tar that will not
+    finish. The resolved check below is the second question and not the same
+    one: every check up there is lexical, and a symlinked directory already
+    standing inside dst_dir turns a perfectly well-shaped member name into a
+    write somewhere else.
+    """
+    dst_dir = pathlib.Path(dst_dir)
+    written = 0
+    for name, data in tar_members(tar_bytes, what):
+        target = dst_dir / name
+        if not is_inside(dst_dir, target):
+            raise ObjectRefused(
+                f"a member of {printable(str(what))} lands outside the "
+                f"directory it is being read into - refusing to write through "
+                f"it. Nothing more was read from that object.")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        written += 1
+    return written
 
 
 def put_session(dest, master_key: bytes, uuid: str, tar_bytes: bytes,
@@ -863,202 +927,177 @@ def get_project(dest, master_key: bytes, cwd: str, object_key: str) -> bytes:
     return _get_object(dest, master_key, object_key, project_label(cwd))
 
 
-# --- Setups: plaintext trees, one per machine --------------------------------
+# --- Setups: one sealed object per machine (ADR-0014) -------------------------
+#
+# It was a plaintext tree, browsable with nothing but Destination access, and
+# the reason was ADR-0004: a Setup-only push needed no master key, so there was
+# nothing to seal it with. ADR-0014 withdraws that, and the Setup becomes what
+# a Session already is - one sealed tar - so the Archive holds one idea of what
+# stored content looks like rather than two.
+#
+# The machine name stays in the clear in the key, where a Session's UUID is an
+# HMAC. That is a deliberate, narrower choice than it could be: the pull leg
+# discovers which machines an Archive holds by LISTING (stored_setup.
+# _setup_catalogue), and a name nobody can read is a name nobody can offer the
+# user. The name says nothing about the contents.
 
 
 def setup_prefix(machine: str) -> str:
+    """A machine's place under SETUPS_PREFIX: the stem of its sealed key, and
+    the directory a pre-ADR-0014 plaintext Setup sits in, which a pull names
+    when it refuses one and put_setup sweeps."""
     return SETUPS_PREFIX + machine
 
 
-def put_setup(dest, machine: str, local_dir) -> None:
-    """Make the Archive's Setup for this machine match local_dir exactly.
+def setup_key(machine: str) -> str:
+    return setup_prefix(machine) + ".tar.enc"
 
-    Stale keys are deleted after the new tree is written: the Archive keeps
-    the *most recent* Setup per machine, so a skill deleted locally must not
-    resurrect on the next pull.
 
-    The wanted set is built the way write_tree builds its writes, symlink
-    exclusion included. Two walks with different ideas of what a file is put
-    a staged link's published target into `wanted` and kept the sweep from
-    ever removing it.
+def put_setup(dest, master_key: bytes, machine: str, local_dir) -> int:
+    """Seal the staged Setup and store it as ONE object for this machine.
+
+    One object replacing one object needs no stale-key sweep: a skill deleted
+    locally cannot resurrect on the next pull because it is not in the tar.
+
+    One sweep is left, and it is not about staleness. An Archive pushed
+    before ADR-0014 holds this machine's Setup as a plaintext tree under
+    setups/<machine>/, which the sealed object does not overwrite because it
+    lives at a different key. Leaving it would keep readable at the
+    Destination the very Setup ADR-0014 exists to hide. It is removed after
+    the sealed object is written, so a failed write never leaves the machine
+    with no Setup at all, and the count comes back for the report.
+
+    The walk still excludes symlinks, for ADR-0006's reason: home-path
+    neutralisation deliberately leaves links alone, so publishing one would
+    publish its target's bytes past the rewrite.
     """
-    prefix = setup_prefix(machine)
-    dest.write_tree(prefix, local_dir)
-
     local_dir = pathlib.Path(local_dir)
-    wanted = {prefix + "/" + p.relative_to(local_dir).as_posix()
-              for p in local_dir.rglob("*")
-              if p.is_file() and not p.is_symlink()}
-    for key in dest.list(prefix + "/"):
-        if key not in wanted:
-            dest.delete(key)
+    entries = []
+    for path in sorted(p for p in local_dir.rglob("*")
+                       if p.is_file() and not p.is_symlink()):
+        entries.append((path.relative_to(local_dir).as_posix(),
+                        path.read_bytes()))
+    dest.write(setup_key(machine),
+               crypto.seal(pack(entries), master_key, setup_label(machine)))
+    plaintext = dest.list(setup_prefix(machine) + "/")
+    for key in plaintext:
+        dest.delete(key)
+    return len(plaintext)
 
 
-def get_setup(dest, machine: str, local_dir) -> None:
+def get_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
     """Materialise a stored Setup under local_dir, or refuse it by name.
 
-    read_tree treats the Destination's own listing as input and refuses a key
-    that escapes its root, and the local filesystem refuses names it cannot
-    hold; both arrive here as exceptions with no bearing on the rest of a
-    pull. They are turned into one refusal so the caller can report this
-    Setup as unreadable and still finish - the Setup half runs last, so an
-    abort here strands a $HOME that already has a History in it.
+    Every way this can fail is the Destination's answer about ONE Setup, and
+    the caller has to be able to report it and still finish - the Setup half
+    runs last, so an abort here strands a $HOME that already has a History in
+    it. So they are all one refusal: a transport that syncs on the READ path
+    answers a dead remote with SystemExit (GitDestination's _git_or_die), a
+    seal that does not open is CryptoError, and the local filesystem refuses
+    names it cannot hold with OSError.
 
-    The listing sits inside the guard with the read. A listing is the
-    Destination's answer too, so whatever a transport can raise while
-    producing one belongs to this Setup rather than to the whole pull.
-    SystemExit is in the guard for the same reason: a transport that syncs
-    on the READ path answers a dead remote with one (GitDestination's
-    _git_or_die), and that too is the Destination's answer about this Setup.
-    ObjectRefused passes through first - it IS a SystemExit, and rewrapping
-    our own refusal would bury the sentence that names the cause.
+    The seal is checked against `setup_label(machine)`, which binds the bytes
+    to the machine as the Index spells it - so an Archive that serves one
+    machine's Setup under another's key is refused rather than restored.
+    ObjectRefused passes through first: it IS a SystemExit, and rewrapping
+    carryon's own refusal would bury the sentence naming the cause.
     """
-    prefix = setup_prefix(machine)
+    key = setup_key(machine)
     try:
-        if not dest.list(prefix + "/"):
-            raise ObjectRefused(
-                f"the Archive holds no Setup for machine '{machine}'")
-        dest.read_tree(prefix, local_dir)
+        blob = dest.read(key)
     except ObjectRefused:
         raise
     except (ValueError, OSError, SystemExit) as exc:
         raise ObjectRefused(
-            f"the stored Setup for machine '{machine}' could not be laid out "
-            f"for reading: {exc}")
+            f"the Destination failed while serving the Setup for machine "
+            f"'{printable(machine)}': {exc}")
+    if blob is None:
+        raise SetupMissing(
+            f"the Archive holds no Setup for machine '{printable(machine)}'")
+    try:
+        tar_bytes = crypto.unseal(blob, master_key, setup_label(machine))
+    except crypto.CryptoError as exc:
+        # Tampering or damage, not a wrong key: whoever got here opened the
+        # Index with this key already, under a label of its own (ADR-0009).
+        raise ObjectRefused(
+            f"the stored Setup for machine '{printable(machine)}' failed its "
+            f"integrity check: {exc} The key in use already opened this "
+            "Archive's Index, so this is tampering or corruption at the "
+            "Destination rather than a wrong key - nothing was read from it.")
+    try:
+        unpack_into(tar_bytes, local_dir, what=key)
+    except ObjectRefused:
+        raise
+    except (ValueError, OSError) as exc:
+        raise ObjectRefused(
+            f"the stored Setup for machine '{printable(machine)}' could not be "
+            f"laid out for reading: {exc}")
 
 
-# --- the Setup's authentication tag ------------------------------------------
+# --- the Setup's freshness stamp (ADR-0014) -----------------------------------
 #
-# The Setup is plaintext by design, and its content is executable - a hook in
-# settings.json, a skill - so a Destination that can rewrite one holds code
-# execution on every pulling machine. It cannot be sealed without giving up
-# what ADR-0004 buys, so it is authenticated instead: a manifest of (relative
-# path, sha256) pairs over the whole tree, MACed under a key derived from the
-# master key with its own domain separator (crypto.SETUP_INFO), stored inside
-# the tree as SETUP.mac. The file is the attacker's to delete or replace - the
-# encrypted Index's 'authenticated' flag, which they cannot write, is what
-# makes either of those a refusal instead of a downgrade. The Index says WHEN
-# too, and the tag repeats it, because a tag that says only 'a key holder
-# wrote this' authenticates every superseded tree just as well as the current
-# one.
+# "A master key holder wrote these bytes, and they are this machine's Setup" is
+# answered by `get_setup` unsealing at all. What a seal cannot say is WHICH tree
+# a key holder means you to have now. Every sealed Setup a Destination has ever
+# held goes on unsealing for ever, so a versioned bucket, a git history or a
+# synced folder's trash holds an unlimited supply of objects that open, and
+# replaying one silently undoes whatever the last push tightened. So the push
+# stamps the sealed tree and the encrypted Index with one fresh value, and the
+# pull requires them to agree (authentication._stale_stamp).
+#
+# The stamp rides INSIDE the tar, so only a key holder can write it and nobody
+# can strip it.
 
-SETUP_MAC_NAME = "SETUP.mac"
-SETUP_MANIFEST_VERSION = 1
+SETUP_STAMP_NAME = "SETUP.stamp"
+SETUP_STAMP_VERSION = 1
 
 
 def setup_label(machine: str) -> str:
-    # Bound to the machine as the Index spells it, so one machine's
-    # authenticated tree cannot be served whole under another's name.
+    # Bound to the machine as the Index spells it, so one machine's sealed
+    # Setup cannot be served whole under another's name.
     return "setup:" + machine
 
 
-def setup_tree_manifest(root) -> dict:
-    """{relative path: sha256} over a Setup tree's ordinary files.
+def stamp_bytes(pushed_at: str, stamp: str) -> bytes:
+    """The SETUP.stamp member's bytes: canonical JSON, no MAC of its own.
 
-    The MAC file itself is excluded - it cannot vouch for its own bytes - and
-    symlinks are excluded the way every writer of this tree excludes them
-    (put_setup, write_tree), so pushing and verifying agree on what the tree
-    contains."""
-    root = pathlib.Path(root)
-    return {p.relative_to(root).as_posix():
-            hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in root.rglob("*")
-            if p.is_file() and not p.is_symlink()
-            and p.relative_to(root).as_posix() != SETUP_MAC_NAME}
+    It needs none. It is sealed with everything else in the object, under a
+    label bound to the machine, so the bytes are a key holder's or they do not
+    open at all.
 
-
-def seal_setup_manifest(master_key: bytes, machine: str, files: dict,
-                        pushed_at: str, stamp: str) -> bytes:
-    """The bytes of a SETUP.mac: hex tag, newline, canonical JSON manifest.
-
-    stamp and pushed_at are what the push that wrote this tree recorded for
-    itself in the encrypted Index, and they are bound in for one reason: a MAC
-    over the machine and the file hashes alone proves 'a key holder wrote
-    these bytes at some time', which is not 'this is the Setup a key holder
-    means you to have now'. Every tree a Destination has ever held keeps
-    verifying, so a Destination that keeps versions - a git history, a
-    versioned bucket, a synced folder's trash - holds an unlimited supply of
-    tags that pass, and replaying one silently undoes whatever the last push
-    tightened. Binding both lets the pull check the tag against the Index,
-    which is sealed and so is the one side of the comparison an attacker
-    cannot author.
-
-    The stamp is what the check turns on (crypto.new_stamp says why a
-    timestamp cannot be); pushed_at rides along so a refusal can say WHEN the
-    tree it was served claims to be from, which is the part a user can act on.
+    `pushed_at` rides along beside the stamp so a refusal can say WHEN the tree
+    it was served claims to be from, which is the part a user can act on;
+    `stamp` is what the check turns on, and crypto.new_stamp says why a
+    timestamp cannot be.
     """
-    payload = json.dumps({"version": SETUP_MANIFEST_VERSION, "files": files,
-                          "pushed_at": pushed_at, "stamp": stamp},
-                         sort_keys=True,
-                         separators=(",", ":")).encode("utf-8")
-    tag = crypto.setup_tag(master_key, setup_label(machine), payload)
-    return tag.hex().encode("ascii") + b"\n" + payload
+    return json.dumps({"version": SETUP_STAMP_VERSION,
+                       "pushed_at": pushed_at, "stamp": stamp},
+                      sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def open_setup_manifest(raw: bytes, master_key: bytes, machine: str):
-    """The vouched manifest - {'files': {path: sha256}, 'pushed_at': str,
-    'stamp': str} - or None.
+def read_stamp(raw):
+    """{'pushed_at': str, 'stamp': str} out of a SETUP.stamp, or None.
 
-    None for every way the bytes are not a manifest a key holder wrote -
-    truncated, forged, re-labelled, malformed - because the caller's question
-    is only ever 'does anything vouch for this tree', and the answer to a
-    broken tag and a missing one is the same. The tag is checked before the
-    JSON is parsed: everything after the first newline is untrusted input
-    until the MAC says a key holder wrote it.
+    None for every way the bytes are not a stamp this carryon wrote - absent,
+    malformed, the wrong shape - because the caller's question is only ever
+    'can this tree's freshness be checked', and a stamp that cannot answer it
+    takes the caller's fail-closed branch like a missing one.
 
-    A payload with no stamp or no pushed_at in it is not a manifest this
-    carryon wrote, and it cannot be checked for freshness, so it is None like
-    any other shape it does not recognise: the caller's fail-closed branch is
-    the right one for a tag that cannot answer the question the caller asks.
+    Unlike the tag it replaces there is no MAC to check first: these bytes came
+    out of a sealed object, so they were a key holder's before they got here.
     """
-    head, _, payload = raw.partition(b"\n")
-    try:
-        tag = bytes.fromhex(head.decode("ascii"))
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if len(tag) != crypto.MAC_BYTES:
-        return None
-    if not crypto.setup_tag_ok(master_key, setup_label(machine), payload,
-                               tag):
+    if raw is None:
         return None
     try:
-        doc = json.loads(payload.decode("utf-8"))
+        doc = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     if not isinstance(doc, dict):
         return None
-    files, pushed_at, stamp = (doc.get("files"), doc.get("pushed_at"),
-                               doc.get("stamp"))
-    if not isinstance(files, dict) or not all(
-            isinstance(k, str) and isinstance(v, str)
-            for k, v in files.items()):
-        return None
+    pushed_at, stamp = doc.get("pushed_at"), doc.get("stamp")
     if not isinstance(pushed_at, str) or not isinstance(stamp, str):
         return None
-    return {"files": files, "pushed_at": pushed_at, "stamp": stamp}
-
-
-def setup_tree_mismatches(root, files: dict) -> list:
-    """Every way the materialised tree differs from the vouched manifest.
-
-    Exact both ways: a file the manifest names and the tree lacks was deleted
-    at the Destination, a file the tree holds and the manifest does not was
-    planted there, and a hash mismatch is an edit. Names go through printable
-    because the planted ones are the attacker's strings and these lines land
-    in the pull report."""
-    actual = setup_tree_manifest(root)
-    problems = []
-    for rel in sorted(set(files) | set(actual)):
-        if rel not in actual:
-            problems.append(f"{printable(rel)}: named by the pushed manifest, "
-                            "missing from the stored tree")
-        elif rel not in files:
-            problems.append(f"{printable(rel)}: present in the stored tree, "
-                            "never pushed by a key holder")
-        elif files[rel] != actual[rel]:
-            problems.append(f"{printable(rel)}: content differs from what "
-                            "the key holder pushed")
-    return problems
+    return {"pushed_at": pushed_at, "stamp": stamp}
 
 
 # --- pairing: one-time blobs (ADR-0005) --------------------------------------

@@ -1,12 +1,21 @@
 """What a Destination serves as a Setup, turned into something either leg can
 act on.
 
-A `setups/<machine>/` directory is a claim, not a fact: the tree is plaintext
-and needs no master key to write (ADR-0004), so every name and every document
-here is input, refused one thing at a time (ADR-0009) - this directory, this
-catalogue entry, this stored MANIFEST - while the run carries on. The one field
-an attacker cannot forge is whether the encrypted Index vouches for a name, and
-that is what _choose_setup_source ranks on before any timestamp.
+A `setups/<machine>.tar.enc` key is a claim, not a fact, and ADR-0014 moved
+which part of it is the claim. The BYTES are now a fact: a Setup opens under
+the master key or it does not, so nobody without the key can author one and
+there is no plaintext tree left to edit a file inside. What stays a claim is
+everything that is not inside the seal - the NAME, which an attacker chooses
+freely because a key is where it is read from and a listing is how the user
+learns a machine exists at all, and the fact of being CURRENT, which no seal
+can carry: a versioned Destination keeps every sealed Setup ever pushed and
+all of them open. So a name is still input, refused one thing at a time
+(ADR-0009) while the run carries on, and what answers the second question is
+the Index's stamp rather than any timestamp a Destination serves.
+
+The one field an attacker cannot forge is still whether the encrypted Index
+vouches for a name, which is what _choose_setup_source requires before it
+weighs the timestamp.
 
 The one non-obvious thing: the two readers of a stored MANIFEST are twins that
 refuse at different sizes, which is why they sit side by side here rather than
@@ -29,6 +38,12 @@ import pathlib
 from . import archive, config
 from .destinations.base import printable
 
+# What a sealed Setup's key ends with, so a listing can be split back into a
+# machine name. Spelled once here rather than re-derived beside each use: it is
+# the same string `archive.setup_key` builds, and two spellings of one suffix
+# is how a machine called 'x.tar' would come back as 'x'.
+SEALED_SUFFIX = ".tar.enc"
+
 
 # --- the twin readers of a stored MANIFEST -----------------------------------
 
@@ -44,9 +59,11 @@ _JSON_REFUSALS = (ValueError, UnicodeDecodeError, AttributeError,
 def _stored_manifest(staging) -> tuple:
     """(manifest, None) for the stored Setup's MANIFEST, or (None, why).
 
-    It comes from the plaintext half of an untrusted Archive, so missing,
-    unparseable and not-an-object are report lines - not a traceback out of a
-    pull that has already laid a History down."""
+    It comes out of a sealed object an untrusted Archive served, so a key
+    holder wrote it - but a key holder's older or newer carryon, or one with a
+    bug, which is enough: missing, unparseable and not-an-object are report
+    lines, not a traceback out of a pull that has already laid a History
+    down."""
     path = pathlib.Path(staging) / "MANIFEST.json"
     if not path.is_file():
         return None, ("stored Setup has no MANIFEST.json - cannot map it "
@@ -83,11 +100,11 @@ def _stored_setup_manifest(raw, prefix):
     if raw is None:
         return None
     unusable = SystemExit(
-        f"the Archive's stored {prefix}/MANIFEST.json will not parse, and a "
-        "partial push has to merge onto it - carrying on would drop every "
-        "item this push did not select from the stored Setup. Push the whole "
-        "Setup (`carryon push --apply` with no --category or --agent) to "
-        "replace it, or repair the file at the Destination.")
+        f"the MANIFEST.json inside the Archive's stored Setup "
+        f"({prefix}.tar.enc) will not parse, and a partial push has to merge "
+        "onto it - carrying on would drop every item this push did not "
+        "select from the stored Setup. Push the whole Setup (`carryon push "
+        "--apply` with no --category or --agent) to replace it.")
     try:
         stored = json.loads(raw.decode("utf-8"))
     except _JSON_REFUSALS:
@@ -100,19 +117,18 @@ def _stored_setup_manifest(raw, prefix):
 # --- the catalogue: which names are machines, and who vouches ----------------
 
 
-def _machine_name_refusal(machine: str, has_tree: bool):
-    """Why this Setup directory cannot name a machine, or None.
+def _machine_name_refusal(machine: str):
+    """Why this stored Setup cannot name a machine, or None.
 
-    Every name here is a directory name the Destination chose, which makes it
-    input: it is only a machine as far as this machine can act on it. Two
-    ways it is not. A key with no '/' after the name is a bare file where a
-    tree belongs, so there is nothing to restore. And a name carryon cannot
-    put back into a key - a backslash, a '..', a NUL, all of them legal in a
-    directory name on some filesystem - is one require_key refuses, which
-    used to surface as a ValueError out of the very next read.
+    Every name here comes out of the Destination's own listing, which makes it
+    input: it is only a machine as far as this machine can act on it. A name
+    carryon cannot put back into a key - a backslash, a '..', a NUL, all of
+    them legal on some filesystem - is one require_key refuses, and left to
+    the next read it would surface as a ValueError aborting a pull that had
+    already written a History to $HOME.
 
-    Both used to be admitted and both aborted a pull that had already written
-    a History to $HOME.
+    A directory under setups/ is a pre-ADR-0014 Setup, and the caller
+    answers that case, not this function.
 
     The shape half is `config.machine_name_refusal` rather than a second
     spelling here, and the round that discovered why is the reason it moved:
@@ -124,35 +140,35 @@ def _machine_name_refusal(machine: str, has_tree: bool):
     """
     if not machine:
         return "the Archive holds a Setup key with no machine name in it"
-    if not has_tree:
-        return ("a Setup is a tree of files, and this names a single stored "
-                "file with nothing under it")
     return config.machine_name_refusal(machine)
 
 
 def _vouched_machines(index, machines) -> dict:
-    """{stored directory name: the Index entry that vouches for it}.
+    """{listed machine name: the Index entry that vouches for it}.
 
-    The Index is encrypted, so a name recorded there was put there by a
-    master key holder - the one field in the Setup half an attacker cannot
-    forge, and the one _choose_setup_source ranks on before it looks at any
-    timestamp.
+    The Index is encrypted, so a name recorded there was put there by a master
+    key holder - the one thing about a listed Setup an attacker cannot forge,
+    since the key it sits at is theirs to choose.
 
     Exact names first, and a name listed exactly always answers for itself.
     Then the case-folded fallback, which exists because a Destination can
-    rename a directory and on a case-insensitive one (APFS, NTFS)
-    'setups/MACHINE-A' IS 'setups/machine-a' - the same directory holding the
-    same honest content, while index['setups'] is keyed by whatever spelling
-    the pushing machine used. Comparing exactly there let a rename take the
-    vouching off an honest Setup: add one invented directory beside it and
-    the pull restored nothing at all, at exit 0, with no key involved.
+    rename and on a case-insensitive one (APFS, NTFS) 'setups/MACHINE-A.tar.enc'
+    IS 'setups/machine-a.tar.enc' - the same object holding the same honest
+    bytes, while index['setups'] is keyed by whatever spelling the pushing
+    machine used. Comparing exactly there let a rename take the vouching off an
+    honest Setup: add one invented name beside it and the pull restored nothing
+    at all, at exit 0, with no key involved.
 
-    The fallback claims a vouched name only when exactly one listed directory
-    folds to it and nothing claimed it exactly. It grants an attacker nothing
-    they did not already have - anyone who can create 'setups/MACHINE-A' can
-    write into 'setups/machine-a' instead, since the tree is plaintext and
-    needs no master key (ADR-0004) - while on a case-SENSITIVE Destination,
-    where the two really are two directories, the exact branch keeps winning.
+    Since ADR-0014 the fallback is WORDING rather than a guard, and it is kept
+    deliberately rather than by oversight. The seal's label binds the machine
+    name, so a renamed object does not open under the Index's spelling whatever
+    this function says: with the fold the renamed name is chosen and the seal
+    refuses it, without the fold nothing is vouched and the pull says so
+    instead. Both exit non-zero, both restore nothing, and a planted Setup
+    claiming the year 9999 loses either way - so what the fold still changes is
+    only which sentence the user reads, and the one it produces names the
+    machine they were expecting. Removing it should be a decision, not a
+    side effect, which is why it is pinned by a test.
     """
     entries = index.get("setups", {})
     if not isinstance(entries, dict):
@@ -170,88 +186,72 @@ def _vouched_machines(index, machines) -> dict:
 
 
 def _setup_catalogue(dest, index) -> tuple:
-    """(setups, refused) for every Setup directory the Archive holds.
+    """(setups, refused) for every Setup the Archive holds.
 
-    setups is machine -> {'pushed_at', 'vouched'}; refused is (name, why) for
-    every directory that cannot be treated as a machine's Setup at all.
+    setups is machine -> {'pushed_at', 'vouched', ...}; refused is (name, why)
+    for every key under setups/ that cannot be treated as a machine's Setup at
+    all.
 
-    The encrypted Index alone is not authoritative on timing: a Setup-only
-    push needs no master key (ADR-0004) and so cannot record itself there.
-    The plaintext tree's own MANIFEST carries captured_at, which fills the
-    gap - and wins when newer, since a keyless push after a keyed one would
-    otherwise pin the stale Index timestamp.
+    A Setup's timestamp comes from the sealed Index (ADR-0014), never from
+    anything the Destination serves in the clear.
 
-    But that timestamp, and the machine list itself, come out of the
-    plaintext tree, which anyone with write access to the Destination can
-    author. So each entry also records whether the Index vouches for the
-    machine: the Index is encrypted, so a name recorded there was put there
-    by a master key holder. That is the one field here an attacker cannot
-    forge, and _choose_setup_source ranks on it before it looks at any
-    timestamp. Machines the Index knows but the Archive no longer holds a
-    tree for are left out - there is nothing to restore from."""
-    machines, trees = set(), set()
+    The listing is used only as DISCOVERY. Which machines an
+    Archive holds is still read off the Destination, because a name nobody can
+    read is a name nobody can offer the user - so the names here are still
+    input, still go through `_machine_name_refusal`, and still prove nothing on
+    their own. What makes one trustworthy is that `archive.get_setup` unseals
+    it later; what makes it CURRENT is the Index's stamp.
+    """
+    machines, sealed = set(), set()
     for key in dest.list(archive.SETUPS_PREFIX):
         rest = key[len(archive.SETUPS_PREFIX):]
-        machine, sep, _ = rest.partition("/")
-        machines.add(machine)
-        if sep:
-            trees.add(machine)
+        if rest.endswith(SEALED_SUFFIX):
+            machine = rest[:-len(SEALED_SUFFIX)]
+            machines.add(machine)
+            sealed.add(machine)
+            continue
+        # A key under setups/ that is not a sealed object is an Archive from
+        # before ADR-0014 - a directory per machine. Its name is still listed
+        # so the user is told it is there and why nothing can be done with it,
+        # rather than the Archive appearing to hold no Setups at all.
+        machines.add(rest.partition("/")[0])
     entries = index.get("setups", {})
     if not isinstance(entries, dict):
         entries = {}
     vouched = _vouched_machines(index, machines)
     setups, refused = {}, []
     for machine in sorted(machines):
-        why = _machine_name_refusal(machine, machine in trees)
+        why = _machine_name_refusal(machine)
         if why is not None:
-            # Before the read, not after: the point of the check is that
-            # asking for this name at all is what used to end the pull.
+            # Before the read, not after: asking the Destination for this
+            # name at all is what would end the pull.
             refused.append((machine, why))
             continue
-        raw = dest.read(archive.SETUPS_PREFIX + machine + "/MANIFEST.json")
-        captured = ""
-        if raw is not None:
-            try:
-                captured = json.loads(raw.decode("utf-8")).get("captured_at")
-            except _JSON_REFUSALS:
-                captured = ""
-        if not isinstance(captured, str):
-            captured = ""
+        if machine not in sealed:
+            refused.append((machine, "the Archive holds it as a plaintext "
+                                     "tree, which is how Setups were stored "
+                                     "before they were sealed (ADR-0014) - "
+                                     "push again from a machine that holds "
+                                     "the master key to replace it"))
+            continue
         entry = entries.get(vouched.get(machine), {})
         known = entry.get("pushed_at", "") if isinstance(entry, dict) else ""
-        # A str, or nothing. _validated proves the entry is an object and
-        # stops one level above where this indexes; max() over a str and an
-        # int is a TypeError, and it escapes the one `except SystemExit`
-        # wrapped around this whole call - a traceback out of a pull that has
-        # already written to $HOME, from the very case _validated exists for.
+        # A str, or nothing: the value reaches a report line and a
+        # comparison, and a TypeError there would escape the one
+        # `except SystemExit` around this call after the pull had already
+        # written to $HOME.
         if not isinstance(known, str):
             known = ""
-        authenticated = (isinstance(entry, dict)
-                         and entry.get("authenticated") is True)
         # index_name is the Index's own spelling of the machine - the one the
-        # pushing side bound into the Setup MAC's label - which a case-folding
-        # Destination rename must not detach from the directory it vouches
-        # for. authenticated and index_pushed_at ride along for the same
-        # reason vouched does: they are the Index's answers, and only the
-        # Index's.
-        #
-        # Once a Setup is authenticated the Index is the whole authority on
-        # when it was pushed, so max() stops applying: the plaintext
-        # captured_at beside it is the attacker's to set, and letting it win
-        # printed the NEWEST time in the one line the user reads while the
-        # pull was restoring an older tree. max() survives for the
-        # unauthenticated case, where a keyless push (ADR-0004) genuinely
-        # cannot record itself in the Index and the plaintext field is the
-        # only timestamp there is.
-        setups[machine] = {"pushed_at": known if authenticated
-                           else max(captured, known),
+        # pushing side bound into the seal's label - which a case-folding
+        # Destination rename must not detach from the object it vouches for.
+        setups[machine] = {"pushed_at": known,
                            "vouched": machine in vouched,
                            "index_name": vouched.get(machine),
                            "index_pushed_at": known,
                            "index_stamp": (entry.get("stamp")
                                            if isinstance(entry, dict)
-                                           else None),
-                           "authenticated": authenticated}
+                                           else None)}
     return setups, refused
 
 
@@ -262,113 +262,89 @@ def _index_setup_names(index) -> list:
     """Every machine the encrypted Index records a Setup push for, sorted.
 
     Non-empty means a master key holder has pushed a Setup to this Archive at
-    some point - the fact _choose_setup_source weighs an unvouched directory
-    against."""
+    some point - the fact _no_setup_source_note uses to tell a deletion from
+    an Archive that never held one."""
     entries = index.get("setups") if isinstance(index, dict) else None
     if not isinstance(entries, dict):
         return []
     return sorted(name for name in entries if isinstance(name, str))
 
 
-def _choose_setup_source(setups: dict, index_names, index_absent: bool
-                         ) -> tuple:
-    """(source, unvouched, ignored): whose Setup this pull restores.
+def _choose_setup_source(setups: dict) -> tuple:
+    """(source, ignored): whose Setup this pull restores, or None.
 
-    A setups/<machine>/ directory is a claim, not a fact - the tree is
-    plaintext and needs no key to write (ADR-0004) - and the captured_at that
-    used to decide the winner sits inside it. So a timestamp only ever breaks
-    a tie between machines the encrypted Index vouches for.
+    A listed name is a claim and the Index is the only answer to it, so among
+    machines the Index vouches for the stamp breaks the tie, and a machine it
+    does not vouch for cannot win however new it says it is. The timestamp
+    being weighed is the Index's own, not one a Destination serves: ADR-0014
+    put the Setup inside a seal, so there is no captured_at in the clear left
+    to raise.
 
     This machine's own name buys nothing here. A machine name is
     socket.gethostname(), a guessable string rather than a secret, and a
     machine that holds the master key and pushed a Setup is already in
-    index['setups']; a keyless push (ADR-0004) is genuinely unvouched however
-    the directory is labelled, so it takes the flagged path like any other.
+    index['setups'].
 
-    Nothing vouched for at all is a legitimate state, because ADR-0004's
-    keyless push cannot record itself: one unvouched Setup is still restored,
-    flagged as unvouched, since there is nothing to choose between. Two or
-    more, with nothing to separate them but an attacker-writable timestamp,
-    and carryon restores none - the user can push a Setup from a machine that
-    holds the key and pull again.
-
-    But 'nothing vouched for' has to mean there is no key holder's statement
-    here AT ALL, not that the statement happens to name no Setup. Two ways it
-    was read too narrowly, and both end in the same downgrade.
-
-    Deleting the vouched directory and authoring one under a name the Index
-    has never heard of costs an attacker nothing - the tree is plaintext and
-    needs no key (ADR-0004) - and it used to land on this branch, which
-    restored their settings.json behind one note and skipped Setup
-    authentication entirely, because the flag that would have refused it hangs
-    off the Index entry they had just detached themselves from. index_names
-    closes that: a Setup with no tree behind it is a tree that went missing,
-    not a machine that never pushed.
-
-    And index_names is empty for every Index written before the first keyed
-    Setup push - a History-only push, a push whose Setup half was refused, and
-    the empty catalogue `pair` seals so a joining machine has an anchor at all.
-    Those are authentic objects at revision 1 or more, which a versioned
-    Destination keeps forever (ADR-0009), and replaying one put a fully paired
-    machine on this branch with no rollback signal to notice by: seen and
-    served were the same number. So the question is whether an Index EXISTS.
-    A key holder's empty catalogue is a key holder saying "nothing here is
-    vouched for", which is an answer; no Index at all is nobody saying
-    anything, which is ADR-0004's keyless Archive and the only case this
-    branch was ever for."""
+    No Index vouches for nothing, so it chooses nothing (ADR-0014's
+    amendment), and _no_setup_source_note says why."""
     candidates = {m: e for m, e in setups.items() if e["vouched"]}
     if candidates:
-        # Authentication outranks any timestamp, and the timestamp only
-        # separates machines of the same standing. An unauthenticated vouched
-        # entry - an Archive from before Setups were authenticated, or a
-        # machine that has only pushed keylessly - reports the time its own
-        # plaintext MANIFEST claims, which anyone with write access can set to
-        # the year 9999; ranking on that alone let a freely editable tree beat
-        # one whose content a key holder had vouched for.
-        source = max(candidates,
-                     key=lambda m: (bool(candidates[m].get("authenticated")),
-                                    candidates[m]["pushed_at"]))
-        # About the source chosen, not about whether any candidate existed:
-        # the flag is the one warning a user can act on, and reporting the
-        # wrong thing suppresses it exactly when it matters.
-        return (source, not candidates[source]["vouched"],
-                sorted(set(setups) - set(candidates)))
-    if len(setups) == 1 and not index_names and index_absent:
-        return next(iter(setups)), True, []
-    return None, True, sorted(setups)
+        # The Index's timestamp alone: every candidate is vouched, and the
+        # time comes from the sealed Index rather than from anything the
+        # Destination serves in the clear.
+        source = max(candidates, key=lambda m: candidates[m]["pushed_at"])
+        return source, sorted(set(setups) - set(candidates))
+    return None, sorted(setups)
 
 
 def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
     """Why this pull restores no Setup, for the report.
 
     Three different situations reach it and they call for different sentences:
-    an Archive nobody has ever pushed a keyed Setup to, where the Setups are
-    simply indistinguishable; one where the Index names Setups the Archive no
-    longer holds - which is what deleting a vouched tree and re-authoring it
-    under another name looks like from here; and one where the Index exists
-    and vouches for nothing, which is a key holder saying so."""
+    an Index that exists and records no Setup push, which is a key holder
+    saying nothing here is vouched for; one where the Index names Setups the
+    Archive holds no object for, which is what a deletion looks like from
+    here; and no Index at all, where nothing says whether any Setup is
+    current.
+
+    A name under setups/ costs an attacker nothing, but the bytes at it will
+    not open unless a key holder wrote them, so each sentence says where the
+    verdict comes from: the Index, or its absence."""
     held = ", ".join(printable(m) for m in sorted(setups))
     if not index_names and not index_absent:
         return (
             f"\nSetup: none restored - the Archive holds Setups for {held}, "
             "and the encrypted Index records no Setup push at all. The Index "
             "is sealed, so that is a master key holder saying nothing here is "
-            "vouched for, while a directory under setups/ needs no key to "
-            "write (ADR-0004). Push a Setup from a machine that holds the "
-            "master key, then pull again.")
+            "vouched for; since ADR-0014 a push cannot write a Setup without "
+            "the master key and a keyed push records itself, so a name under "
+            "setups/ that no push accounts for is one someone put there. Push "
+            "a Setup from a machine that holds the master key, then pull "
+            "again.")
     if index_names:
         missing = ", ".join(printable(m) for m in index_names)
         return (
             "\nSetup: none restored - the encrypted Index records Setup "
-            f"pushes for {missing}, and the Archive holds a tree for none of "
-            f"them. What it holds is {held}, which no master key holder ever "
-            "pushed: a directory under setups/ needs no key to write "
-            "(ADR-0004), so this is what a vouched Setup being deleted and "
-            "re-authored under another name looks like. Push a Setup from a "
-            "machine that holds the master key, then pull again.")
+            f"pushes for {missing}, and the Archive holds an object for none "
+            f"of them. What it holds is {held}, which no master key holder "
+            "ever pushed. The Index is the record of what was pushed here, so "
+            "this is what those objects being deleted - and a name nobody "
+            "vouches for being left in their place - looks like from this "
+            "machine. Push a Setup from a machine that holds the master key, "
+            "then pull again.")
+    # Only a machine with no record of an Index here gets this far:
+    # _refuse_on_index_removal stops the pull before the Setup leg on any
+    # machine that has read one. So saying so is a fact, not a guess, and it
+    # is the fact that would otherwise have settled the case.
+    some, which = (("a Setup", "whether it is current") if len(setups) == 1
+                   else ("Setups", "which of them is current"))
     return (
-        f"\nSetup: none restored - the Archive holds Setups for {held}, the "
-        "encrypted Index vouches for none of them, and the only thing "
-        "separating them is a timestamp anyone who can write to the "
-        "Destination could have authored. Push a Setup from a machine that "
+        f"\nSetup: none restored - the Archive holds {some} for {held}, and "
+        "this Archive serves no Index at all, so there is no master key "
+        f"holder's record here to say {which}. This machine has never read "
+        "one at this Destination either, which would have settled it. A Setup "
+        "opens under the master key or not at all, but the seal says who "
+        "wrote it and never when. Since ADR-0014 a keyed push always writes "
+        "the Index, so an Archive with a Setup and no Index is most likely "
+        "one the Index was removed from. Push a Setup from a machine that "
         "holds the master key, then pull again.")

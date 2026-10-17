@@ -40,7 +40,7 @@ from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 # namespace that grew a flag quietly exercises commands through getattr
 # defaults instead of the flag under test (hostile_archive's own warning).
 from tests.hostile_archive import (author_setup, file_keyring,  # noqa: E402,F401
-                                   link_home, ns)
+                                   link_home, ns, paired)
 from tests.test_sync import tree_state  # noqa: E402
 
 UUID_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"   # shared between machines
@@ -302,7 +302,7 @@ def test_sync_category_all_carries_the_setup_half_too(
     assert (partner / ".claude" / "CLAUDE.md").read_text() == \
         "Global instructions.\n"
     dest = DirectoryDestination(tmp_path / "archive")
-    assert "carryon/setups/machine-b/MANIFEST.json" in \
+    assert "carryon/setups/machine-b.tar.enc" in \
         dest.list("carryon/setups/"), \
         "the push half did not publish this machine's Setup under " \
         "--category all"
@@ -321,7 +321,7 @@ def test_push_understands_category_all_as_push_with_no_flag(
     capsys.readouterr()
 
     dest = DirectoryDestination(tmp_path / "archive")
-    assert "carryon/setups/machine-a/MANIFEST.json" in \
+    assert "carryon/setups/machine-a.tar.enc" in \
         dest.list("carryon/setups/"), \
         "--category all left the Setup half behind"
     assert len(dest.list("carryon/sessions/")) == 2, \
@@ -569,25 +569,29 @@ def test_a_setup_only_pull_ignores_history_catalogue_damage(pushed, tmp_path,
     assert "could not read" in capsys.readouterr().out
 
 
-def test_a_manifest_category_is_validated_before_it_filters(tmp_path, capsys):
-    """The category field comes off the stored MANIFEST - attacker-reachable
-    like src and dst beside it, and reachable exactly through the one door
-    authentication leaves open: a sole UNVOUCHED Setup (a keyless push looks
-    like this, and so does a planted one), whose manifest is read as-is.
+def test_a_manifest_category_is_validated_before_it_filters(paired, capsys):
+    """The category field comes off the stored MANIFEST, beside src and dst.
     Unhashable was a raw TypeError out of a pull whose History had already
     landed; malformed-but-hashable was an item silently dropped, and a
     silently missing settings file is the exact outcome the refused list
     exists to prevent.
 
-    With an Index present the source chooser already refuses a tree the
-    Index does not vouch for, so the reachable spelling is ADR-0004's: an
-    Archive whose Index is ABSENT (no key holder ever pushed) restores its
-    sole unvouched Setup, flagged - and reads that manifest as-is."""
-    home_b = build_home_b(tmp_path)
-    dest_spec = str(tmp_path / "archive")
-    sync.init(ns(dest=dest_spec, machine="machine-b"), home_b)  # no push
+    The door changed and the reader did not. It used to be reached through
+    ADR-0004's: an Archive whose Index is ABSENT restored its sole unvouched
+    Setup and read that manifest as-is. ADR-0014 closed that - a push needs
+    the master key and a keyed push writes the Index, so an Archive with a
+    Setup and no Index record is refused rather than restored (see
+    test_index_trust and test_index_replay, where that refusal is pinned).
+
+    So the manifest now arrives the way every manifest arrives: out of a
+    sealed object, written by a key holder. That does not make these shapes
+    unreachable, it makes them ordinary - a `category` an older or newer
+    carryon wrote, or a key holder's own mistake - and a shape this carryon
+    does not know must still be named rather than dropped or raised. It is
+    the same move `authentication._index_setup_entry` makes one module over.
+    """
     author_setup(
-        tmp_path / "archive", "planted",
+        paired.dest_root, "machine-a",
         [dict(src=".claude/settings.local.json",
               dst="claude/settings.local.json", kind="file",
               category=["config"], note="unhashable"),
@@ -600,7 +604,7 @@ def test_a_manifest_category_is_validated_before_it_filters(tmp_path, capsys):
                "claude/keybindings.json": '{"ok": true}\n'})
     capsys.readouterr()
 
-    code = sync.pull(ns(apply=True, category="config"), home_b)
+    code = sync.pull(ns(apply=True, category="config"), paired.home_b)
     out = capsys.readouterr().out
 
     assert isinstance(code, int), "the pull crashed instead of finishing"
@@ -608,7 +612,7 @@ def test_a_manifest_category_is_validated_before_it_filters(tmp_path, capsys):
         "a malformed category was dropped without a word"
     assert out.count("not a category carryon knows") == 2, \
         "one of the two malformed spellings was silently dropped"
-    assert (home_b / ".claude" / "keybindings.json").read_text() == \
+    assert (paired.home_b / ".claude" / "keybindings.json").read_text() == \
         '{"ok": true}\n', \
         "the honest item beside the malformed ones did not restore"
 

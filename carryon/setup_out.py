@@ -1,8 +1,12 @@
 """A Setup on the way out - made machine-neutral, merged, overlaid and sealed.
 
-What leaves this machine for the Archive's one plaintext half. ADR-0006 says an
-Archive names no machine, and that is a whole-tree promise rather than a
-manifest-field one: a hook command in settings.json spells the home out as
+What leaves this machine as the Archive's Setup half - one sealed object per
+machine since ADR-0014. The neutralising below is not made redundant by the
+seal: ADR-0006 says an Archive names no machine, and an Archive is read by
+every machine paired to it, so a home path inside the ciphertext is still a
+home path published to all of them. ADR-0006 is a whole-tree promise rather
+than a manifest-field one: a hook command in settings.json spells the home out
+as
 readily as `source_home` does, so the neutralising runs over every file in the
 staged tree and the two generated documents are re-rendered from the result.
 What a rewrite cannot reach - a path outside $HOME, a spelling that differs
@@ -28,10 +32,12 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shutil
+import tempfile
 
 from . import archive, rekey, restore
-from .authentication import _carried_setup_files, _vouch_for_stored_manifest
-from .destinations.base import join_prefix, printable
+from .authentication import _stale_stamp, stamped_or_none
+from .destinations.base import printable
 from .stored_setup import _stored_setup_manifest
 
 
@@ -81,10 +87,13 @@ def _home_near_misses(text: str, home) -> int:
 # --- merging a partial capture onto what the Archive already holds -----------
 
 
-# What a MANIFEST holds at the top level. A stored one can hold anything -
-# the file is plaintext on untrusted storage - and a partial push writes its
-# merge back into the Archive, so a key the capture engine never produces is
-# dropped here rather than accumulated, signed and served on.
+# What a MANIFEST holds at the top level. A stored one can hold anything: it
+# comes out of a sealed object now (ADR-0014), so its author held the master
+# key, which narrows who can write one without making it carryon's own output
+# - a key holder's older or newer carryon, or a compromised machine, writes
+# whatever it likes. A partial push writes its merge back into the Archive, so
+# a key the capture engine never produces is dropped here rather than
+# accumulated, sealed and served on.
 _MANIFEST_FIELDS = ("tool", "version", "captured_at", "source_home",
                     "categories", "scope", "agents")
 
@@ -283,7 +292,7 @@ def _neutralise_manifest(manifest: dict, home) -> tuple:
     adapter or item kind added later can record another without anyone
     revisiting this function. That is right for a local `carryon capture`
     directory and wrong for the Archive, which is machine-neutral by ADR-0006
-    and whose setups/ tree is its one plaintext half.
+    whatever it is sealed with - every machine paired here opens it.
 
     Two steps, because rewriting alone cannot cover the second: a value under
     the home becomes '~', and a value that is still absolute afterwards is
@@ -330,7 +339,9 @@ def _neutralise_staged_setup(staging, manifest: dict, home) -> tuple:
     it was decided by the decoder rather than by intent, so it also covered
     every latin-1 note, every truncated log and every file with one stray
     byte in it, any of which can spell the home out and did travel verbatim
-    into the one plaintext half of the Archive. Nothing here can tell a PNG
+    into the Archive - in the clear when that was decided, and since ADR-0014
+    sealed to a key every paired machine holds, which ADR-0006 rules out
+    just the same. Nothing here can tell a PNG
     from a note, and a Setup that names this machine is what ADR-0006 rules
     out, so the file stays here and the push report names it. Deleting it
     from the staging tree is what withholds it: a full push mirrors that tree
@@ -377,54 +388,127 @@ def _push_partial_setup(dest, master, machine, staging, manifest,
     the MANIFEST and RESTORE.md are regenerated from the merged view so they
     keep describing the whole stored tree, not just this push's slice.
 
-    Withheld files are the one thing an overlay does delete, and that is the
+    A Setup is ONE sealed object (ADR-0014), so an overlay is: unseal the
+    stored tree into a temp dir, copy this push's slice over it, delete the
+    withheld, re-seal, write one object. The stored tree is read through
+    `archive.get_setup`, so the seal has already proved a key holder wrote the
+    MANIFEST this function merges.
+
+    Withheld files are the one thing an overlay deletes, and that is the
     point: withholding is done by removing the file from the staging tree,
-    which only a FULL push turns into a deletion in the Archive (put_setup
-    sweeps stale keys). On a partial push the file an earlier version
-    published stayed there, with the source machine's home inside it, while
-    the report said it had not gone - so the deletion is spelled out here
-    rather than left to the mirror that does not run.
+    which on a FULL push is a deletion because the whole object is replaced.
+    Here the stored copy would otherwise survive underneath, with the source
+    machine's home inside it, while the report said it had gone.
 
-    With a master key the overlay is authenticated: the new SETUP.mac joins
-    fresh hashes for this push's slice onto the entries the previous verified
-    manifest vouched for, minus the withheld. The carry-forward is resolved -
-    and the stored MANIFEST proved to be the one it vouches for - BEFORE a
-    byte is written, so either refusal leaves the Archive untouched.
+    What sealing does NOT prove is that the stored tree is the CURRENT one,
+    and this door has to ask. Carrying a superseded tree forward into a new
+    object under a new stamp launders it into the current Setup, signed by the
+    user's own key, at exit 0 - the exact failure `_stale_stamp` was written
+    against, arriving through the push leg rather than the pull. The check runs
+    before a byte is written, so the refusal leaves the Archive untouched.
 
-    What the merge could not carry is printed rather than raised. The keyless
-    path (ADR-0004) is the one that meets an attacker-authored MANIFEST with
-    nothing to check it against, and stopping there would hand anyone with
-    write access to the Destination a permanent `push --category config` on
-    every keyless machine - so the entry is dropped, named, and the rest of
-    the push carries on. A stored document that will not PARSE is still a
-    stop one function up, because there is no rest of the push to carry on
-    with: the merge would be built from nothing.
+    A Destination with no stored Setup for this machine is not a refusal: it is
+    every first partial push. It is named, and this push writes what it
+    captured. That holds only while the Index records no Setup for the
+    machine either; a stored Setup that is missing despite that record, will
+    not open, or was not served is refused, because merging onto nothing
+    drops every category this push did not select.
     """
     prefix = archive.setup_prefix(machine)
-    raw = dest.read(prefix + "/MANIFEST.json")
-    carried = {}
-    if master is not None:
-        carried = _carried_setup_files(dest, master, machine, prefix,
-                                       index_entry or {})
-        _vouch_for_stored_manifest(raw, carried, prefix)
-    stored = _stored_setup_manifest(raw, prefix)
     staging = pathlib.Path(staging)
-    if stored is not None:
-        dropped = []
-        merged = _merge_setup_manifest(stored, manifest, pushed_categories,
-                                       dropped)
-        for why in dropped:
-            print(f"  drop     {printable(prefix)}/MANIFEST.json - {why}")
-        (staging / "MANIFEST.json").write_text(json.dumps(merged, indent=2))
-        (staging / "RESTORE.md").write_text(restore.build_restore(merged))
-    if master is not None:
-        files = dict(carried)
-        files.update(archive.setup_tree_manifest(staging))
+    with tempfile.TemporaryDirectory(prefix="carryon-overlay-") as merged_dir:
+        base = pathlib.Path(merged_dir)
+        raw = None
+        try:
+            archive.get_setup(dest, master, machine, base)
+        except archive.SetupMissing as exc:
+            if index_entry:
+                # The Index records a Setup the Archive no longer holds - a
+                # deletion, not a first push. Sealing the slice alone would
+                # make the deletion permanent for every category not
+                # selected.
+                raise SystemExit(
+                    "refusing a partial Setup push: the encrypted Index "
+                    f"records a Setup for '{printable(machine)}' and the "
+                    "Archive holds no object for it, so a partial push has "
+                    "nothing to merge onto and would drop every item it did "
+                    "not select. Push the whole Setup (`carryon push "
+                    "--apply` with no --category or --agent) to replace it.")
+            # No stored Setup and no record of one: every first partial push.
+            print(f"  note     {printable(prefix)} - nothing to overlay onto "
+                  f"({exc})")
+        except archive.ObjectRefused as exc:
+            # A Setup that will not open, or a Destination that failed to
+            # serve it, is not an Archive with no Setup. Reading it as one
+            # sealed this push's slice over the whole stored Setup at exit 0
+            # - the harm _stored_setup_manifest stops the push over.
+            raise SystemExit(
+                "refusing a partial Setup push: the stored Setup could not "
+                f"be read to merge onto ({exc}). Carrying on would drop "
+                "every item this push did not select. Push the whole Setup "
+                "(`carryon push --apply` with no --category or --agent) to "
+                "replace it.")
+        else:
+            stamped = stamped_or_none(base)
+            if stamped is None or _stale_stamp(stamped, index_entry or {}):
+                # The push door's half of the freshness rule, and the reason
+                # this function cannot simply trust what unsealed. Carrying a
+                # superseded tree forward into a NEW object under a NEW stamp
+                # is how a replayed Setup gets laundered into the current one
+                # - by the user's own key, at exit 0. A full push is the cure
+                # because it replaces the tree with content read from here.
+                raise SystemExit(
+                    f"refusing a partial Setup push: the Archive's stored "
+                    f"Setup for '{printable(machine)}' is not the one the "
+                    "encrypted Index records as current. A partial push "
+                    "merges that tree into the one it seals, so carrying on "
+                    "would put this machine's key behind an earlier Setup "
+                    "served back in its place. Push the whole Setup "
+                    "(`carryon push --apply` with no --category or --agent) "
+                    "to replace it.")
+            raw = (base / "MANIFEST.json").read_bytes() \
+                if (base / "MANIFEST.json").is_file() else None
+
+        stored = _stored_setup_manifest(raw, prefix)
+        # The overlay itself: this push's slice lands on top of the stored
+        # tree, and what it did not capture survives underneath. Files are
+        # copied rather than the staging dir being packed directly, which is
+        # the whole difference between a partial push and a full one.
+        for path in sorted(p for p in staging.rglob("*")
+                           if p.is_file() and not p.is_symlink()):
+            target = base / path.relative_to(staging)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(path), str(target))
+        # Withheld files are the one thing an overlay deletes, and that is the
+        # point: withholding is done by removing the file from the staging
+        # tree, which on a full push is a deletion because the object is
+        # replaced whole. Here the stored copy would survive underneath, with
+        # the source machine's home inside it, while the report said it had
+        # not gone.
         for rel in withheld:
-            files.pop(rel, None)
-        (staging / archive.SETUP_MAC_NAME).write_bytes(
-            archive.seal_setup_manifest(master, machine, files, pushed_at,
-                                        stamp))
-    dest.write_tree(prefix, staging)
-    for rel in withheld:
-        dest.delete(join_prefix(prefix, rel))
+            (base / rel).unlink(missing_ok=True)
+        if stored is not None:
+            dropped = []
+            merged = _merge_setup_manifest(stored, manifest, pushed_categories,
+                                           dropped)
+            for why in dropped:
+                print(f"  drop     {printable(prefix)}/MANIFEST.json - {why}")
+            (base / "MANIFEST.json").write_text(json.dumps(merged, indent=2))
+            (base / "RESTORE.md").write_text(restore.build_restore(merged))
+        (base / archive.SETUP_STAMP_NAME).write_bytes(
+            archive.stamp_bytes(pushed_at, stamp))
+        _note_plaintext_removed(
+            machine, archive.put_setup(dest, master, machine, base))
+
+
+def _note_plaintext_removed(machine: str, count: int) -> None:
+    """Say so when a push removed a Setup left in the clear before ADR-0014.
+
+    Deleting files at the Destination without a word would leave the user
+    wondering where they went, and the fact they existed is worth knowing:
+    the Setup was readable there until this push."""
+    if count:
+        print(f"  removed  {count} plaintext file(s) under "
+              f"{printable(archive.setup_prefix(machine))}/ - a Setup "
+              "pushed before ADR-0014 sealed it, readable at the "
+              "Destination until now")

@@ -375,11 +375,9 @@ def test_a_session_key_this_carryon_never_wrote_still_pulls(archived, capsys):
 def test_a_setups_key_this_machine_cannot_spell_is_refused(archived):
     """The third catalogue, checked at the same door and for the same reason.
 
-    A machine name out of the Index becomes a label too: the pull leg checks a
-    stored Setup's tag under the INDEX's spelling of the machine rather than
-    the stored directory's, so that a case-folding rename at the Destination
-    does not break an honest tree - and crypto.setup_tag_ok encodes that label
-    strictly.
+    A machine name out of the Index becomes a label too: a stored Setup is
+    unsealed under archive.setup_label(machine), and the seal encodes that
+    label strictly.
 
     Not reachable end to end today, and that is the point rather than an
     excuse: what stops it is require_key refusing an un-encodable name in the

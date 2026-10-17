@@ -38,15 +38,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from carryon import config, destinations, rekey, sync  # noqa: E402
 from tests.hostile_archive import (  # noqa: E402,F401
     EVIL_SETTINGS, GOOD_CLAUDE_MD, GOOD_COMMAND, GOOD_SETTINGS, SECRET,
-    SETUP_CATEGORIES, ListsOneExtraKey, author_setup, build_home_a,
-    build_home_b, file_keyring, files_containing, item, link_home, manifest,
-    ns, paired, remac_setup, stored_setup)
+    SETUP_CATEGORIES, ListsOneExtraKey, archive_plaintext_containing,
+    author_setup, build_home_a, build_home_b, file_keyring, files_containing,
+    item, link_home, manifest, ns, paired, reread_setup, reseal_setup,
+    stored_setup)
 
 # Since the Setup gained its authentication tag (test_setup_auth.py), a tree
 # edited by a KEYLESS attacker is refused whole before any item is read. The
 # item-level guards these tests assert still have to hold - a hostile or
 # compromised key holder produces exactly an authenticated tree full of
-# malicious items - so each tamper below is re-stamped with remac_setup to
+# malicious items - so each tamper below is re-stamped with reseal_setup to
 # model that source, and the guards stay the thing under test.
 
 
@@ -60,7 +61,7 @@ def test_absolute_src_is_not_written(tmp_path, paired, capsys):
     landing = tmp_path / "pwned" / "cron.d" / "x"
     author_setup(paired.dest_root, "machine-a",
                  [item(str(landing), "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -74,7 +75,7 @@ def test_src_climbing_out_of_home_is_not_written(tmp_path, paired, capsys):
     landing = tmp_path / "outside" / "evil.txt"
     author_setup(paired.dest_root, "machine-a",
                  [item("../outside/evil.txt", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -88,7 +89,7 @@ def test_src_pointing_into_carryons_own_state_is_not_written(paired, capsys):
     Destination - the carve-out config._relative_to_home already makes."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".carryon/master.key", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "master.key").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -108,7 +109,7 @@ def test_dst_climbing_out_of_the_staging_dir_reads_nothing(paired, capsys):
     secret = paired.home_b / ".ssh" / "id_ed25519"
     author_setup(paired.dest_root, "machine-a",
                  [item("leak.txt", "../" * 40 + str(secret).lstrip("/"))])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -124,7 +125,7 @@ def test_absolute_dst_reads_nothing(paired, capsys):
     secret = paired.home_b / ".ssh" / "id_ed25519"
     author_setup(paired.dest_root, "machine-a",
                  [item("leak.txt", str(secret))])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -142,7 +143,7 @@ def test_a_refused_item_does_not_stop_the_rest_of_the_setup(
         item(str(tmp_path / "pwned" / "x"), "claude/settings.json"),
         item(".claude/CLAUDE.md", "claude/CLAUDE.md"),
     ])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     capsys.readouterr()
@@ -273,7 +274,7 @@ def test_a_full_push_leaves_no_home_path_anywhere_in_the_archive(
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the Archive names this machine's home (ADR-0006)"
 
     # and the report is still usable on the machine that reads it
@@ -298,13 +299,13 @@ def test_a_partial_push_leaves_no_home_path_anywhere_in_the_archive(
     sync.init(ns(dest=str(dest_root), machine="machine-c"), home)
 
     assert sync.push(ns(apply=True, category="capability"), home) == 0
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the first partial push named this machine's home"
 
     assert sync.push(ns(apply=True, category="capability"), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the merged MANIFEST or RESTORE.md named this machine's home"
     notes = (stored_setup(dest_root, "machine-c") / "RESTORE.md").read_text()
     assert "~/dotfiles/skills/shipping" in notes
@@ -355,19 +356,18 @@ def test_an_unvouched_setup_named_after_this_machine_does_not_break_the_tie(
         "an unvouched Setup was restored because it carried this machine's name"
 
 
-def test_the_unvouched_flag_describes_the_chosen_source(paired):
-    """The one warning a user can act on must be about the Setup actually
-    restored, not about whether any candidate existed at all."""
+def test_a_newer_unvouched_setup_is_ignored_not_chosen(paired):
+    """A claimed year 9999 buys an unvouched Setup nothing: the vouched one is
+    chosen and the other is named as ignored.
+
+    This was `test_the_unvouched_flag_describes_the_chosen_source`. The flag
+    went with ADR-0014's amendment, because a chosen Setup is now always a
+    vouched one."""
     setups = {"machine-a": {"pushed_at": "2026-01-01T00:00:00Z",
                             "vouched": True},
               "machine-b": {"pushed_at": "9999-12-31T23:59:59Z",
                             "vouched": False}}
-    source, unvouched, ignored = sync._choose_setup_source(setups,
-                                                           ["machine-a"],
-                                                           False)
-    assert source == "machine-a"
-    assert unvouched is False
-    assert ignored == ["machine-b"]
+    assert sync._choose_setup_source(setups) == ("machine-a", ["machine-b"])
 
 
 # --- src: what a stored MANIFEST is allowed to name --------------------------
@@ -379,7 +379,7 @@ def test_a_case_variant_of_carryons_own_state_is_not_written(paired, capsys):
     resolves to the same file."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".Carryon/master.key", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "master.key").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -395,7 +395,7 @@ def test_a_case_variant_of_carryons_config_is_not_written(paired, capsys):
     planted one turns the next push into arbitrary $HOME file publication."""
     author_setup(paired.dest_root, "machine-a",
                  [item(".CARRYON/config.json", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
     before = (paired.home_b / ".carryon" / "config.json").read_bytes()
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
@@ -413,7 +413,7 @@ def test_a_src_no_adapter_declares_is_not_written(paired, capsys):
         item(".zshrc", "claude/settings.json"),
         item(".ssh/authorized_keys", "claude/settings.json"),
     ])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -433,7 +433,7 @@ def test_force_does_not_turn_an_undeclared_src_into_a_write_anywhere(
     (paired.home_b / "mnt").symlink_to(outside)
     author_setup(paired.dest_root, "machine-a",
                  [item("mnt/evil.sh", "claude/settings.json")])
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True, force=True), paired.home_b) == 0
     capsys.readouterr()
@@ -492,7 +492,7 @@ def test_a_missing_packed_file_is_named_rather_than_silently_dropped(
      / "claude" / "CLAUDE.md").unlink()
     # re-stamped AFTER the deletion: the missing-file naming under test is
     # the MANIFEST item's, not the authentication tag's
-    remac_setup(paired.dest_root, "machine-a", paired.home_a)
+    reseal_setup(paired.dest_root, "machine-a", paired.home_a)
 
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
@@ -502,19 +502,36 @@ def test_a_missing_packed_file_is_named_rather_than_silently_dropped(
         "a stored file the Destination removed is not reported at all"
 
 
-def test_a_bare_file_where_a_setup_tree_belongs_does_not_abort_the_pull(
+def test_a_pre_sealing_setup_tree_is_named_and_does_not_abort_the_pull(
         paired, capsys):
     """An attacker-triggered abort after the History has been laid down is
-    still an abort. A key that names no directory of its own is not a Setup."""
-    tree = paired.dest_root / "carryon" / "setups" / "machine-a"
-    for path in sorted(tree.rglob("*"), reverse=True):
-        path.unlink() if path.is_file() else path.rmdir()
-    tree.rmdir()
-    tree.write_text("not a Setup")
+    still an abort.
 
-    assert sync.pull(ns(apply=True), paired.home_b) == 0
+    This was the other way up: it asserted that a bare FILE where a Setup
+    tree belonged was not a Setup. ADR-0014 swapped which shape is correct -
+    a Setup is one object now - so the shape that has to be named and
+    survived is its opposite, a directory per machine, which is what an
+    Archive written before sealing holds.
+
+    It is not restored, and it must not be: nothing in a plaintext tree says
+    a key holder wrote it, which is the whole of why sealing happened. What
+    this pins is that it is refused BY NAME and the pull still finishes, so
+    an Archive from before the change fails loudly rather than either
+    silently restoring or taking the run down with it.
+    """
+    setups = paired.dest_root / "carryon" / "setups"
+    (setups / "machine-a.tar.enc").unlink()
+    legacy = setups / "machine-a" / "claude"
+    legacy.mkdir(parents=True)
+    (legacy / "settings.json").write_text(EVIL_SETTINGS)
+
+    assert sync.pull(ns(apply=True), paired.home_b) == 2
     out = capsys.readouterr().out
-    assert "Setup:" in out
+
+    assert "machine-a" in out, "the pre-sealing tree is not named at all"
+    assert "sealed" in out, "the report does not say why it cannot be used"
+    assert not (paired.home_b / ".claude" / "settings.json").exists(), \
+        "a plaintext Setup tree was restored (ADR-0014)"
 
 
 def test_a_machine_name_no_destination_key_can_hold_is_skipped_not_fatal(
@@ -543,10 +560,16 @@ def test_a_machine_name_no_destination_key_can_hold_is_skipped_not_fatal(
 def test_a_setup_named_dot_does_not_enter_the_catalogue(paired):
     """'.' passes require_key, so leaving the name check to it would admit a
     machine whose stored Setup is the setups/ directory itself - a competitor
-    in the tie-break that no push ever wrote."""
-    assert sync._machine_name_refusal(".", has_tree=True) is not None
-    assert sync._machine_name_refusal("..", has_tree=True) is not None
-    assert sync._machine_name_refusal("machine-a", has_tree=True) is None
+    in the tie-break that no push ever wrote.
+
+    `has_tree` has gone from the signature rather than from this assertion:
+    the second question it answered - whether anything was stored UNDER the
+    name - is meaningless now that a Setup IS one object, and the shape half
+    is the whole of what a name has to pass.
+    """
+    assert sync._machine_name_refusal(".") is not None
+    assert sync._machine_name_refusal("..") is not None
+    assert sync._machine_name_refusal("machine-a") is None
 
 
 def test_every_manifest_item_is_either_written_or_refused(tmp_path, paired):
@@ -611,9 +634,9 @@ def test_a_symlinked_home_is_still_neutralised(tmp_path, capsys):
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(real)) == [], \
+    assert archive_plaintext_containing(dest_root, str(real)) == [], \
         "the Archive names the machine's real home"
-    assert files_containing(dest_root, str(home)) == []
+    assert archive_plaintext_containing(dest_root, str(home)) == []
 
 
 def test_a_path_outside_home_is_withheld_from_the_archive(tmp_path, capsys):
@@ -634,7 +657,7 @@ def test_a_path_outside_home_is_withheld_from_the_archive(tmp_path, capsys):
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(shared)) == [], \
+    assert archive_plaintext_containing(dest_root, str(shared)) == [], \
         "an external path outside $HOME reached the Archive verbatim"
 
 
@@ -701,7 +724,7 @@ def test_a_captured_files_content_names_no_home(tmp_path, capsys):
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     capsys.readouterr()
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "the captured files name this machine's home"
 
 
@@ -725,11 +748,11 @@ def test_a_file_that_is_not_utf8_does_not_carry_the_home_into_the_archive(
     assert sync.push(ns(apply=True, category=SETUP_CATEGORIES), home) == 0
     out = capsys.readouterr().out
 
-    assert files_containing(dest_root, str(home)) == [], \
+    assert archive_plaintext_containing(dest_root, str(home)) == [], \
         "a file that is not UTF-8 carried this machine's home to the Archive"
     assert "notes.bin" in out, \
         "a file the push declined to neutralise must be named in the report"
-    assert files_containing(dest_root, "Ship it.") != [], \
+    assert archive_plaintext_containing(dest_root, "Ship it.") != [], \
         "the rest of the skill still travels"
 
 

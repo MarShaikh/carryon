@@ -996,8 +996,21 @@ def test_the_help_text_does_not_promise_a_setup_holds_no_credential():
             "not the same as proven to hold nothing")
 
 
-def test_the_help_text_still_says_the_two_halves_differ():
-    """The control: dropping the overclaim must not drop the distinction."""
+def test_the_help_text_still_names_both_halves_and_the_one_promise():
+    """The control: dropping the overclaim must not drop what is left.
+
+    This was `..._still_says_the_two_halves_differ`, and ADR-0014 withdrew the
+    instruction it was built on - the halves no longer differ in what carryon
+    promises about them, which is the whole decision. What survives is that
+    the description still names both (they are what the tool carries, and a
+    user who reads only `--help` has to learn that a History travels too) and
+    still states the one promise there is now: everything carried is
+    encrypted.
+
+    Matched on the stem rather than on `encrypted`, which is what broke here:
+    the description reads "encrypts what it carries" and a test pinned to one
+    conjugation fails on a rewording that keeps the promise intact.
+    """
     description = cli.build_parser().description.lower()
     assert "setup" in description and "history" in description
-    assert "encrypted" in description
+    assert "encrypt" in description

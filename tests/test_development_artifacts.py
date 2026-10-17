@@ -233,10 +233,17 @@ def test_doctor_says_what_it_would_decline(tmp_path):
 
 # --- the gate this must never become ---------------------------------------
 
-def test_the_scanner_still_reads_everything_that_survives(tmp_path):
+def test_the_scanner_still_reads_everything_that_survives(tmp_path, capsys):
     """Positive control. Nothing about credentials may depend on the prune
     list: the scan runs over everything left, and a hit in a carried file is
-    still a hit."""
+    still reported by name.
+
+    It asserted a refusal until ADR-0014, which is a different fact about the
+    same scan - the hit is found either way, and what changed is what carryon
+    does about it. Asserted on the REPORT rather than the exit code for that
+    reason: what this test is about is the scanner's reach, and an exit code
+    would pin the posture instead.
+    """
     home = build_home(tmp_path)
     (home / ".claude" / "skills" / "mine" / "SKILL.md").write_text(
         f"token: {JWT}\n")
@@ -244,7 +251,11 @@ def test_the_scanner_still_reads_everything_that_survives(tmp_path):
 
     code, _ = run(home, out)
 
-    assert code == 2, "a credential in a carried file still fails the scan"
+    printed = capsys.readouterr().out
+    assert "SKILL.md" in printed, \
+        "a credential in a carried file was not reported"
+    assert "jwt" in printed
+    assert code == 0, "reported, not refused (ADR-0014)"
 
 
 def test_the_state_gate_does_not_consult_the_prune_list(tmp_path):
