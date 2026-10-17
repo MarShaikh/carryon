@@ -168,6 +168,23 @@ cannot author. Pairing hands a new machine the mark the pairing machine had.
 _Avoid_: version, sync state (it records how far this machine has got, nothing
 about what was pushed)
 
+**Base**:
+For one per-project memory file, the version this machine and the Archive last
+agreed on. Kept here, like the High-water mark, because it records what this
+machine has seen. It is what tells an edit apart from a divergence. If only one
+side has moved off the Base, that side wins, on push and on pull alike. Only when
+both have moved is it a divergence. A file with no Base falls back to the
+prefix rule.
+_Avoid_: ancestor, parent (those name a commit graph carryon does not keep)
+
+**Resolve**:
+To tell carryon that a filed divergence has been merged by hand: this machine's
+copy now includes the Archive's copy that was filed beside it. The filed copy
+becomes the file's Base, so the next push carries the merge. It is always
+something the user does on purpose, never inferred from a filed copy going
+missing.
+_Avoid_: accept, mark merged
+
 **Authenticated**:
 Retired by ADR-0014. It named a Setup a master key holder had pushed, as
 against one anybody could have — a distinction that existed because a keyless
@@ -241,8 +258,9 @@ that abandons an Archive, so say which one is meant.
 
 **"Memory"** names things in both halves, with opposite safety properties. The
 per-project notes that accrete beside a project's Transcripts are a History:
-unioned per file, never deleted, and a divergence is filed rather than
-resolved. An agent that keeps its memories in one install-wide tree instead —
+unioned per file and never deleted. One side's edit is carried, judged
+against the file's Base. A divergence is filed, and stays filed until the user
+Resolves it. An agent that keeps its memories in one install-wide tree instead —
 partitioned by a path recorded inside each file rather than by directory — has
 them in its Setup, where a pull overwrites any file of the same name from
 whichever machine's Setup was chosen and leaves the rest. The word says nothing
