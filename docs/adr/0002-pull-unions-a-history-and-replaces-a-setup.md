@@ -108,10 +108,20 @@ conflict stays a conflict. A file with no Base, whether recorded or readable,
 gets exactly the old prefix rule. A missing Base can only make carryon more
 cautious.
 
+The Base is asked first, and the prefix rule only when the Base does not
+decide. Suppose another machine deletes the last line of a file. Its copy is
+now a byte-prefix of this machine's. The prefix rule alone calls that 'this
+machine is ahead', so pull keeps the old copy. Then this machine's push finds
+that the Archive has moved and skips. Nothing would ever change, because each
+leg would be applying a different rule to the same file.
+
 A Base is recorded only with `--apply`, and only after the write it describes
 has succeeded: on push once the Destination holds the file, and on pull once the
 file is laid down or found the same or ahead. Pull never records one for a
-conflict. Pairing hands over no Bases, because a joining machine holds none of
+conflict. A push or pull that finds a project's whole tree the same as the
+Index records a Base for every file in it. That is how a machine that pushed
+before the Base existed gets Bases before its first edit, rather than meeting
+the bare prefix rule again. Pairing hands over no Bases, because a joining machine holds none of
 the files. If `state.json` will not read, that is the High-water mark's rule:
 one warning, and no Bases for that run.
 
