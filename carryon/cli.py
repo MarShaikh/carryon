@@ -56,7 +56,8 @@ import pathlib
 import stat
 import sys
 
-from . import __version__, capture, config, crypto, external, layout, sync
+from . import (__version__, capture, config, crypto, external, layout,
+               resolve, sync)
 # No HOME here on purpose: it is bound at import in adapters/__init__, and
 # every command below asks pathlib.Path.home() for itself instead.
 from .adapters import ADAPTERS, CATEGORIES, is_installed
@@ -481,6 +482,16 @@ def cmd_pull(args) -> int:
     return sync.pull(args, pathlib.Path.home())
 
 
+def cmd_resolve(args) -> int:
+    """End a filed divergence in per-project memory (ADR-0002, amendment of
+    2026-10-17). Each path names a memory file on this machine, and
+    resolve.run matches it against what discovery found there."""
+    home = pathlib.Path.home()
+    args.paths = [_named_path(raw, "PATH", FILE_TO_READ, home)
+                  for raw in args.paths]
+    return resolve.run(args, home)
+
+
 def cmd_pair(args) -> int:
     return sync.pair(args, pathlib.Path.home())
 
@@ -626,6 +637,23 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"subset of: {', '.join(CATEGORIES)}, or all "
                           "(default: history)")
     syn.set_defaults(func=cmd_sync)
+
+    res = sub.add_parser(
+        "resolve",
+        help="end a divergence in per-project memory once you have merged "
+             "the Archive's filed copy by hand",
+        description="A pull that finds a memory file changed on both "
+                    "machines keeps the local copy and files the Archive's "
+                    "under ~/.carryon/conflicts/<project>/. Merge it into "
+                    "the local copy, then resolve that path: the filed copy "
+                    "becomes the file's Base, so the next push carries your "
+                    "merge. With no paths, lists what is filed. Sessions "
+                    "have no Base and cannot be resolved this way.")
+    res.add_argument("paths", nargs="*", metavar="PATH",
+                     help="the local memory file, as the pull report named it")
+    res.add_argument("--apply", action="store_true",
+                     help="actually resolve (default: dry run)")
+    res.set_defaults(func=cmd_resolve)
 
     par = sub.add_parser(
         "pair", help="mint a one-time code that hands another machine the "

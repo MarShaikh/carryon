@@ -1115,31 +1115,55 @@ def member_verdict(target, incoming: bytes, home) -> str:
     on a descriptor for a directory raises IsADirectoryError, so a check
     written after it sits behind the call that makes it unreachable.
     """
+    outcome, local = _read_local(target)
+    if outcome is not None:
+        return outcome
+    canon, _, _, _ = canonical_member(target.name, local, home)
+    return _VERDICTS[compare_main(canon, incoming)]
+
+
+def local_canonical(target, home):
+    """This machine's copy of one member in canonical form, or None when
+    there is no regular file there that will read.
+
+    The same read member_verdict makes, for the caller that has a Base to
+    ask (ADR-0002, amendment of 2026-10-17). None means the Base has nothing
+    to judge, and member_verdict's answer stands.
+    """
+    outcome, local = _read_local(target)
+    if outcome is not None:
+        return None
+    canon, _, _, _ = canonical_member(target.name, local, home)
+    return canon
+
+
+def _read_local(target):
+    """(None, bytes) for a regular file that reads, else (the verdict that
+    stands for what is there, None). member_verdict's docstring carries the
+    reasoning for each branch."""
     try:
         fd = os.open(str(target),
                      os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                      | getattr(os, "O_NONBLOCK", 0))
     except OSError as exc:
         if exc.errno in (errno.ENOENT, errno.ENOTDIR):
-            return WRITE
-        return CONFLICT
+            return WRITE, None
+        return CONFLICT, None
     except ValueError:
-        return CONFLICT
+        return CONFLICT, None
     try:
         info = os.fstat(fd)
     except OSError:
         os.close(fd)
-        return CONFLICT
+        return CONFLICT, None
     if not stat.S_ISREG(info.st_mode):
         os.close(fd)
-        return WRITE
+        return WRITE, None
     try:
         with os.fdopen(fd, "rb") as handle:
-            local = handle.read()
+            return None, handle.read()
     except OSError:
-        return CONFLICT
-    canon, _, _, _ = canonical_member(target.name, local, home)
-    return _VERDICTS[compare_main(canon, incoming)]
+        return CONFLICT, None
 
 
 # --- change detection --------------------------------------------------------

@@ -51,8 +51,8 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-from . import (archive, capture, choosing, config, crypto, destinations,
-               external, history, keyring, prompting, rekey)
+from . import (archive, bases, capture, choosing, config, crypto,
+               destinations, external, history, keyring, prompting, rekey)
 from .adapters import ADAPTERS, CATEGORIES, HISTORY, SETUP_CATEGORIES
 from .destinations.base import printable
 
@@ -85,7 +85,8 @@ from .session import (_canonical_members, _choose_local_copy,  # noqa: F401
                       _main_mismatch, _members_hash, _no_history_here,
                       _push_skip_reason, _rel_to_home, _report_deferred,
                       _report_other_copies, _report_refused,
-                      _residue_skip_reason, _restore_root, _stored_members)
+                      _residue_mismatch, _residue_skip_reason, _restore_root,
+                      _stored_members)
 from .setup_in import (_declared_paths, _restore_setup_item,  # noqa: F401
                        _setup_target, _setup_writes)
 from .setup_out import (_canon_home, _home_forms,  # noqa: F401
@@ -444,6 +445,10 @@ def push(args, home) -> int:
         name: {refusal.key for refusal in index_refused
                if refusal.catalogue == name}
         for name in ("sessions", "projects")}
+    # Read before the mark below is written, because that write replaces a
+    # state.json that would not read, and with it the warning that the
+    # Bases in it were lost.
+    known_bases = bases.load(home, cfg["destination"]) if do_history else {}
     if apply:
         # Removal first: it is the more specific reading of the same missing
         # number, and it names what actually happened.
@@ -557,6 +562,7 @@ def push(args, home) -> int:
     # History half: incremental per Session against the Index (ADR-0003).
     sessions_pushed = sessions_unchanged = sessions_skipped = 0
     residues_pushed = residues_unchanged = residues_skipped = 0
+    agreed_bases = {}   # {cwd: {member: canonical bytes}} the Archive now holds
     credential_files = []
     missing_cwd = ()
     withheld_history = ()
@@ -661,6 +667,10 @@ def push(args, home) -> int:
             entry = index["projects"].get(cwd)
             if entry is not None and entry.get("tree_hash") == th:
                 residues_unchanged += 1
+                # The same tree on both sides is an agreement about every
+                # file in it, and recording it is how a machine that pushed
+                # before the Base existed gets one before its first edit.
+                agreed_bases[cwd] = members
                 continue
             if isinstance(entry, dict):
                 # Residue was exempt from the union rule entirely: put_project
@@ -672,7 +682,8 @@ def push(args, home) -> int:
                 # from - truncated it in the Archive and deleted files it never
                 # had. ADR-0002 calls a History an accumulation; a residue is
                 # part of one.
-                why = _residue_skip_reason(dest, master, cwd, entry, members)
+                why = _residue_skip_reason(dest, master, cwd, entry, members,
+                                           known_bases.get(cwd))
                 if why is not None:
                     residues_skipped += 1
                     print(f"  skip     {printable(cwd)} - {why}")
@@ -696,6 +707,7 @@ def push(args, home) -> int:
             archive.put_project(dest, master, cwd, tar_bytes, meta)
             index["projects"][cwd] = meta
             index_changed = True
+            agreed_bases[cwd] = members
 
     if apply and setup_pushed:
         # The seal already says a key holder wrote this Setup (ADR-0014).
@@ -707,6 +719,14 @@ def push(args, home) -> int:
         archive.save_index(dest, master, index)
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
+    if apply:
+        # After the Index is sealed, so a Base never records an agreement
+        # with a stored tree the Index does not name. A push replaces the
+        # stored tree whole, so it replaces the project's Bases whole too.
+        for cwd, members in agreed_bases.items():
+            bases.record(home, cfg["destination"], cwd,
+                         {rel: bases.digest(data)
+                          for rel, data in members.items()}, replace=True)
 
     # The report, in one place, so the two halves stay side by side. Both are
     # encrypted (ADR-0014); they differ in the unit they are refused in,
@@ -944,6 +964,12 @@ def pull(args, home) -> int:
     # Read before the mark is raised, since recording this pull's revision
     # would make the rollback invisible to the Setup half below.
     rolled_back = _rollback_note(home, cfg["destination"], index)
+    # Before the mark is written, as on push: that write replaces a
+    # state.json that would not read.
+    known_bases = bases.load(home, cfg["destination"]) if do_history else {}
+    # One directory per pull for every file it replaces, Setup items and
+    # memory files alike, so everything one run wrote over is in one place.
+    backup_root = _backup_root(home)
     if apply:
         # A dry run is a plan and writes nothing under $HOME, high-water
         # mark included; it still reads the mark to warn.
@@ -1226,7 +1252,7 @@ def pull(args, home) -> int:
     # loop above applies and the same one push already refuses a residue over.
     # A residue is memory - the notes that accrete beside a project's
     # Transcripts - so it is part of a History and accumulates like one.
-    residue_written = residue_kept = residue_conflicts = 0
+    residue_written = residue_kept = residue_conflicts = residue_replaced = 0
     local_residues = {_canon_home(r.cwd, home): r
                       for r in (local.residues if local is not None else ())
                       if r.cwd}
@@ -1258,6 +1284,13 @@ def pull(args, home) -> int:
                           "Archive's copy against; nothing was written"))
                 continue
             if _members_hash(local_members) == meta.get("tree_hash"):
+                if apply:
+                    # The same tree on both sides is an agreement about every
+                    # file in it - how a machine with no Bases gets them.
+                    bases.record(home, cfg["destination"], cwd,
+                                 {rel: bases.digest(data)
+                                  for rel, data in local_members.items()},
+                                 replace=True)
                 continue
         root = _restore_root(agent, cwd, effective, home, maps)
         # printable, because `cwd` is a key out of the Index's projects
@@ -1274,15 +1307,32 @@ def pull(args, home) -> int:
                 # out mid-walk, with part of the memory already laid down.
                 tar_bytes = archive.get_project(dest, master, cwd,
                                                 meta.get("object"))
-                _stored_members(tar_bytes, meta.get("object"))
+                stored = _stored_members(tar_bytes, meta.get("object"))
             except archive.ObjectRefused as exc:
                 unrestorable.append((cwd, str(exc)))
                 unopenable.append((cwd, str(exc)))
                 continue
+            # Before a byte is written: under the Base, a replayed residue
+            # would win over the current memory it is older than.
+            why = _residue_mismatch(stored, meta)
+            if why is not None:
+                why = f"{why}; nothing was written"
+                unrestorable.append((cwd, why))
+                unopenable.append((cwd, why))
+                continue
             r_deferred, r_refused, r_conflicted = [], [], []
+            r_agreed, r_replaced = {}, []
             written, kept, r_near, r_bare, r_non = _extract_tree(
                 tar_bytes, root, home, maps, deferred=r_deferred,
-                refused=r_refused, conflicted=r_conflicted)
+                refused=r_refused, conflicted=r_conflicted,
+                bases=known_bases.get(cwd, {}), backup_root=backup_root,
+                agreed=r_agreed, replaced=r_replaced)
+            bases.record(home, cfg["destination"], cwd, r_agreed)
+            for target in r_replaced:
+                print(f"  replace  ~/{printable(_rel_to_home(target, home))}"
+                      " - another machine's edit; this machine's copy is "
+                      f"backed up under {printable(str(backup_root))}")
+            residue_replaced += len(r_replaced)
             residue_written += written
             residue_kept += kept
             rk_near += r_near
@@ -1302,7 +1352,9 @@ def pull(args, home) -> int:
                     rel = _rel_to_home(target, home)
                     print(f"  conflict ~/{printable(rel)} - divergent; local "
                           "kept, incoming under "
-                          f"{printable(str(conflict_dir))}")
+                          f"{printable(str(conflict_dir))}. Merge it into "
+                          "the local copy, then `carryon resolve "
+                          f"~/{printable(rel)} --apply`")
                 c_deferred, c_refused = [], []
                 _extract_tree(
                     tar_bytes, conflict_dir, home, maps, into_state=True,
@@ -1505,11 +1557,10 @@ def pull(args, home) -> int:
                         setup_refused += 1
                         print(f"  refuse   {label}: {reason}")
                     do, skip = external.plan(writes, home, force=force)
-                    # One directory per pull, minted here rather than per item so
-                    # every file this run replaces is recoverable from one place
-                    # (ADR-0002), and named through a helper so the same run never
-                    # writes into a directory an earlier run made.
-                    backup_root = _backup_root(home)
+                    # backup_root is minted once at the top of this pull, so
+                    # every file this run replaces is recoverable from one
+                    # place (ADR-0002), and named through a helper so the same
+                    # run never writes into a directory an earlier run made.
                     state_ids = config.state_identities(home)
                     prefix = archive.setup_prefix(source)
                     for target, source_path in do:
@@ -1585,11 +1636,17 @@ def pull(args, home) -> int:
                   "deliberately not built")
         print(f"Project residue: {residue_written} file(s) written, "
               f"{residue_kept} kept (this machine's copy is ahead)")
+        if residue_replaced:
+            print(f"Project residue: {residue_replaced} memory file(s) "
+                  "replaced by another machine's edit; this machine's copies "
+                  f"are backed up under {printable(str(backup_root))}")
         if residue_conflicts:
             print(f"Project residue: {residue_conflicts} memory file(s) "
                   "were divergent - the local copy is kept and the "
                   "Archive's is under ~/.carryon/conflicts/<project>/ "
-                  "(ADR-0002); neither copy overwrote the other")
+                  "(ADR-0002); neither copy overwrote the other. Merge each "
+                  "by hand, then `carryon resolve <path> --apply`; "
+                  "`carryon resolve` lists them")
         if history_refused:
             print(f"History: {history_refused} file(s) NOT written - this "
                   "machine would not take the write (named above); "
