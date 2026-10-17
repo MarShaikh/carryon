@@ -702,12 +702,18 @@ def push(args, home) -> int:
             residues_pushed += 1
             if not apply:
                 continue
+            # Hashed over what was PACKED, not over the read above: a live
+            # agent writing between the two reads would otherwise leave an
+            # Index whose tree_hash describes bytes the object does not hold,
+            # and the binding check would then refuse that project on both
+            # legs for good.
+            packed = _stored_members(tar_bytes)
             meta = {"agent": residue.agent, "machine": machine,
-                    "tree_hash": th, "pushed_at": now}
+                    "tree_hash": _members_hash(packed), "pushed_at": now}
             archive.put_project(dest, master, cwd, tar_bytes, meta)
             index["projects"][cwd] = meta
             index_changed = True
-            agreed_bases[cwd] = members
+            agreed_bases[cwd] = packed
 
     if apply and setup_pushed:
         # The seal already says a key holder wrote this Setup (ADR-0014).
@@ -723,10 +729,10 @@ def push(args, home) -> int:
         # After the Index is sealed, so a Base never records an agreement
         # with a stored tree the Index does not name. A push replaces the
         # stored tree whole, so it replaces the project's Bases whole too.
-        for cwd, members in agreed_bases.items():
-            bases.record(home, cfg["destination"], cwd,
-                         {rel: bases.digest(data)
-                          for rel, data in members.items()}, replace=True)
+        bases.record(home, cfg["destination"],
+                     {cwd: _member_bases(members)
+                      for cwd, members in agreed_bases.items()},
+                     replace=True)
 
     # The report, in one place, so the two halves stay side by side. Both are
     # encrypted (ADR-0014); they differ in the unit they are refused in,
@@ -887,6 +893,11 @@ def _parse_maps(pairs) -> list:
     if why is not None:
         raise SystemExit(why)
     return maps
+
+
+def _member_bases(members: dict) -> dict:
+    """{member: Base} for a tree of canonical bytes."""
+    return {rel: bases.digest(data) for rel, data in members.items()}
 
 
 def _backup_root(home) -> pathlib.Path:
@@ -1253,6 +1264,10 @@ def pull(args, home) -> int:
     # A residue is memory - the notes that accrete beside a project's
     # Transcripts - so it is part of a History and accumulates like one.
     residue_written = residue_kept = residue_conflicts = residue_replaced = 0
+    # {cwd: {member: Base}}, written once after the loop rather than once per
+    # project: a whole tree found unchanged, members pulled or kept, and the
+    # Archive copies filed as conflicts.
+    unchanged_bases, pulled_bases, filed_bases = {}, {}, {}
     local_residues = {_canon_home(r.cwd, home): r
                       for r in (local.residues if local is not None else ())
                       if r.cwd}
@@ -1287,10 +1302,7 @@ def pull(args, home) -> int:
                 if apply:
                     # The same tree on both sides is an agreement about every
                     # file in it - how a machine with no Bases gets them.
-                    bases.record(home, cfg["destination"], cwd,
-                                 {rel: bases.digest(data)
-                                  for rel, data in local_members.items()},
-                                 replace=True)
+                    unchanged_bases[cwd] = _member_bases(local_members)
                 continue
         root = _restore_root(agent, cwd, effective, home, maps)
         # printable, because `cwd` is a key out of the Index's projects
@@ -1321,13 +1333,14 @@ def pull(args, home) -> int:
                 unopenable.append((cwd, why))
                 continue
             r_deferred, r_refused, r_conflicted = [], [], []
-            r_agreed, r_replaced = {}, []
+            r_replaced = []
+            pulled_bases[cwd], filed_bases[cwd] = {}, {}
             written, kept, r_near, r_bare, r_non = _extract_tree(
                 tar_bytes, root, home, maps, deferred=r_deferred,
                 refused=r_refused, conflicted=r_conflicted,
                 bases=known_bases.get(cwd, {}), backup_root=backup_root,
-                agreed=r_agreed, replaced=r_replaced)
-            bases.record(home, cfg["destination"], cwd, r_agreed)
+                agreed=pulled_bases[cwd], replaced=r_replaced,
+                filed=filed_bases[cwd])
             for target in r_replaced:
                 print(f"  replace  ~/{printable(_rel_to_home(target, home))}"
                       " - another machine's edit; this machine's copy is "
@@ -1346,7 +1359,7 @@ def pull(args, home) -> int:
                 # to. Nothing there can collide with a Session's: a project
                 # directory is derived from an absolute cwd (ADR-0006), so it
                 # begins with the separator's '-', and a UUID never does.
-                conflict_dir = home / ".carryon" / "conflicts" / root.name
+                conflict_dir = bases.project_conflict_dir(home, root)
                 residue_conflicts += len(r_conflicted)
                 for target, _name in r_conflicted:
                     rel = _rel_to_home(target, home)
@@ -1362,6 +1375,11 @@ def pull(args, home) -> int:
                     deferred=c_deferred, refused=c_refused)
                 history_deferred += _report_deferred(c_deferred, home)
                 history_refused += _report_refused(c_refused, home)
+
+    if apply:
+        bases.record(home, cfg["destination"], unchanged_bases, replace=True)
+        bases.record(home, cfg["destination"], pulled_bases)
+        bases.record_filed(home, cfg["destination"], filed_bases)
 
     # Setup half: replace wholesale after a backup (ADR-0002), deferring to
     # whatever already owns a path (ADR-0007).

@@ -22,6 +22,7 @@ machine.
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 from . import bases, config, history
@@ -41,19 +42,31 @@ def _filed(home, residue, rel) -> pathlib.Path:
     return bases.project_conflict_dir(home, residue.project_dir) / rel
 
 
+def _identity(path):
+    """(device, inode) of the file a path names, or None. Identity rather
+    than spelling, because a path typed from inside a project can reach the
+    same file by '..', a relative step, or a linked directory such as macOS's
+    /var -> /private/var, and every one of those must name it."""
+    try:
+        info = os.stat(str(path))
+    except (OSError, ValueError):
+        return None
+    return info.st_dev, info.st_ino
+
+
 def _find(path, residues, sessions, home):
-    """(residue, member) for the memory file at `path`, or a refusal."""
+    """(residue, member) for the memory file at `path`, or a refusal,
+    matched by file identity (see _identity)."""
     target = pathlib.Path(path).expanduser()
-    if not target.is_absolute():
-        target = pathlib.Path.cwd() / target
-    for residue in residues:
+    wanted = _identity(target)
+    for residue in residues if wanted else ():
         root = home / residue.project_dir
         for rel in residue.files:
-            if root / rel == target:
+            if _identity(root / rel) == wanted:
                 return residue, rel
-    for session in sessions:
+    for session in sessions if wanted else ():
         root = home / session.project_dir
-        if any(root / rel == target for rel in session.files):
+        if any(_identity(root / rel) == wanted for rel in session.files):
             raise SystemExit(
                 f"refusing to resolve {printable(str(target))}: it belongs to "
                 f"Session {printable(session.uuid)}, and only per-project "
@@ -64,11 +77,17 @@ def _find(path, residues, sessions, home):
         "per-project memory file carryon carries, so nothing is filed for it")
 
 
-def _plan(path, found, home):
+def _plan(path, found, home, spec):
     """(local, filed, project conflicts dir, cwd, member, Base) for one
-    path, or a refusal. Every
-    path is planned before anything changes, so one bad path leaves all of
-    them as they were."""
+    path, or a refusal. Every path is planned before anything changes, so
+    one bad path leaves all of them as they were.
+
+    The Base is the hash pull recorded for the copy it filed: the canonical
+    bytes it compared, which the expanded file cannot always reproduce (a
+    `--map` pull, for one). A conflict filed before that record existed
+    falls back to re-canonicalising the filed file; if that comes out
+    different, the next run just files a fresh conflict.
+    """
     residues = [r for r in found.residues if r.cwd]
     residue, rel = _find(path, residues, found.sessions, home)
     local = home / residue.project_dir / rel
@@ -85,10 +104,14 @@ def _plan(path, found, home):
                          f"~/{printable(_rel_to_home(local, home))}: the filed "
                          f"copy at {printable(str(filed))} will not read - "
                          f"{state.why}")
-    canon, _, _, _ = history.canonical_member(rel, state.value, home)
+    cwd = _canon_home(residue.cwd, home)
+    base = bases.filed_base(home, spec, cwd, rel)
+    if base is None:
+        canon, _, _, _ = history.canonical_member(rel, state.value, home)
+        base = bases.digest(canon)
     return (local, filed,
             bases.project_conflict_dir(home, residue.project_dir),
-            _canon_home(residue.cwd, home), rel, bases.digest(canon))
+            cwd, rel, base)
 
 
 def _prune(directory: pathlib.Path, stop: pathlib.Path) -> None:
@@ -134,14 +157,27 @@ def run(args, home) -> int:
     paths = getattr(args, "paths", None) or []
     if not paths:
         return _list(found, home)
-    plans = [_plan(path, found, home) for path in paths]
+    plans, seen = [], set()
+    for path in paths:
+        plan = _plan(path, found, home, cfg["destination"])
+        if plan[1] not in seen:   # two spellings of one file resolve once
+            seen.add(plan[1])
+            plans.append(plan)
     for local, filed, stop, cwd, rel, base in plans:
         print(f"  resolve  ~/{printable(_rel_to_home(local, home))} - the "
               f"filed copy becomes its Base, and {printable(str(filed))} "
               "is removed")
         if not apply:
             continue
-        bases.record(home, cfg["destination"], cwd, {rel: base})
+        if not bases.resolve_member(home, cfg["destination"], cwd, rel, base):
+            # The Base IS the resolution. Without it the filed copy is the
+            # only record of what was merged, so it stays, and the user is
+            # not told the next push carries anything.
+            raise SystemExit(
+                f"could not record the Base for "
+                f"~/{printable(_rel_to_home(local, home))} (said above), so "
+                f"nothing was resolved and {printable(str(filed))} is still "
+                "filed. Fix ~/.carryon/state.json and run this again.")
         filed.unlink()
         _prune(filed.parent, stop)
     if apply:

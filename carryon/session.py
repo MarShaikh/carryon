@@ -384,7 +384,7 @@ def _expand_member(name: str, data: bytes, home, maps) -> tuple:
 def _extract_tree(tar_bytes, root, home, maps,
                   into_state=False, deferred=None, refused=None,
                   only=None, conflicted=None, what=None, bases=None,
-                  backup_root=None, agreed=None, replaced=None):
+                  backup_root=None, agreed=None, replaced=None, filed=None):
     """Expand a packed tree under `root` by ADR-0002's rule, per member.
     Returns (written, kept, near_misses, bare_tokens, non_utf8).
 
@@ -394,7 +394,9 @@ def _extract_tree(tar_bytes, root, home, maps,
     to another machine's edit is first copied under `backup_root`, then named
     in `replaced`. `agreed` collects {member: Base} for every member this
     machine now agrees with the Archive on: written, the same, or ahead. It
-    is never filled for a conflict, a deferral or a refusal.
+    is never filled for a conflict, a deferral or a refusal. `filed` collects
+    {member: Base} of each incoming copy named in `conflicted`, which is what
+    `carryon resolve` later makes that member's Base.
 
     An existing local file is replaced only by a copy that extends it, kept
     when it is already ahead or identical, and named in `conflicted` when
@@ -488,14 +490,13 @@ def _extract_tree(tar_bytes, root, home, maps,
             if deferred is not None:
                 deferred.append((target, owner))
             continue
-        verdict = history.member_verdict(target, data, home)
+        verdict, local = history.verdict_and_local(target, data, home)
         # The Base is asked before the prefix rule decides (ADR-0002,
         # amendment of 2026-10-17): when only one side moved off it, that
         # side wins, even where the prefix rule reads the move as 'behind'.
         losing = None
         if bases is not None and member_name in bases \
                 and verdict != history.SAME:
-            local = history.local_canonical(target, home)
             moved = (None if local is None else
                      bases_mod.decide(local, data, bases[member_name]))
             if moved == bases_mod.LOCAL:
@@ -509,6 +510,8 @@ def _extract_tree(tar_bytes, root, home, maps,
                 # Set aside and named by the caller, which is the only one
                 # that can say which directory it goes in.
                 conflicted.append((target, member_name))
+                if filed is not None:
+                    filed[member_name] = bases_mod.digest(data)
             else:
                 # A caller that passes no list has nowhere further to put
                 # a second copy, because it IS the somewhere else: the
@@ -535,8 +538,6 @@ def _extract_tree(tar_bytes, root, home, maps,
                                     "over a memory file only where the copy "
                                     "it makes first is recoverable"))
                 continue
-            if replaced is not None:
-                replaced.append(target)
         out, m_near, m_bare, m_non = _expand_member(member_name, data,
                                                     home, maps)
         # Asked again where the bytes go, on the descriptor rather than on the
@@ -546,6 +547,10 @@ def _extract_tree(tar_bytes, root, home, maps,
             if refused is not None:
                 refused.append((target, why))
             continue
+        if losing is not None and replaced is not None:
+            # Only now: a write refused above replaced nothing, and the
+            # report must not say it did.
+            replaced.append(target)
         near += m_near
         bare += m_bare
         non_utf8 += m_non

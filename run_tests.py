@@ -184,6 +184,11 @@ class _Monkeypatch:
                                    else os.environ.pop(name, None)))
         os.environ[name] = value
 
+    def chdir(self, path):
+        old = os.getcwd()
+        self._undo.append(lambda: os.chdir(old))
+        os.chdir(str(path))
+
     def delenv(self, name, raising=True):
         if name not in os.environ:
             if raising:

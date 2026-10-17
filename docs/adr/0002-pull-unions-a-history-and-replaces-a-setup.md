@@ -161,9 +161,13 @@ pull's Setup backup, and the report names it.
 
 **A divergence ends when the user Resolves it.** Filing a conflict and keeping
 it filed forever leaves the user with nothing to do. `carryon resolve <path>`
-takes the local path of a memory file whose Archive copy was filed. It records
-the filed copy's canonical hash as that file's Base, then removes the filed
-copy. With no paths it lists the residue conflicts still filed. Without
+takes the local path of a memory file whose Archive copy was filed. It makes
+the filed copy that file's Base, then removes the filed copy. Specifically, it
+makes Base the hash that pull recorded, at filing time, of the canonical bytes
+it compared. It does not re-derive the hash from the filed file, because the
+file is expanded for this machine, possibly under `--map`, and expansion does
+not always run backwards. The Base is written before the filed copy is
+removed, and if it cannot be written nothing is removed. With no paths it lists the residue conflicts still filed. Without
 `--apply` it only plans. The user is saying "my copy now includes theirs", which
 in three-way terms means "theirs is my Base". The next push carries the merge.
 If the Archive has moved again since the conflict was filed, the Base is stale:

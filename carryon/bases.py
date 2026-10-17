@@ -32,6 +32,7 @@ from . import config
 from .highwater import _STATE_REPORTED, _state_path
 
 KEY = "bases"
+FILED = "filed_bases"   # the Archive copy each filed conflict holds
 
 # What the Base says about one file, when it says anything.
 LOCAL = "local"        # only this machine moved off the Base: its copy wins
@@ -103,37 +104,96 @@ def load(home, spec: str) -> dict:
     return out
 
 
-def record(home, spec: str, cwd: str, members: dict,
-           replace: bool = False) -> None:
-    """Write Bases for one project. `replace` drops every member not named,
-    which is what a push means: the stored tree is now exactly this one."""
-    if not members and not replace:
-        return
+def _update(home, change) -> bool:
+    """Read state.json once, let `change` edit it, write it once. True when
+    what was asked for is now on disk, including when nothing needed writing.
+    False, said once, when it is not, so a caller whose promise depends on
+    the write can stop before making it."""
     state = _read(home)
     if state is None:
-        return
-    projects = state.get(KEY)
-    if not isinstance(projects, dict):
-        projects = {}
-    per_dest = projects.get(spec)
-    if not isinstance(per_dest, dict):
-        per_dest = {}
-    current = {} if replace else dict(per_dest.get(cwd) or {})
-    current.update(members)
-    if per_dest.get(cwd) == current:
-        return   # every unchanged push re-states its agreement; no rewrite
-    per_dest[cwd] = current
-    projects[spec] = per_dest
-    state[KEY] = projects
+        return False
+    before = json.dumps(state, sort_keys=True)
+    change(state)
+    if json.dumps(state, sort_keys=True) == before:
+        return True   # an unchanged push re-states its agreement; no rewrite
     path = _state_path(home)
     try:
         config.write_state_file(
             path, json.dumps(state, indent=2, sort_keys=True) + "\n")
     except (OSError, SystemExit) as exc:
-        _say_once(path, f"could not record Bases at {path} "
+        _say_once(f"{path}:write", f"could not record Bases at {path} "
                   f"({getattr(exc, 'strerror', None) or exc}). The memory "
                   "files they were for are judged by the prefix rule alone "
                   "until one can be written.")
+        return False
+    return True
+
+
+def _projects(state, key: str, spec: str) -> dict:
+    """state[key][spec], made into dicts wherever it is not one."""
+    table = state.get(key)
+    if not isinstance(table, dict):
+        table = state[key] = {}
+    per_dest = table.get(spec)
+    if not isinstance(per_dest, dict):
+        per_dest = table[spec] = {}
+    return per_dest
+
+
+def record(home, spec: str, projects: dict, replace: bool = False) -> bool:
+    """Write Bases for {cwd: {member: Base}}, in one write. `replace` drops
+    every member not named, which is what a push means: the stored tree is
+    now exactly this one."""
+    if not any(projects.values()) and not replace:
+        return True
+
+    def change(state):
+        per_dest = _projects(state, KEY, spec)
+        for cwd, members in projects.items():
+            current = {} if replace else dict(per_dest.get(cwd) or {})
+            current.update(members)
+            per_dest[cwd] = current
+    return _update(home, change)
+
+
+def record_filed(home, spec: str, projects: dict) -> bool:
+    """Remember the Base of each Archive copy a pull filed as a conflict.
+
+    The canonical bytes pull compared are the only exact record of that
+    copy. The filed file holds them expanded for this machine, possibly
+    under --map, and expansion does not always run backwards. So `resolve`
+    promotes this hash rather than re-deriving one from the file.
+    """
+    if not any(projects.values()):
+        return True
+
+    def change(state):
+        per_dest = _projects(state, FILED, spec)
+        for cwd, members in projects.items():
+            per_dest.setdefault(cwd, {}).update(members)
+    return _update(home, change)
+
+
+def filed_base(home, spec: str, cwd: str, member: str):
+    """The hash a pull recorded for the copy it filed, or None."""
+    state = _read(home) or {}
+    table = state.get(FILED)
+    entry = table.get(spec) if isinstance(table, dict) else None
+    entry = entry.get(cwd) if isinstance(entry, dict) else None
+    value = entry.get(member) if isinstance(entry, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def resolve_member(home, spec: str, cwd: str, member: str,
+                   base: str) -> bool:
+    """Make `base` the member's Base and forget the filed entry, in one
+    write. False when that write did not happen."""
+    def change(state):
+        _projects(state, KEY, spec).setdefault(cwd, {})[member] = base
+        filed = _projects(state, FILED, spec).get(cwd)
+        if isinstance(filed, dict):
+            filed.pop(member, None)
+    return _update(home, change)
 
 
 def project_conflict_dir(home, project_dir) -> pathlib.Path:

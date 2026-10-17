@@ -441,3 +441,87 @@ def test_resolve_refuses_a_session_transcript(diverged):
                         diverged.home_b)
     assert "Session" in str(exc.value)
     assert filed_copy(diverged.home_b).is_file()
+
+
+# --- review round: each one pinned ---------------------------------------------
+
+
+def test_a_memory_file_written_mid_push_cannot_wedge_the_project(
+        pair, monkeypatch, capsys):
+    """tree_hash came from one read and the tar from a second. An agent
+    writing between them left an Index describing bytes the object does not
+    hold, and the binding check then refused that project on both legs for
+    good."""
+    from carryon import history
+    pack = history.pack_session
+
+    def racing_pack(residue, home):
+        (memory(home) / "notes.md").write_text("written mid-push\n")
+        return pack(residue, home)
+    (memory(pair.home_a) / "notes.md").write_text("alpha\nBETA\ngamma\n")
+    monkeypatch.setattr(history, "pack_session", racing_pack)
+    assert sync.push(ns(apply=True), pair.home_a) == 0
+    monkeypatch.setattr(history, "pack_session", pack)
+
+    capsys.readouterr()
+    assert sync.push(ns(apply=True), pair.home_a) == 0
+    assert "not the version the Index records" not in capsys.readouterr().out
+    assert sync.pull(ns(apply=True), pair.home_b) == 0
+    assert (memory(pair.home_b) / "notes.md").read_text() == \
+        "written mid-push\n"
+
+
+def test_a_resolve_whose_base_cannot_be_written_resolves_nothing(diverged):
+    local = memory(diverged.home_b) / "notes.md"
+    (diverged.home_b / ".carryon" / "state.json").write_bytes(b"\xff not json")
+    with pytest.raises(SystemExit) as exc:
+        resolve.run(ns(paths=[str(local)], apply=True), diverged.home_b)
+    assert "nothing was resolved" in str(exc.value)
+    assert filed_copy(diverged.home_b).is_file(), \
+        "the filed copy went although no Base was recorded"
+
+
+def test_a_refused_write_is_not_reported_as_replaced(pair, monkeypatch,
+                                                     capsys):
+    from carryon import external
+    (memory(pair.home_a) / "notes.md").write_text("alpha\nBETA\ngamma\n")
+    assert sync.push(ns(apply=True), pair.home_a) == 0
+    real = external.write_owned
+    monkeypatch.setattr(
+        external, "write_owned",
+        lambda target, *a, **kw: (
+            "refused for this test" if target.name == "notes.md"
+            and ".carryon" not in target.parts
+            else real(target, *a, **kw)))
+    capsys.readouterr()
+    sync.pull(ns(apply=True), pair.home_b)
+    out = capsys.readouterr().out
+    assert "  replace  " not in out and "replaced by another" not in out
+    assert (memory(pair.home_b) / "notes.md").read_text() == NOTES
+
+
+def test_resolve_promotes_the_copy_pull_compared_not_the_file(diverged):
+    """The filed file is an expansion of what pull compared, and expansion
+    does not always run backwards. Here it is edited outright: the Base must
+    still be the Archive's copy."""
+    filed_copy(diverged.home_b).write_text("scribbled on\n")
+    local = memory(diverged.home_b) / "notes.md"
+    assert resolve.run(ns(paths=[str(local)], apply=True),
+                       diverged.home_b) == 0
+    assert bases_of(diverged.home_b, diverged)["memory/notes.md"] == \
+        sha("alpha\nFROM A\ngamma\n")
+
+
+def test_resolve_takes_a_path_spelled_with_dot_dot(diverged, monkeypatch):
+    monkeypatch.chdir(memory(diverged.home_b))
+    assert resolve.run(ns(paths=["../memory/notes.md"], apply=True),
+                       diverged.home_b) == 0
+    assert not filed_copy(diverged.home_b).exists()
+
+
+def test_two_spellings_of_one_file_resolve_it_once(diverged, monkeypatch):
+    monkeypatch.chdir(memory(diverged.home_b))
+    local = memory(diverged.home_b) / "notes.md"
+    assert resolve.run(ns(paths=["notes.md", str(local)], apply=True),
+                       diverged.home_b) == 0
+    assert not filed_copy(diverged.home_b).exists()

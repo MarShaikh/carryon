@@ -1115,26 +1115,23 @@ def member_verdict(target, incoming: bytes, home) -> str:
     on a descriptor for a directory raises IsADirectoryError, so a check
     written after it sits behind the call that makes it unreachable.
     """
-    outcome, local = _read_local(target)
-    if outcome is not None:
-        return outcome
-    canon, _, _, _ = canonical_member(target.name, local, home)
-    return _VERDICTS[compare_main(canon, incoming)]
+    return verdict_and_local(target, incoming, home)[0]
 
 
-def local_canonical(target, home):
-    """This machine's copy of one member in canonical form, or None when
-    there is no regular file there that will read.
+def verdict_and_local(target, incoming: bytes, home) -> tuple:
+    """(member_verdict's answer, this machine's copy in canonical form).
 
-    The same read member_verdict makes, for the caller that has a Base to
-    ask (ADR-0002, amendment of 2026-10-17). None means the Base has nothing
-    to judge, and member_verdict's answer stands.
+    The copy is None when there is no regular file there that will read.
+    One read for both, because the caller with a Base to ask (ADR-0002,
+    amendment of 2026-10-17) must judge the same bytes the verdict was
+    about: a live agent writing between two reads would otherwise get a
+    verdict on one version and a Base decision on another.
     """
     outcome, local = _read_local(target)
     if outcome is not None:
-        return None
+        return outcome, None
     canon, _, _, _ = canonical_member(target.name, local, home)
-    return canon
+    return _VERDICTS[compare_main(canon, incoming)], canon
 
 
 def _read_local(target):
