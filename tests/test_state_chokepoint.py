@@ -834,7 +834,7 @@ ALLOWED_READS = {
         "enforces read_carryable", ("open",)),
     ("crypto.py", "_run_bytes"): (
         "a temp file this process just wrote", ("read_bytes",)),
-    ("history.py", "member_verdict"): (
+    ("history.py", "_read_local"): (
         "the LOCAL file a write is compared against; nothing leaves - and it "
         "opens O_NOFOLLOW|O_NONBLOCK and requires S_ISREG, because a fifo "
         "there was a pull that hung for ever", ("open",)),
@@ -1027,6 +1027,15 @@ ALLOWED_REMOVALS = {
         "made, and nothing under $HOME is reachable from it", ("unlink",)),
     ("sync.py", "push"): ("carryon's own staging tree, swept after a clean "
                           "push", ("shutil.rmtree",)),
+    ("resolve.py", "run"): (
+        "the Archive's copy a pull filed under ~/.carryon/conflicts/, removed "
+        "only once the user has named its path and said they merged it "
+        "(ADR-0002, amendment of 2026-10-17) - carryon's own state, never a "
+        "file a pull landed in $HOME", ("unlink",)),
+    ("resolve.py", "_prune"): (
+        "the directories that resolve just emptied inside "
+        "~/.carryon/conflicts/<project>/; rmdir refuses one that is not "
+        "empty", ("rmdir",)),
 }
 
 

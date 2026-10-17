@@ -64,6 +64,7 @@ MODULES = (
     "tests.test_sync_hostile",
     "tests.test_push_union",
     "tests.test_pull_never_deletes",
+    "tests.test_residue_base",
     "tests.test_pull_member_union",
     "tests.test_setup_auth",
     "tests.test_setup_authorship",
@@ -182,6 +183,11 @@ class _Monkeypatch:
                                    if old is not None
                                    else os.environ.pop(name, None)))
         os.environ[name] = value
+
+    def chdir(self, path):
+        old = os.getcwd()
+        self._undo.append(lambda: os.chdir(old))
+        os.chdir(str(path))
 
     def delenv(self, name, raising=True):
         if name not in os.environ:

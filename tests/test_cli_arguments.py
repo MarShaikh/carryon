@@ -68,6 +68,8 @@ ARGUMENTS_THAT_NAME_A_PATH = {
     ("encrypt", "out"): "where the ciphertext goes",
     ("decrypt", "file"): "the file to decrypt",
     ("decrypt", "out"): "where the plaintext goes",
+    ("resolve", "paths"): "a local memory file whose filed divergence was "
+                          "merged by hand",
 }
 
 # User text that becomes a filesystem name somewhere ELSE, so the string half
@@ -116,6 +118,7 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("pull", "force"): "a flag",
     ("pull", "category"): "a subset of a known set - sync._subset, the one parser",
     ("sync", "apply"): "a flag",
+    ("resolve", "apply"): "a flag",
     ("sync", "category"): "a subset of a known set - sync._subset, the one parser",
     ("init", "join"): "a pairing code - sync.parse_pairing_code, which admits "
                       "16 characters from one alphabet and is a stricter door "
@@ -374,6 +377,8 @@ def command_for(subcommand, dest, value, tmp):
     readable = tmp / "readable.txt"
     if not readable.exists():
         readable.write_text("plaintext\n")
+    if subcommand == "resolve":
+        return ["resolve", value]
     if subcommand == "capture":
         base = ["capture", "--out", str(tmp / "out"), "--apply"]
         if dest == "out":
@@ -414,7 +419,7 @@ def test_every_path_argument_answers_a_bad_spelling_with_a_sentence(
         text = refusal_of(argv)
     capsys.readouterr()
 
-    flag = "FILE" if dest == "file" else "--" + dest
+    flag = {"file": "FILE", "paths": "PATH"}.get(dest, "--" + dest)
     assert flag in text, \
         f"the refusal does not say which argument was wrong: {text}"
     assert sorted(p.name for p in working.iterdir()) == [], \
@@ -657,6 +662,26 @@ def test_every_path_valued_argument_reaches_its_command_through_the_door():
             for inner in ast.walk(supplied):
                 if is_args_attribute(inner, dests):
                     guarded.add(inner.lineno)
+    # A repeatable path argument (`resolve PATH...`) is a list, so it goes
+    # through the door one element at a time - and only in this one shape:
+    # `args.X = [_named_path(v, ...) for v in args.X]`, where the element IS
+    # the call and nothing else reads the list on the way.
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.ListComp)):
+            continue
+        comp = node.value
+        if not (isinstance(comp.elt, ast.Call)
+                and isinstance(comp.elt.func, ast.Name)
+                and comp.elt.func.id == "_named_path"
+                and len(comp.generators) == 1
+                and is_args_attribute(comp.generators[0].iter, dests)
+                and len(node.targets) == 1
+                and is_args_attribute(node.targets[0], dests)
+                and node.targets[0].attr == comp.generators[0].iter.attr):
+            continue
+        guarded.update({node.targets[0].lineno,
+                        comp.generators[0].iter.lineno})
 
     stray = sorted({f"line {node.lineno}: args.{node.attr}"
                     for node in ast.walk(tree)

@@ -41,6 +41,7 @@ pip install git+https://github.com/MarShaikh/carryon
 | `push` | push this machine's Snapshot, encrypted: the Setup as one sealed object, the History as changed Sessions only — never one the Archive is ahead on. Needs the master key |
 | `pull` | lay the Archive down here: union the History, replace the Setup after a backup |
 | `sync` | carry the History both ways in one pass: pull what the Archive has, then push what it lacks — pull first, on purpose, and it never merges a Session two machines extended at once |
+| `resolve [PATH...]` | end a divergence in per-project memory after you have merged the Archive's filed copy by hand; with no paths, list what is filed |
 | `pair` | mint a one-time code that hands another machine the master key, via the Destination |
 | `list` | show detected agents and what would be captured |
 | `doctor` | check for layout changes: entries no adapter recognises |
@@ -65,7 +66,7 @@ stored, and the master key that opens the Archive is derived from it. Adding a
 machine uses a pairing code from `pair` instead — typing the recovery key back
 in is not a command yet, so keep a paired machine while that is true.
 
-`push`, `pull` and `capture` print a plan and change nothing without `--apply`;
+`push`, `pull`, `resolve` and `capture` print a plan and change nothing without `--apply`;
 `--help` on a subcommand lists its own flags (`--agent`, `--category`, `--map`,
 `--force`).
 
@@ -76,6 +77,18 @@ the report rather than silently overwritten. `--force` writes through a symlink
 or hard link on the Setup half; it still refuses a path no adapter here
 declares, one landing in carryon's own state, and anything that is not an
 ordinary file.
+
+Per-project memory (`MEMORY.md` and the notes beside it) gets edited in place,
+not only appended to, so carryon remembers the version of each memory file this
+machine and the Archive last agreed on: its Base. If only one machine has edited
+a file since then, that edit travels, on push and on pull. A pull that writes
+another machine's edit over yours backs your copy up first. If both machines
+edited the same file, the pull keeps yours and files the Archive's under
+`~/.carryon/conflicts/<project>/`. Merge it by hand, run
+`carryon resolve <path> --apply`, and the next push carries the merge. A memory
+file that was edited before upgrading has no Base yet. It gets one the first
+time a push or pull finds it in step with the Archive. A file still out of step
+then is filed by `pull --apply`, and needs that same merge and `resolve`.
 
 ## Destinations
 

@@ -33,7 +33,9 @@ import pathlib
 from typing import NamedTuple
 
 from . import archive, config, external, history
+from . import bases as bases_mod
 from .destinations.base import printable
+from .setup_in import _backed_up
 
 
 # --- naming a path, and what a Session's members come to ---------------------
@@ -144,7 +146,7 @@ def _index_veto(entry, canon: bytes):
     return None
 
 
-def _tree_behind_reason(stored: dict, local: dict):
+def _tree_behind_reason(stored: dict, local: dict, bases=None):
     """Why the local tree is not ahead of the stored one, or None.
 
     ADR-0002's union rule, raised from the main Transcript to the tree, which
@@ -159,6 +161,14 @@ def _tree_behind_reason(stored: dict, local: dict):
     Ahead means ahead everywhere: every member the Archive holds is present
     here, and this machine's copy of it starts with the stored bytes. Anything
     else is a skip with the same cure as any other behind-or-divergent case.
+
+    `bases` is a residue's {member: Base} (ADR-0002, amendment of
+    2026-10-17), and it is asked before the prefix rule. When only this
+    machine has moved off a member's Base, its copy wins, even a shortened
+    one, which the prefix rule would call behind. When only the Archive has
+    moved, push must not replace the tree, since that would undo the other
+    machine's edit. Here "pull first" really is the cure. A Session passes
+    none, because Transcripts only grow.
     """
     missing = sorted(rel for rel in stored if rel not in local)
     if missing:
@@ -170,6 +180,15 @@ def _tree_behind_reason(stored: dict, local: dict):
     for rel in sorted(stored):
         if local[rel] == stored[rel]:
             continue
+        moved = bases_mod.decide(local[rel], stored[rel],
+                                 (bases or {}).get(rel))
+        if moved == bases_mod.LOCAL:
+            continue
+        if moved == bases_mod.ARCHIVE:
+            return (f"the Archive's {printable(rel)} has changed since this "
+                    "machine last agreed with it - another machine's edit, "
+                    "which replacing the stored tree would undo; pull first "
+                    "(ADR-0002)")
         if local[rel].startswith(stored[rel]):
             continue
         return (f"this machine's {printable(rel)} is not an extension of the "
@@ -218,14 +237,15 @@ def _push_skip_reason(dest, master, session, entry, members: dict):
     return _tree_behind_reason(stored, members)
 
 
-def _residue_skip_reason(dest, master, cwd, entry, members: dict):
+def _residue_skip_reason(dest, master, cwd, entry, members: dict,
+                         bases=None):
     """Why push must leave this project's stored residue alone, or None.
 
     The Session rule with the main Transcript taken out of it: a residue has
     no main, so there is nothing to veto on and the stored object is always
     fetched before it is replaced. Residues are memory files - small, and one
     per project - so the download is not the cost it would be for a Session
-    tree.
+    tree. `bases` is this project's {member: Base}, see _tree_behind_reason.
     """
     try:
         stored = _stored_members(
@@ -235,7 +255,33 @@ def _residue_skip_reason(dest, master, cwd, entry, members: dict):
         return (f"could not fetch the Archive's copy to compare against "
                 f"({exc}) - nothing was overwritten; sort the Destination "
                 "out and push again")
-    return _tree_behind_reason(stored, members)
+    why = _residue_mismatch(stored, entry)
+    if why is not None:
+        return f"{why} - nothing was overwritten; investigate the Destination"
+    return _tree_behind_reason(stored, members, bases)
+
+
+def _residue_mismatch(stored: dict, meta):
+    """Why this tree is not the version of the residue the Index names, or
+    None.
+
+    _main_mismatch for a tree with no main Transcript. A label binds which
+    object a blob is, not which version, so an earlier authentic residue
+    served back unseals cleanly. Before the Base that was harmless: its files
+    were prefixes of the local ones, or conflicts, and the local copies
+    stayed. Under the Base it would win, because the local copy equals the
+    Base and the replayed one does not. The Index already records a
+    `tree_hash` over the canonical members, so checking costs one hash.
+
+    An entry with no `tree_hash` is not checked, because the alternative is
+    refusing every residue an older carryon wrote.
+    """
+    expected = meta.get("tree_hash")
+    if not expected or _members_hash(stored) == expected:
+        return None
+    return ("the Archive's stored memory for this project is not the version "
+            "the Index records - an older copy served back in place of the "
+            "current one")
 
 
 def _stored_members(tar_bytes, what=None) -> dict:
@@ -337,9 +383,20 @@ def _expand_member(name: str, data: bytes, home, maps) -> tuple:
 
 def _extract_tree(tar_bytes, root, home, maps,
                   into_state=False, deferred=None, refused=None,
-                  only=None, conflicted=None, what=None):
+                  only=None, conflicted=None, what=None, bases=None,
+                  backup_root=None, agreed=None, replaced=None, filed=None):
     """Expand a packed tree under `root` by ADR-0002's rule, per member.
     Returns (written, kept, near_misses, bare_tokens, non_utf8).
+
+    `bases`, `backup_root`, `agreed` and `replaced` are the residue leg's
+    (ADR-0002, amendment of 2026-10-17). `bases` is the project's
+    {member: Base}, asked before the prefix rule. A member that loses bytes
+    to another machine's edit is first copied under `backup_root`, then named
+    in `replaced`. `agreed` collects {member: Base} for every member this
+    machine now agrees with the Archive on: written, the same, or ahead. It
+    is never filled for a conflict, a deferral or a refusal. `filed` collects
+    {member: Base} of each incoming copy named in `conflicted`, which is what
+    `carryon resolve` later makes that member's Base.
 
     An existing local file is replaced only by a copy that extends it, kept
     when it is already ahead or identical, and named in `conflicted` when
@@ -433,19 +490,54 @@ def _extract_tree(tar_bytes, root, home, maps,
             if deferred is not None:
                 deferred.append((target, owner))
             continue
-        verdict = history.member_verdict(target, data, home)
+        verdict, local = history.verdict_and_local(target, data, home)
+        # The Base is asked before the prefix rule decides (ADR-0002,
+        # amendment of 2026-10-17): when only one side moved off it, that
+        # side wins, even where the prefix rule reads the move as 'behind'.
+        losing = None
+        if bases is not None and member_name in bases \
+                and verdict != history.SAME:
+            moved = (None if local is None else
+                     bases_mod.decide(local, data, bases[member_name]))
+            if moved == bases_mod.LOCAL:
+                verdict = history.KEEP
+            elif moved == bases_mod.ARCHIVE:
+                verdict = history.WRITE
+                if not data.startswith(local):
+                    losing = local
         if verdict != history.WRITE:
             if verdict == history.CONFLICT and conflicted is not None:
                 # Set aside and named by the caller, which is the only one
                 # that can say which directory it goes in.
                 conflicted.append((target, member_name))
+                if filed is not None:
+                    filed[member_name] = bases_mod.digest(data)
             else:
                 # A caller that passes no list has nowhere further to put
                 # a second copy, because it IS the somewhere else: the
                 # conflicts directory holds what an earlier pull set aside
                 # and a later one may only extend it.
                 kept += 1
+                if agreed is not None:
+                    agreed[member_name] = bases_mod.digest(data)
             continue
+        if losing is not None:
+            # Under the prefix rule a write never lost a byte, because the
+            # local file was inside the incoming one. This one replaces it
+            # with another machine's edit, and the version it replaces is
+            # nowhere else once that machine's push replaced the stored one.
+            # So the copy comes first, and no copy means no write.
+            why = ("no backup directory was given" if backup_root is None
+                   else _backed_up(target,
+                                   backup_root / _rel_to_home(target, home),
+                                   home))
+            if why is not None:
+                if refused is not None:
+                    refused.append((target, f"{why}. Nothing was replaced - "
+                                    "a pull writes another machine's edit "
+                                    "over a memory file only where the copy "
+                                    "it makes first is recoverable"))
+                continue
         out, m_near, m_bare, m_non = _expand_member(member_name, data,
                                                     home, maps)
         # Asked again where the bytes go, on the descriptor rather than on the
@@ -455,10 +547,16 @@ def _extract_tree(tar_bytes, root, home, maps,
             if refused is not None:
                 refused.append((target, why))
             continue
+        if losing is not None and replaced is not None:
+            # Only now: a write refused above replaced nothing, and the
+            # report must not say it did.
+            replaced.append(target)
         near += m_near
         bare += m_bare
         non_utf8 += m_non
         written += 1
+        if agreed is not None:
+            agreed[member_name] = bases_mod.digest(data)
     return written, kept, near, bare, non_utf8
 
 

@@ -78,6 +78,106 @@ because a residue is one sealed object too: every member the Archive holds has
 to be here and to be extended here, or the push skips it by name with the same
 cure.
 
+## An edit is judged against the Base
+
+> Amendment, 2026-10-17.
+
+The prefix rule assumes a file only grows. Transcripts do. Per-project memory
+does not: an agent rewrites a line of `MEMORY.md` in place as often as it adds
+one. Under the prefix rule, that edit became a divergence the moment it was
+made, and the divergence never ended. Push skipped the project and said "pull
+first". Pull filed the Archive's copy as a conflict and kept the local one. The
+next push compared against the same stored copy and skipped again. This
+happened on the first real Archive: a project's memory stayed frozen at its
+first push while the skip line kept naming a cure that could not work.
+Mirrored, the same bug is worse: another machine's in-place edit reached this
+one only as a filed conflict, and the stale local copy stayed put.
+
+So each per-project memory file has a **Base**. That is the canonical hash of
+the version this machine and the Archive last agreed on, kept in
+`~/.carryon/state.json` beside the High-water mark and keyed by Destination,
+project and file. Compared with its Base, a file can be in one of three states.
+If only this machine has moved off the Base, this machine's copy wins: push
+replaces the stored copy, and pull keeps the local one. If only the Archive has
+moved, the Archive's copy wins: pull writes it, and push skips the project,
+because push replaces the stored tree whole. This time "pull first" works:
+the pull lays the other machine's edit down, and the push after it goes
+through. If
+both have moved, the file has diverged: the prefix rule runs as before, and a
+conflict stays a conflict. A file with no Base, whether recorded or readable,
+gets exactly the old prefix rule. A missing Base can only make carryon more
+cautious.
+
+The Base is asked first, and the prefix rule only when the Base does not
+decide. Suppose another machine deletes the last line of a file. Its copy is
+now a byte-prefix of this machine's. The prefix rule alone calls that 'this
+machine is ahead', so pull keeps the old copy. Then this machine's push finds
+that the Archive has moved and skips. Nothing would ever change, because each
+leg would be applying a different rule to the same file.
+
+A Base is recorded only with `--apply`, and only after the write it describes
+has succeeded: on push once the Destination holds the file, and on pull once the
+file is laid down or found the same or ahead. Pull never records one for a
+conflict. A push or pull that finds a project's whole tree the same as the
+Index records a Base for every file in it. That is how a machine that pushed
+before the Base existed gets Bases before its first edit, rather than meeting
+the bare prefix rule again. Pairing hands over no Bases, because a joining machine holds none of
+the files. If `state.json` will not read, that is the High-water mark's rule:
+one warning, and no Bases for that run.
+
+It is per file rather than per project tree, although the Index already records
+a hash per tree, because two machines that edit different files of one project
+are the ordinary case. With a per-tree Base, one machine's added note would turn
+the other machine's in-place edit into a divergence.
+
+It covers per-project memory only. Transcripts are append-only, every divergence
+seen in one so far was a genuine fork, and a Base for every member of every
+Session would cost thousands of entries to answer a question nobody has hit. The
+Base lives only on this machine, so adding it for Sessions later changes nothing
+stored in the Archive.
+
+Deletions are out of scope. A file missing locally while the Archive holds it
+stays a skip, and here "pull first" does cure it: pull writes the file back.
+Making a deletion stick needs `--mirror`, which is deferred for the reason given
+under Consequences.
+
+**The fetched residue must be the one the Index names.** A label binds which
+object a blob is, not which version. Before the Base, an earlier authentic
+residue served back was harmless: its files were prefixes of the local ones, or
+conflicts, so pull kept the local copies. Under the Base it would win. The local
+copy equals the Base and the replayed one does not, so pull would write
+superseded memory over current memory at exit 0. So on both legs a fetched
+residue's members are hashed and compared with the Index entry's `tree_hash`
+before anything acts on them. A mismatch refuses that project by name and writes
+nothing. This is `_main_mismatch` for a tree with no main Transcript. Keeping
+the Index itself current is the High-water mark's job.
+
+**A pull that writes over a local file backs it up first.** Under the prefix
+rule a History pull never lost a byte, because the local file was inside the
+incoming one. A Base-write replaces the local copy with another machine's edit,
+and once that machine's push replaced the stored copy, the local version exists
+nowhere else. It goes under the same `~/.carryon/backups/<stamp>/` as that
+pull's Setup backup, and the report names it.
+
+**A divergence ends when the user Resolves it.** Filing a conflict and keeping
+it filed forever leaves the user with nothing to do. `carryon resolve <path>`
+takes the local path of a memory file whose Archive copy was filed. It makes
+the filed copy that file's Base, then removes the filed copy. Specifically, it
+makes Base the hash that pull recorded, at filing time, of the canonical bytes
+it compared. It does not re-derive the hash from the filed file, because the
+file is expanded for this machine, possibly under `--map`, and expansion does
+not always run backwards. The Base is written before the filed copy is
+removed, and if it cannot be written nothing is removed. With no paths it lists the residue conflicts still filed. Without
+`--apply` it only plans. The user is saying "my copy now includes theirs", which
+in three-way terms means "theirs is my Base". The next push carries the merge.
+If the Archive has moved again since the conflict was filed, the Base is stale:
+the next run files a fresh conflict, and nothing is lost. Treating a filed copy
+that has disappeared as resolved was rejected, because an accidental
+`rm -rf ~/.carryon/conflicts` would then read as a merge of everything. So was
+seeding Bases from the Index's `machine` field, because a machine name is
+config, not identity. A filed Session conflict is refused by name, because
+Sessions have no Base.
+
 ## Consequences
 
 **Pull never deletes, and "never" is per member.** A Transcript this machine
