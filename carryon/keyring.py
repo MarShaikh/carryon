@@ -55,10 +55,17 @@ def _corrupt(path=None) -> str:
     about a key it merely could not read.
     """
     where = f" at {path}" if path is not None else ""
+    entry = ("that file" if path is not None
+             else f"the keychain entry (service {SERVICE!r})")
+    # `init --recover` refuses a key it cannot read rather than writing over
+    # it (ADR-0004's 2026-10-18 amendment), so the step before it is said
+    # here: it is the cure for a machine whose key really is gone, and this
+    # one's is only gone once that entry is removed.
     return (f"the stored master key{where} is not the hex carryon wrote "
             "there - a truncated write or a synced folder's conflict copy is "
             "the usual cause. Put that file back, or pair this machine again "
-            "from one that still holds the key.")
+            f"from one that still holds the key, or remove {entry} and run "
+            "`carryon init --recover` with your recovery key.")
 
 
 def _decode(text: str, path=None) -> bytes:

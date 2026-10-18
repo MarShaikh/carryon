@@ -133,7 +133,11 @@ def confirm(question: str, default: bool = False) -> bool:
             return False
 
 
-def secret(question: str) -> str:
+_NO_CREDENTIAL = ("nothing was entered - a paste that did not take would be "
+                  "stored as a remote with no credential in it")
+
+
+def secret(question: str, blank: str = _NO_CREDENTIAL) -> str:
     """One secret, unechoed and untouched - no strip, because a credential is
     whatever the service issued and its whitespace is the service's business.
     It passes through carryon on its way to rclone's config and is never
@@ -145,11 +149,11 @@ def secret(question: str) -> str:
     rclone, stored permanently, failing on every use afterwards, under a
     line saying the credential had been stored. Whitespace-only counts as
     empty for the question and never for the value: what comes back is what
-    was typed.
+    was typed. `blank` is what a blank answer is told, because what it
+    would have cost depends on what the secret was for.
     """
     while True:
         answer = _next(_read_secret, f"{question}: ")
         if answer.strip():
             return answer
-        print("nothing was entered - a paste that did not take would be "
-              "stored as a remote with no credential in it")
+        print(blank)

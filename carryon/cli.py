@@ -577,10 +577,18 @@ def build_parser() -> argparse.ArgumentParser:
         "init", help="set up this machine: Destination, recovery key, config")
     ini.add_argument("--dest", metavar="SPEC",
                      help=f"the Destination: {SPEC_FORMS}")
-    ini.add_argument("--join", metavar="CODE",
-                     help="pairing code from `carryon pair` on an "
-                          "already-paired machine (in a terminal carryon "
-                          "asks for the Destination; scripts pass --dest)")
+    key_from = ini.add_mutually_exclusive_group()
+    key_from.add_argument("--join", metavar="CODE",
+                          help="pairing code from `carryon pair` on an "
+                               "already-paired machine (in a terminal "
+                               "carryon asks for the Destination; scripts "
+                               "pass --dest)")
+    key_from.add_argument("--recover", action="store_true",
+                          help="come back into an Archive with its recovery "
+                               "key, when no paired machine is left to pair "
+                               "from: carryon asks for it at a prompt, never "
+                               "as an argument, and keeps it only once it "
+                               "has opened the Archive's Index")
     ini.add_argument("--machine", metavar="NAME",
                      help="this machine's name in the Archive (default: hostname)")
     ini.set_defaults(func=cmd_init)

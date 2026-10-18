@@ -218,6 +218,13 @@ pairing is only as private as this half.
 **Recovery key**:
 The high-entropy secret that opens an Archive, generated once and kept by the
 user. The root of trust and the last resort; lose it and the History is gone.
+Recovery is how that last resort is used.
+
+**Recovery**:
+Giving a machine the master key by typing the recovery key back, rather than by
+Pairing. Only for a machine that holds no key, and only kept once it has opened
+the Archive's Index — a key that parses is not yet a key to this Archive.
+_Avoid_: restore (that is what a pull does to a Setup), reset (there is none)
 
 ### Handling credentials
 
