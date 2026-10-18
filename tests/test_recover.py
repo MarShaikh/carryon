@@ -212,6 +212,8 @@ def test_the_key_is_asked_before_the_destination(tmp_path, monkeypatch,
 
 
 def test_a_key_to_another_archive_is_refused(tmp_path, monkeypatch, capsys):
+    """Asked again rather than refused outright (review finding 5), so a
+    user who gives up stops at the next prompt - with nothing stored."""
     _, spec, _ = founded_archive(tmp_path, capsys)
     home = bare_home(tmp_path)
     before = snapshot(home)
@@ -221,9 +223,10 @@ def test_a_key_to_another_archive_is_refused(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         sync.init(ns(recover=True, dest=spec, machine="machine-b"), home)
 
-    message = str(exc.value)
-    assert "not the recovery key" in message
-    assert "nothing was stored" in message.lower()
+    out = capsys.readouterr().out
+    assert "not the recovery key" in out
+    assert "nothing has been stored" in out.lower()
+    assert "cancelled" in str(exc.value)
     assert_nothing_stored(home, before)
 
 
@@ -486,3 +489,174 @@ def test_the_corrupt_key_sentence_names_recover():
     message = keyring._corrupt(pathlib.Path("/x/master.key"))
     assert "carryon init --recover" in message
     assert "remove" in message.lower()
+
+
+# --- the review round --------------------------------------------------------
+
+
+def test_a_config_that_cannot_be_written_leaves_no_key(
+        tmp_path, monkeypatch, capsys):
+    """Finding 1. A key with no config is a machine every later `init
+    --recover` refuses as already holding a key; a config with no key is one
+    a re-run recovers on the kept-config path. So the config goes first."""
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    a_terminal(monkeypatch, key)
+
+    def full_disk(cfg, home):
+        raise SystemExit("could not write config.json: disk full")
+    monkeypatch.setattr(config, "save", full_disk)
+
+    with pytest.raises(SystemExit):
+        sync.init(ns(recover=True, dest=spec, machine="machine-b"), home)
+
+    assert keyring.fetch_master(home=home) is None
+
+
+def test_a_dest_spelt_differently_but_naming_the_same_place_agrees(
+        tmp_path, monkeypatch, capsys):
+    """Finding 2. The chooser stores '~/...' verbatim and a shell expands
+    '~' before carryon sees it, so the same Destination arrives in two
+    spellings."""
+    key, _, master = founded_archive(tmp_path, capsys)
+    home = tmp_path  # so that '~/archive' is the founded Archive
+    original = kept_config(home, "~/archive")
+    a_terminal(monkeypatch, key)
+
+    assert sync.init(ns(recover=True, dest=str(tmp_path / "archive")),
+                     home) == 0
+    assert config.config_path(home).read_bytes() == original
+    assert keyring.fetch_master(home=home) == master
+
+
+def test_a_config_that_will_not_load_says_to_fix_or_remove_it(
+        tmp_path, monkeypatch, capsys):
+    """Finding 3. load's own cure for a bad name is `init --machine NAME`,
+    which under --recover reaches the same load and refuses again."""
+    _, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    path = config.config_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"version": 1, "destination": "%s", "machine": "a/b", '
+                    '"excludes": [], "carry": []}\n' % spec)
+    before = snapshot(home)
+    prompts = a_terminal(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(recover=True, machine="good"), home)
+
+    message = str(exc.value)
+    assert str(path) in message
+    assert "init --recover" in message and "remove" in message.lower()
+    assert not prompts
+    assert_nothing_stored(home, before)
+
+
+def test_the_index_is_read_once(tmp_path, monkeypatch, capsys):
+    """Finding 4. One read: the bytes the key was proved against are the
+    bytes the revision comes from, and a remote Destination pays once."""
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    reads = []
+    real = destinations.directory.DirectoryDestination._read_blob
+
+    def counting(self, key_):
+        if key_ == archive.INDEX_KEY:
+            reads.append(key_)
+        return real(self, key_)
+    monkeypatch.setattr(destinations.directory.DirectoryDestination,
+                        "_read_blob", counting)
+    a_terminal(monkeypatch, key)
+
+    assert sync.init(ns(recover=True, dest=spec, machine="machine-b"),
+                     home) == 0
+    assert len(reads) == 1, reads
+
+
+def test_a_key_that_parses_but_does_not_open_is_asked_again_in_place(
+        tmp_path, monkeypatch, capsys):
+    """Finding 5. One wrong letter is still base32, so it parses - and
+    must not cost the Destination dialogue, which may have created an
+    rclone remote."""
+    key, spec, master = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    monkeypatch.setattr(destinations, "detect_candidates",
+                        lambda home=None: [(spec, "the archive")])
+    slip = ("B" if key[0] != "B" else "C") + key[1:]
+    prompts = a_terminal(monkeypatch, slip, "1", key)
+
+    assert sync.init(ns(recover=True, machine="machine-b"), home) == 0
+
+    assert len(prompts) == 3, "key, Destination, key - the menu once"
+    assert keyring.fetch_master(home=home) == master
+
+
+def test_a_removed_index_refusal_does_not_say_push(tmp_path, monkeypatch,
+                                                   capsys):
+    """Finding 6. A machine recovering has no key, so 'push afresh' is a
+    cure it cannot take."""
+    home = bare_home(tmp_path)
+    spec = str(tmp_path / "emptied")
+    (tmp_path / "emptied").mkdir()
+    kept_config(home, spec)
+    sync._record_revision(home, spec, 4)
+    key, _ = crypto.new_recovery_key()
+    a_terminal(monkeypatch, key)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(recover=True), home)
+
+    message = str(exc.value)
+    assert "refusing to recover" in message
+    assert "push afresh" not in message
+    assert "Nothing was stored" in message
+
+
+def test_a_blank_key_is_not_called_a_remote_credential(
+        tmp_path, monkeypatch, capsys):
+    """Finding 7."""
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    a_terminal(monkeypatch, "  ", key)
+
+    assert sync.init(ns(recover=True, dest=spec, machine="machine-b"),
+                     home) == 0
+    out = capsys.readouterr().out
+    assert "nothing was entered" in out
+    assert "remote" not in out.split("recovered as")[0]
+
+
+def test_handpicks_in_a_config_with_no_destination_survive(
+        tmp_path, monkeypatch, capsys):
+    """Finding 8. A config with no Destination yet is still somebody's
+    handpicking, and writing a fresh one over it dropped that silently."""
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    cfg = config.default_config()
+    cfg["machine"] = "chosen-name"
+    cfg["excludes"] = [".cursor/*"]
+    config.save(cfg, home)
+    a_terminal(monkeypatch, key)
+
+    assert sync.init(ns(recover=True, dest=spec), home) == 0
+
+    after = config.load(home)
+    assert after["destination"] == spec
+    assert after["excludes"] == [".cursor/*"]
+    assert after["machine"] == "chosen-name"
+
+
+def test_recover_says_once_per_command_that_state_is_unreadable(
+        tmp_path, monkeypatch, capsys):
+    """Finding 9. Recover reads the high-water mark, so it owns the
+    once-per-command warning like push and pull do."""
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    kept_config(home, spec)
+    sync._state_path(home).mkdir(parents=True)  # a directory: unreadable
+    sync._load_state(home)  # an earlier command in this process said so
+    capsys.readouterr()
+    a_terminal(monkeypatch, key)
+
+    assert sync.init(ns(recover=True), home) == 0
+    assert "would not read" in capsys.readouterr().out

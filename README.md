@@ -163,7 +163,7 @@ carryon init --recover
 carryon asks for the key at a prompt that does not echo. It never takes the key
 as an argument, and without a terminal it refuses. It keeps the key only once
 the key has opened the Archive's Index. A key from another Archive, or a typo
-that still parses, is refused with nothing stored. If this machine still has its
+that still parses, is asked for again with nothing stored, and Ctrl-D stops. If this machine still has its
 `config.json`, recovery uses that file's Destination and machine name and leaves
 the file exactly as it was, your excludes and handpicked paths included.
 

@@ -83,8 +83,10 @@ a pure string check, so a typo is re-asked before any Destination prompt and
 before the network. Next come the Destination and the reachability probe. Then
 comes the Archive's Index, opened under the derived master key. Only an Index
 that unseals lets the key be stored, and its revision becomes this machine's
-High-water mark. An Index that will not unseal is the wrong key for this
-Archive, and nothing is stored or written. No Index at all is refused too:
+High-water mark. If the Index will not unseal, the key is wrong for this
+Archive. carryon asks for the key again and tries it against the same Index,
+because one wrong letter still parses and should not cost the Destination
+dialogue. Nothing is stored until a key opens the Index. No Index at all is refused too:
 with an empty Destination there is nothing to recover, and plain `init` starts
 an Archive. With objects there and no Index, the Index-removal refusal applies.
 The alternative was to prove the key against a sealed Setup when the Index is

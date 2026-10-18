@@ -470,6 +470,17 @@ def load_index(dest, master_key: bytes) -> dict:
             f"could not open the Archive's Index at {INDEX_KEY}: this is the "
             "wrong recovery key, the Archive was not written by carryon, or "
             "what the Destination served is not the Index it was given")
+    return parse_index(raw)
+
+
+def parse_index(raw: bytes) -> dict:
+    """An Index from the bytes a seal opened to, validated.
+
+    Apart from load_index for the one caller that has to unseal for itself:
+    `init --recover` proves a key against the Index and then needs that same
+    Index, and reading it a second time would let the proof and the
+    catalogue come from different bytes.
+    """
     try:
         index = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError, RecursionError) as exc:
