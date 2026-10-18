@@ -106,9 +106,12 @@ that differs from the chosen name would make this machine a new one in the
 Archive. So when a valid config exists, `--recover` uses its Destination and
 machine name and leaves the file alone. A `--dest` or `--machine` that
 disagrees with it is refused, because changing either is not recovery. If that
-machine still has a High-water mark for the Destination, the rollback and
-Index-removal checks apply to the Index it reads, so the open risk above
-becomes a refusal there. `--join` overwriting an existing config is the same
+machine still has a High-water mark for the Destination, the Index it reads
+is checked the way a pull checks one, because recovery only reads the Archive.
+A removed Index is refused, and an older one is named in a warning, so on that
+machine the open risk above is no longer silent. A rollback is not refused.
+Recovery writes nothing that a stale catalogue could damage, and refusing
+would strand someone whose Destination really did lose a write. `--join` overwriting an existing config is the same
 gap in the sibling path. It is recorded here and left for a separate change.
 
 **It is only for a machine that holds no key.** `--recover` runs exactly where
