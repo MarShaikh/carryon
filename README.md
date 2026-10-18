@@ -153,7 +153,9 @@ A new laptop, a wiped keychain, a machine restored without its keychain: the
 cure depends on whether another machine still holds the key.
 
 - **Another machine still has it:** run `carryon pair` there and
-  `carryon init --join CODE` here, as in step 4.
+  `carryon init --join CODE` here, as in step 4. If this machine still has its
+  `config.json`, joining keeps it exactly as it was, so `--dest` can be left
+  off.
 - **No machine has it:** type the recovery key back in.
 
 ```bash
@@ -163,9 +165,12 @@ carryon init --recover
 carryon asks for the key at a prompt that does not echo. It never takes the key
 as an argument, and without a terminal it refuses. It keeps the key only once
 the key has opened the Archive's Index. A key from another Archive, or a typo
-that still parses, is asked for again with nothing stored, and Ctrl-D stops. If this machine still has its
-`config.json`, recovery uses that file's Destination and machine name and leaves
-the file exactly as it was, your excludes and handpicked paths included.
+that still parses, is asked for again with nothing stored, and Ctrl-D stops.
+
+Both ways keep a `config.json` this machine still has. They use that file's
+Destination and machine name and leave the file exactly as it was, your excludes
+and handpicked paths included. A `--dest` or `--machine` that disagrees with it
+is refused before anything is stored, and before a pairing code is spent.
 
 ## What moves
 

@@ -55,3 +55,62 @@ Someone migrating with nothing configured, whose machines are not on the same
 network, has no direct transfer. They configure a Destination first — a synced
 folder needs no account — or they use entangle, which does this well and
 continues to exist.
+
+## Joining keeps the config
+
+> Amendment, 2026-10-18.
+
+ADR-0004's amendment of the same date gave `init --recover` a rule for an
+existing config, and recorded that `--join` lacked it. `--join` now follows the
+same rule, because it is the same move: a key arrives on a machine that holds
+none. The usual machine is the one ADR-0014 describes, whose keychain entry is
+gone and whose `config.json` is not. Re-pairing it from another machine used to
+write a fresh config over that file. That undid its handpicked Items (ADR-0008)
+without saying so, and a hostname that differs from its chosen name made it a
+new machine in the Archive.
+
+So `--join` treats an existing config the way `--recover` does:
+
+- **A valid config that names a Destination is kept.** Its Destination and
+  machine name are used, and the file is not rewritten.
+- **A `--dest` or `--machine` that disagrees with it is refused.** Two specs
+  agree when they name the same place, so `~/…` and its expansion are one
+  Destination. Changing either is not joining this machine back.
+- **A config that names no Destination is built on.** Its handpicks stay, and
+  so does its machine name unless `--machine` gives another. Such a config has
+  never named an Archive, so no machine there carries that name yet. The
+  Destination is filled in.
+- **A config that will not load is refused,** with a cure that says to fix or
+  remove it. Overwriting it would throw away whatever in it was still good.
+
+Every one of these refusals comes before the code is spent. The code is
+one-time, so a refusal that came after the delete would cost the user the code
+as well. The checks are local and need no network, so they run straight after
+the code is parsed, before any Destination prompt.
+
+`carryon pair` prints the join command with `--dest`, and people paste it, so
+`--join` meets a `--dest` more often than `--recover` does. A spec that names
+the same place under another spelling passes. Two machines that reach one
+bucket through differently named rclone remotes are refused, although the place
+is the same. The refusal says to drop `--dest`, which is the cure, since the
+config already names the Destination.
+
+With a kept config, `--join CODE` needs neither `--dest` nor a terminal,
+because the config answers the question the prompt would ask. When the code
+finds no Archive or no pairing blob there, the refusal says the Destination
+came from the config and names the file, because the user typed no spec to
+check.
+
+The payload carries the revision the pairing machine read when it minted the
+code. If this machine kept a High-water mark ahead of that, the Archive has
+been rolled back, perhaps lost and begun again at the same place. `--join`
+warns, as `--recover` does, and does not refuse. The next push is the one that
+refuses.
+
+Plain `init` still writes a fresh config over an existing one. It is left alone
+on purpose. It makes a new Archive, and `confirm_fresh` already refuses a
+Destination that holds one, so it meets an existing config in two cases: a
+rotation into a fresh Archive, and starting again after an Archive is lost. In
+both the user usually wants a different Destination, so "keep the config and
+refuse a disagreeing `--dest`" is the wrong rule there. The right one, perhaps
+keeping the handpicks and taking the new Destination, is a separate decision.

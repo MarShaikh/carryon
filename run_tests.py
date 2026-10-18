@@ -48,6 +48,7 @@ MODULES = (
     "tests.test_provider_setup",
     "tests.test_init_dialogue",
     "tests.test_recover",
+    "tests.test_join_keeps_config",
     "tests.test_destinations",
     "tests.test_destinations_security",
     "tests.test_destinations_hostile",
