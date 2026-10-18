@@ -580,9 +580,10 @@ def build_parser() -> argparse.ArgumentParser:
     key_from = ini.add_mutually_exclusive_group()
     key_from.add_argument("--join", metavar="CODE",
                           help="pairing code from `carryon pair` on an "
-                               "already-paired machine (in a terminal "
-                               "carryon asks for the Destination; scripts "
-                               "pass --dest)")
+                               "already-paired machine. An existing config "
+                               "is kept, and names the Destination; "
+                               "otherwise carryon asks for it in a "
+                               "terminal, and scripts pass --dest")
     key_from.add_argument("--recover", action="store_true",
                           help="come back into an Archive with its recovery "
                                "key, when no paired machine is left to pair "
