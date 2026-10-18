@@ -76,8 +76,10 @@ So `--join` treats an existing config the way `--recover` does:
 - **A `--dest` or `--machine` that disagrees with it is refused.** Two specs
   agree when they name the same place, so `~/…` and its expansion are one
   Destination. Changing either is not joining this machine back.
-- **A config that names no Destination is built on.** Its machine name and its
-  handpicks stay, and the Destination is filled in.
+- **A config that names no Destination is built on.** Its handpicks stay, and
+  so does its machine name unless `--machine` gives another. Such a config has
+  never named an Archive, so no machine there carries that name yet. The
+  Destination is filled in.
 - **A config that will not load is refused,** with a cure that says to fix or
   remove it. Overwriting it would throw away whatever in it was still good.
 
@@ -94,7 +96,16 @@ is the same. The refusal says to drop `--dest`, which is the cure, since the
 config already names the Destination.
 
 With a kept config, `--join CODE` needs neither `--dest` nor a terminal,
-because the config answers the question the prompt would ask.
+because the config answers the question the prompt would ask. When the code
+finds no Archive or no pairing blob there, the refusal says the Destination
+came from the config and names the file, because the user typed no spec to
+check.
+
+The payload carries the revision the pairing machine read when it minted the
+code. If this machine kept a High-water mark ahead of that, the Archive has
+been rolled back, perhaps lost and begun again at the same place. `--join`
+warns, as `--recover` does, and does not refuse. The next push is the one that
+refuses.
 
 Plain `init` still writes a fresh config over an existing one. It is left alone
 on purpose. It makes a new Archive, and `confirm_fresh` already refuses a

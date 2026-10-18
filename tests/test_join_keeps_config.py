@@ -411,4 +411,76 @@ def test_init_help_says_a_kept_config_names_the_destination(capsys):
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["init", "--help"])
     text = " ".join(capsys.readouterr().out.split())
-    assert "An existing config is kept, and names the Destination" in text
+    assert "An existing config's Destination and name are used" in text
+    assert "a config that names no Destination" in text, \
+        "a config with no Destination does not answer the question (finding 10)"
+
+
+# --- review round ------------------------------------------------------------
+
+
+def test_a_mark_ahead_of_the_pairing_revision_is_warned_about(
+        tmp_path, monkeypatch, capsys):
+    """Finding 1. The pairing machine read the Index when it minted the code,
+    so a mark this machine kept that is ahead of it is a rollback - an
+    Archive lost and begun again at the same place. --recover warns there,
+    and the next push refuses; the join should not be the silent step."""
+    _, spec, code = paired_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    kept_config(home, spec)
+    sync._record_revision(home, spec, 50)
+
+    assert sync.init(ns(join=code), home) == 0
+    out = capsys.readouterr().out
+    assert "warning:" in out and "revision 50" in out
+
+
+def test_no_blob_at_a_kept_destination_names_the_config(
+        tmp_path, monkeypatch, capsys):
+    """Finding 2. The user typed no spec, so a refusal that says the code
+    was mistyped, or to check the spec, points away from the cause: the
+    config names another Archive."""
+    _, _, code = paired_archive(tmp_path, capsys)
+    other_home = bare_home(tmp_path, "home_other")
+    other = str(tmp_path / "other-archive")
+    assert sync.init(ns(dest=other, machine="other"), other_home) == 0
+    sync.pair(ns(), other_home)  # so that Archive holds objects of its own
+    home = bare_home(tmp_path)
+    kept_config(home, other)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(join=code), home)
+
+    message = str(exc.value)
+    assert "no pairing blob" in message
+    assert str(config.config_path(home)) in message and other in message
+
+
+def test_no_archive_at_a_kept_destination_names_the_config(
+        tmp_path, monkeypatch, capsys):
+    _, _, code = paired_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    kept_config(home, str(empty))
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(join=code), home)
+
+    message = str(exc.value)
+    assert "no Archive at" in message
+    assert str(config.config_path(home)) in message
+
+
+def test_needs_dest_says_the_code_is_still_good(tmp_path, monkeypatch,
+                                                 capsys):
+    """Finding 4. Every other refusal ahead of the spend says so."""
+    _, _, code = paired_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(join=code), home)
+
+    message = str(exc.value)
+    assert "needs --dest" in message
+    assert "the code is still good" in message

@@ -291,9 +291,9 @@ def _machine_name(args, fallback=None) -> str:
     (ADR-0005), and the recover leg has asked for the recovery key. A refused
     name must cost none of them.
 
-    `fallback` is the recover leg's: a config that names no Destination yet
-    may still name the machine, and that is the user's word over the
-    hostname's.
+    `fallback` is the legs that take a key (`_existing_config`): a config
+    that names no Destination yet may still name the machine, and that is
+    the user's word over the hostname's.
     """
     machine = args.machine or fallback or config.default_config()["machine"]
     why = config.machine_name_refusal(machine)
@@ -355,8 +355,9 @@ def _existing_config(args, home, leg: str, run: str, not_it: str,
     on; one that will not load is refused rather than written over.
 
     Returns the config, whether it is kept, the spec (None when nothing has
-    named one yet) and the machine name. Everything here is local, so each
-    leg calls it before its key, its code or the network can be spent.
+    named one yet), the machine name and the config's path. Everything here
+    is local, so each leg calls it before its key, its code or the network
+    can be spent.
     """
     path = config.config_path(home)
     try:
@@ -374,21 +375,47 @@ def _existing_config(args, home, leg: str, run: str, not_it: str,
         # A config with no Destination may still hold handpicks and a name,
         # so it is built on rather than replaced.
         return (cfg, False, args.dest,
-                _machine_name(args, fallback=cfg["machine"]))
+                _machine_name(args, fallback=cfg["machine"]), path)
     spec, machine = cfg["destination"], cfg["machine"]
-    disagree = []
-    if args.dest is not None and not _same_destination(args.dest, spec, home):
-        disagree.append(("--dest", args.dest, spec))
-    if args.machine is not None and args.machine != machine:
-        disagree.append(("--machine", args.machine, machine))
-    for flag, given, have in disagree[:1]:
-        raise SystemExit(
+
+    def disagrees(flag, given, have):
+        return SystemExit(
             f"{flag} {printable(given)!r} disagrees with this machine's "
             f"config, which says {printable(have)!r} ({path}). {leg} "
             "puts the key back and keeps the config as it is, so changing "
             f"either is not {not_it}: drop {flag}, or edit that file "
             f"first. {unspent}")
-    return cfg, True, spec, machine
+    if args.dest is not None and not _same_destination(args.dest, spec, home):
+        raise disagrees("--dest", args.dest, spec)
+    if args.machine is not None and args.machine != machine:
+        raise disagrees("--machine", args.machine, machine)
+    return cfg, True, spec, machine, path
+
+
+def _take_key(home, cfg, kept, spec, machine, master, revision) -> None:
+    """Store what a leg that takes a key has proved, config first.
+
+    A config with no key is a machine a re-run takes the key back on, by
+    the kept-config path; a key with no config is one every later `init`
+    refuses as already holding a key. So a config that is not kept is
+    written before the key (the recover leg's review finding 1). The
+    revision goes under the config's spelling of the spec, which is the one
+    every later push and pull looks the mark up by.
+    """
+    if not kept:
+        fresh = dict(cfg)
+        fresh["destination"] = spec
+        fresh["machine"] = machine
+        config.save(fresh, home)
+    keyring.store_master(master, home=home)
+    _record_revision(home, spec, revision)
+
+
+def _say_config(kept, path) -> None:
+    if kept:
+        print(f"kept the existing config at {path}")
+    else:
+        print(f"config written to {path}")
 
 
 def _recover(args, home) -> int:
@@ -411,8 +438,7 @@ def _recover(args, home) -> int:
             "at a prompt that does not echo, and carryon never reads one from "
             "a pipe or an argument. Nothing was stored.")
 
-    path = config.config_path(home)
-    cfg, kept, spec, machine = _existing_config(
+    cfg, kept, spec, machine, path = _existing_config(
         args, home, "Recovery", "carryon init --recover", "recovery",
         "Nothing was stored.")
 
@@ -477,23 +503,12 @@ def _recover(args, home) -> int:
     # user whose Destination really did lose a write - pull's reasoning.
     _warn_on_rollback(home, spec, index)
 
-    # The config before the key (review finding 1). A config with no key is
-    # a machine a re-run recovers on the kept-config path; a key with no
-    # config is one every later `init` refuses as already holding a key.
-    if not kept:
-        fresh = dict(cfg)
-        fresh["destination"] = spec
-        fresh["machine"] = machine
-        path = config.save(fresh, home)
-    keyring.store_master(master, home=home)
-    _record_revision(home, spec, archive.index_revision(index))
+    _take_key(home, cfg, kept, spec, machine, master,
+              archive.index_revision(index))
     choosing.report(dest)
     print(f"recovered as {machine!r}: this machine opens the Archive at "
           f"{dest.describe()} again")
-    if kept:
-        print(f"kept the existing config at {path}")
-    else:
-        print(f"config written to {path}")
+    _say_config(kept, path)
     return 0
 
 
@@ -508,11 +523,17 @@ def _join(args, home) -> int:
     # Then the config, still before anything that can spend the code: the
     # code is one-time, so a refusal after the delete below would cost the
     # user the code as well (ADR-0005's 2026-10-18 amendment).
-    path = config.config_path(home)
-    cfg, kept, spec, machine = _existing_config(
+    unspent = "Nothing was stored, and the code is still good."
+    cfg, kept, spec, machine, path = _existing_config(
         args, home, "Joining", "carryon init --join CODE",
-        "joining this machine back",
-        "Nothing was stored, and the code is still good.")
+        "joining this machine back", unspent)
+    # Where the spec came from, for the refusals below that would otherwise
+    # tell the user to check a spec they never typed (review finding 2).
+    from_config = (f" No --dest was given, so carryon looked at "
+                   f"{printable(spec)!r}, the Destination this machine's "
+                   f"config names ({path}). If the code is for another "
+                   "Archive, edit that file first."
+                   if kept and args.dest is None else "")
     if not spec:
         # The same prompts as the other leg, then the code is spent
         # (ADR-0011): the second machine is the one that ADR is about, and
@@ -525,7 +546,7 @@ def _join(args, home) -> int:
             raise SystemExit(
                 "--join needs --dest: a pairing code travels through the "
                 "Destination (ADR-0005), so name the same one the paired "
-                "machine uses")
+                f"machine uses. {unspent}")
     dest = destinations.from_spec(spec, home)
 
     # Read and delete are two steps, deliberately: the blob must survive a
@@ -539,11 +560,11 @@ def _join(args, home) -> int:
                 f"no Archive at {spec!r} - carryon found nothing "
                 "there at all. Check the spec against the one `carryon "
                 "pair` printed on the paired machine; a synced folder may "
-                "also still be syncing.")
+                "also still be syncing." + from_config)
         raise SystemExit(
             "no pairing blob for that code - mistyped, already used, or "
             "never minted. Run `carryon pair` on a paired machine for a "
-            "fresh one.")
+            "fresh one." + from_config)
     # The blob answered the join leg's occupancy question, so what is left
     # is reachability (ADR-0011) - and it runs BEFORE the unwrap because the
     # delete below is one-time: a code spent against a Destination this
@@ -579,29 +600,21 @@ def _join(args, home) -> int:
             "that pairing code expired (codes live 24 hours) and has now "
             "been deleted - mint a fresh one with `carryon pair`")
 
-    # The config before the key, as for --recover. A config with no key is
-    # a machine a fresh code joins on the kept-config path; a key with no
-    # config is one every later `init` refuses as already holding a key.
-    if not kept:
-        fresh = dict(cfg)
-        fresh["destination"] = spec
-        fresh["machine"] = machine
-        path = config.save(fresh, home)
-    keyring.store_master(payload["master_key"], home=home)
     # What this machine knows about the Archive before it has ever read it:
     # the revision the pairing machine saw. It arrived inside the wrap, so
     # the Destination could not have written it, and from here on an Archive
     # serving no Index is a removal rather than a fresh one (ADR-0009).
-    # Under the config's spelling, which is the one every later push and
-    # pull looks the mark up by.
-    _record_revision(home, spec, payload["index_revision"])
+    # The pairing machine read the Index to mint the code, so a mark this
+    # machine kept that is ahead of it is a rollback - --recover warns
+    # there, and so does this (review finding 1), rather than leave the
+    # next push to be the first to say so.
+    revision = payload["index_revision"]
+    _warn_on_rollback(home, spec, {"revision": revision})
+    _take_key(home, cfg, kept, spec, machine, payload["master_key"], revision)
     choosing.report(dest)
     print(f"paired as {machine!r}: this machine now opens the Archive at "
           f"{dest.describe()}")
-    if kept:
-        print(f"kept the existing config at {path}")
-    else:
-        print(f"config written to {path}")
+    _say_config(kept, path)
     if not burnt:
         print(f"warning: the pairing blob at {printable(key)} is still in the "
               "Archive, so that code is STILL LIVE until it expires (24 "
