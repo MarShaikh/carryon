@@ -149,6 +149,9 @@ the CLI takes a recovery key back; ADR-0004 records that absence and it is
 unchanged here. Building that command is the better answer and it is deliberately
 not in this decision's scope.
 
+That command now exists. `carryon init --recover` takes the recovery key back,
+and ADR-0004's 2026-10-18 amendment says how.
+
 ## Retiring a setting is not deleting a line
 
 `encrypt_all` cannot simply leave `default_config`. `config.validate` refuses
