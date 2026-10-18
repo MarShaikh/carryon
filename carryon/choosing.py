@@ -165,10 +165,34 @@ def confirm_joining(dest) -> None:
     before the unwrap, so a Destination that fails it leaves the blob in
     place and the code still good.
     """
-    _confirm_reachable(dest, joining=True)
+    _confirm_reachable(dest, _JOINING_TAIL)
 
 
-def _confirm_reachable(dest, joining: bool = False) -> None:
+def confirm_recovering(dest) -> None:
+    """The same probe for a machine typing its recovery key back, asked
+    before the key is proved against the Index (ADR-0004's 2026-10-18
+    amendment). Nothing is spent by a failure here, but a machine that
+    recovers onto a Destination it cannot write to holds a key it cannot
+    push with, so it is asked before the key is kept rather than after.
+    """
+    _confirm_reachable(dest, _RECOVERING_TAIL)
+
+
+_FRESH_TAIL = (
+    "No key was minted and no config was written on this machine. If "
+    "this init created an rclone remote, that remote is saved in "
+    "rclone's config and a re-run of `carryon init` will offer it as a "
+    "candidate. Fix the Destination and run `init` again.")
+_JOINING_TAIL = (
+    "The pairing code was NOT spent: the blob is still in the Archive, "
+    "and the same code works once the Destination is fixed - run the "
+    "same `carryon init --join` again.")
+_RECOVERING_TAIL = (
+    "Nothing was stored and no config was written on this machine. Fix "
+    "the Destination and run `carryon init --recover` again.")
+
+
+def _confirm_reachable(dest, tail: str = _FRESH_TAIL) -> None:
     """The probe, unless this type answers that probing it costs something
     a probe has no business spending - a git Destination, where every write
     is a commit that stays in history (the type says so itself, and the
@@ -179,22 +203,13 @@ def _confirm_reachable(dest, joining: bool = False) -> None:
     know differs: on a join, that the one-time code was NOT spent; on a
     fresh init, that nothing was minted - and that an rclone remote this
     dialogue created is not nothing, it survives in rclone's config and a
-    re-run will offer it.
+    re-run will offer it; on a recovery, that nothing was stored.
     """
     if dest.skips_probe() is not None:
         return
     why = archive.reachable(dest)
     if why is None:
         return
-    tail = (
-        "The pairing code was NOT spent: the blob is still in the Archive, "
-        "and the same code works once the Destination is fixed - run the "
-        "same `carryon init --join` again."
-        if joining else
-        "No key was minted and no config was written on this machine. If "
-        "this init created an rclone remote, that remote is saved in "
-        "rclone's config and a re-run of `carryon init` will offer it as a "
-        "candidate. Fix the Destination and run `init` again.")
     raise SystemExit(
         f"{dest.describe()} did not pass the reachability probe: {why}.\n"
         "carryon writes a few random bytes, reads them back and deletes "

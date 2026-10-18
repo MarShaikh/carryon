@@ -192,7 +192,9 @@ def _require_master(home, for_push: bool = False) -> bytes:
     if master is None:
         cure = ("this machine holds no master key - run `carryon init`, or "
                 "`carryon init --join CODE --dest SPEC` with a code from "
-                "`carryon pair` on an already-paired machine")
+                "`carryon pair` on an already-paired machine, or `carryon "
+                "init --recover` with your recovery key if no paired machine "
+                "is left")
         if for_push:
             cure += (". Everything carryon carries is encrypted, a Setup "
                      "included, so there is nothing a keyless push could "
@@ -226,19 +228,13 @@ def init(args, home) -> int:
             "Archive. Remove it deliberately (keychain service 'carryon') "
             "before running init again.")
 
-    machine = args.machine or config.default_config()["machine"]
-    why = config.machine_name_refusal(machine)
-    if why is not None:
-        # Here rather than at `config.save`, which is where `validate` would
-        # have caught it: by then this leg has minted and stored a master key
-        # (so a second `init` refuses, saying this machine already holds one)
-        # and the join leg has already DELETED the pairing blob, which is
-        # one-time by design (ADR-0005). A refused name must cost neither.
-        raise SystemExit(
-            f"machine name {printable(machine)!r}: {why}."
-            + ("" if args.machine else
-               " That is this machine's hostname; name it explicitly with "
-               "`carryon init --machine NAME`."))
+    if getattr(args, "recover", False):
+        # Ahead of the machine-name check below, because a recovering machine
+        # that kept its config takes its name from there and not from the
+        # hostname - a hostname no name may be must not block it.
+        return _recover(args, home)
+
+    machine = _machine_name(args)
 
     if args.join:
         return _join(args, home, machine)
@@ -283,6 +279,148 @@ def init(args, home) -> int:
     print()
     print("Put it in your password manager now. It is the only way back into")
     print("the Archive if this machine's keychain is lost; there is no reset.")
+    return 0
+
+
+def _machine_name(args) -> str:
+    """This machine's name for a fresh config, or a refusal naming why not.
+
+    Here rather than at `config.save`, which is where `validate` would have
+    caught it: by then this leg has minted and stored a master key (so a
+    second `init` refuses, saying this machine already holds one), the join
+    leg has already DELETED the pairing blob, which is one-time by design
+    (ADR-0005), and the recover leg has asked for the recovery key. A refused
+    name must cost none of them.
+    """
+    machine = args.machine or config.default_config()["machine"]
+    why = config.machine_name_refusal(machine)
+    if why is not None:
+        raise SystemExit(
+            f"machine name {printable(machine)!r}: {why}."
+            + ("" if args.machine else
+               " That is this machine's hostname; name it explicitly with "
+               "`carryon init --machine NAME`."))
+    return machine
+
+
+def _ask_recovery_key() -> bytes:
+    """The master key, from a recovery key typed at the terminal.
+
+    Re-asked rather than refused on a parse error: the parse is a pure string
+    check, so a typo costs nothing yet, and making someone re-run the command
+    to correct one character of 32 would cost them the Destination dialogue
+    as well. End of input cancels, as every question does.
+    """
+    print("Type the recovery key `carryon init` printed when this Archive "
+          "was made. It is not echoed.")
+    while True:
+        typed = prompting.secret("recovery key")
+        try:
+            return crypto.parse_recovery_key(typed)
+        except crypto.CryptoError as exc:
+            print(f"{exc} - try again")
+
+
+def _recover(args, home) -> int:
+    """`init --recover`: take a recovery key back (ADR-0004's 2026-10-18
+    amendment).
+
+    The order is the decision. A terminal first, because the key is asked
+    for and never read from anywhere else. Then everything that can be
+    refused without the key - a config the flags disagree with, a machine
+    name no Archive may hold. Then the key, re-asked until it parses. Then
+    the Destination, its probe, and the Index the key has to open. Only
+    after the Index has opened is anything stored, so every refusal on the
+    way leaves this machine exactly as it was.
+    """
+    if not prompting.available():
+        raise SystemExit(
+            "--recover needs a terminal: a recovery key is typed by a person, "
+            "at a prompt that does not echo, and carryon never reads one from "
+            "a pipe or an argument. Nothing was stored.")
+
+    cfg = config.load(home)
+    kept = bool(cfg["destination"])
+    if kept:
+        # The machine whose keychain entry is gone and whose config is not:
+        # its Destination, its name and its handpicks are already decided,
+        # and a fresh config would undo the handpicks and, under another
+        # name, make this a new machine in the Archive.
+        spec, machine = cfg["destination"], cfg["machine"]
+        for flag, given, have in (("--dest", args.dest, spec),
+                                  ("--machine", args.machine, machine)):
+            if given is not None and given != have:
+                raise SystemExit(
+                    f"{flag} {printable(given)!r} disagrees with this "
+                    f"machine's config, which says {printable(have)!r} "
+                    f"({config.config_path(home)}). Recovery puts the key "
+                    "back and keeps the config as it is, so changing either "
+                    f"is not recovery: drop {flag}, or edit that file first. "
+                    "Nothing was stored.")
+    else:
+        machine = _machine_name(args)
+        spec = args.dest
+
+    master = _ask_recovery_key()
+    if spec is None:
+        spec = choosing.choose_destination(
+            home, destinations.detect_candidates(home))
+    dest = destinations.from_spec(spec, home)
+    choosing.confirm_recovering(dest)
+
+    # The proof. Asked of the seal directly rather than read off
+    # load_index's refusal, which answers 'wrong key' and 'not carryon's
+    # Index' in one sentence - and here the first is the likely one, and
+    # the user needs to know nothing was kept.
+    blob = dest.read(archive.INDEX_KEY)
+    if blob is not None:
+        try:
+            crypto.unseal(blob, master, archive.INDEX_LABEL)
+        except crypto.CryptoError:
+            raise SystemExit(
+                f"that is not the recovery key for the Archive at "
+                f"{dest.describe()}: its Index would not open under it. It "
+                "may be a key from another `carryon init`, or the Destination "
+                "may be serving something that is not that Index. Nothing "
+                "was stored.")
+    index = archive.load_index(dest, master)
+    _refuse_on_index_removal(home, spec, index, "recover")
+    if archive.index_is_absent(index):
+        if archive.occupied(dest):
+            raise SystemExit(
+                f"there is no Index at {dest.describe()}, but there are "
+                "carryon objects there - an Archive whose catalogue is "
+                "missing. The key cannot be proved against it, and nothing "
+                "on a recovered machine could use that Archive until its "
+                "Index is back. Restore an earlier copy of the Archive (a "
+                "git Destination keeps one in its history), then run "
+                "`carryon init --recover` again. Nothing was stored.")
+        raise SystemExit(
+            f"nothing to recover at {dest.describe()}: there is no Archive "
+            "there to prove this recovery key against. Check the spec "
+            "against the one your other machines use (a synced folder may "
+            "still be syncing). To start a new Archive, run `carryon init` "
+            "without --recover. Nothing was stored.")
+    # A rollback warns rather than refuses: recovery writes nothing to the
+    # Archive a stale catalogue could damage, and refusing would strand a
+    # user whose Destination really did lose a write - pull's reasoning.
+    _warn_on_rollback(home, spec, index)
+
+    keyring.store_master(master, home=home)
+    path = config.config_path(home)
+    if not kept:
+        fresh = config.default_config()
+        fresh["destination"] = spec
+        fresh["machine"] = machine
+        path = config.save(fresh, home)
+    _record_revision(home, spec, archive.index_revision(index))
+    choosing.report(dest)
+    print(f"recovered as {machine!r}: this machine opens the Archive at "
+          f"{dest.describe()} again")
+    if kept:
+        print(f"kept the existing config at {path}")
+    else:
+        print(f"config written to {path}")
     return 0
 
 

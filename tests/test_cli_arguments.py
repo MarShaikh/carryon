@@ -123,6 +123,9 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("init", "join"): "a pairing code - sync.parse_pairing_code, which admits "
                       "16 characters from one alphabet and is a stricter door "
                       "than this one",
+    ("init", "recover"): "a flag - the recovery key it stands for is asked "
+                         "at a prompt and never passed, so there is no text "
+                         "here to spell",
 }
 
 ALL_ARGUMENTS = dict(ARGUMENTS_THAT_NAME_A_PATH)
