@@ -64,6 +64,7 @@ else this engine reads.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import pathlib
@@ -286,6 +287,18 @@ class Capture:
         # the adapters declare look the same as one that covers exactly what
         # it should.
         self.declined = []
+        # What this capture would carry, by landing path: {rel: sha256}. Kept
+        # in a dry run as well as a real one, because it is what the Setup
+        # mark's digest is taken over (ADR-0015) and `status` asks for it
+        # without writing anything.
+        self.seen = {}
+
+    def _see(self, dst: pathlib.Path, data: bytes) -> None:
+        try:
+            rel = dst.relative_to(self.out).as_posix()
+        except ValueError:
+            rel = str(dst)
+        self.seen[rel] = hashlib.sha256(data).hexdigest()
 
     def _check(self, label: str, data: bytes) -> None:
         hits = scan(data)
@@ -302,6 +315,7 @@ class Capture:
         (_capture_agent says so about the read side), and an item this machine
         would not write is no more present than one it would not read.
         """
+        self._see(dst, data)
         if self.dry:
             return True
         why = _write_owned(dst, data, self.out)
@@ -415,6 +429,7 @@ class Capture:
                 skipped.append((path, why))
                 continue
             self._check(str(path.relative_to(self.home)), data)
+            self._see(dst / path.relative_to(src), data)
             readable.append((path, data))
         if not self.dry and readable:
             copied, written, failed = copy_tree(src, dst, readable,
@@ -514,6 +529,7 @@ class Capture:
                     skipped.append((f, why))
                     continue
                 self._check(str(f.relative_to(self.home)), data)
+                self._see(dst / path.name / f.relative_to(path), data)
                 readable.append((f, data))
             if not self.dry:
                 copied, written, failed = copy_tree(path, dst / path.name,
@@ -675,7 +691,8 @@ def _refuse_state_reads(found: list, dry: bool) -> int:
 
 
 def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
-        home: pathlib.Path = HOME, archive: pathlib.Path = None) -> tuple:
+        home: pathlib.Path = HOME, archive: pathlib.Path = None,
+        digest_into: dict = None) -> tuple:
     """Capture into `out`, optionally also writing a .tar.gz.
 
     Returns (exit_code, manifest).
@@ -684,6 +701,10 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
     manifest afterwards, so on a hit the key is never copied anywhere at all -
     not into `out`, which a refusal deliberately leaves in place for
     inspection, and not into the staging tree a push would go on to publish.
+
+    `digest_into`, when given, receives the Setup's digest under "digest"
+    once every item has been read and before MANIFEST.json is written, whose
+    `captured_at` would make two captures of one home disagree (ADR-0015).
     """
     if want_categories and HISTORY in want_categories:
         raise SystemExit("history is pushed, not captured - use carryon push")
@@ -737,7 +758,20 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
         manifest["agents"][key] = _capture_agent(cap, adapter, want_categories)
         print()
 
+    if digest_into is not None:
+        digest_into["digest"] = setup_digest(cap.seen, manifest["agents"])
     return _finish(cap, manifest, out, dry, archive)
+
+
+def setup_digest(seen: dict, agents: dict) -> str:
+    """One hex digest for a Setup as a capture saw it: every file it would
+    carry, by landing path and content, and the per-agent manifest, which is
+    where a skill linked into the shared store or a dotfiles repo is recorded
+    rather than copied. Taken on the bytes as read, before re-keying, because
+    the mark it feeds is only ever compared on the machine that took it."""
+    body = json.dumps({"files": seen, "agents": agents}, sort_keys=True,
+                      separators=(",", ":"), default=str)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def write_archive(out: pathlib.Path, archive: pathlib.Path,

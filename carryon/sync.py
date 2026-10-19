@@ -52,7 +52,8 @@ import time
 from datetime import datetime, timezone
 
 from . import (archive, bases, capture, choosing, config, crypto,
-               destinations, external, history, keyring, prompting, rekey)
+               destinations, external, history, keyring, prompting, rekey,
+               setup_mark)
 from .adapters import ADAPTERS, CATEGORIES, HISTORY, SETUP_CATEGORIES
 from .destinations.base import printable
 
@@ -726,6 +727,9 @@ def push(args, home) -> int:
     # for inspection.
     setup_code = 0
     setup_pushed = False
+    # Filled by the capture with the digest the Setup mark records
+    # (ADR-0015); empty when no capture ran.
+    setup_seen = {}
     setup_withheld = setup_near = 0
     setup_undecodable = []
     # One value this push writes into the Setup's tag and into the encrypted
@@ -778,7 +782,8 @@ def push(args, home) -> int:
             with _swapped_registry(effective):
                 setup_code, manifest = capture.run(
                     out=staging, dry=not apply, want_agents=want_agents,
-                    want_categories=setup_categories, home=home)
+                    want_categories=setup_categories, home=home,
+                    digest_into=setup_seen)
             if setup_code == 0 and apply:
                 manifest, setup_withheld, setup_near, setup_undecodable = \
                     _neutralise_staged_setup(staging, manifest, home)
@@ -976,6 +981,17 @@ def push(args, home) -> int:
         archive.save_index(dest, master, index)
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
+    if apply and setup_pushed:
+        # After the Index is sealed, so the mark never names a stamp the
+        # Index does not. A partial Setup sealed a new stamp over part of
+        # the stored one, so no digest of this machine's whole Setup
+        # describes it, and the mark goes rather than lies (ADR-0015).
+        if (setup_categories == set(SETUP_CATEGORIES)
+                and want_agents is None and "digest" in setup_seen):
+            setup_mark.record(home, cfg["destination"], setup_stamp,
+                              setup_seen["digest"])
+        else:
+            setup_mark.clear(home, cfg["destination"])
     if apply:
         # After the Index is sealed, so a Base never records an agreement
         # with a stored tree the Index does not name. A push replaces the
@@ -1861,6 +1877,20 @@ def pull(args, home) -> int:
                               f"{printable(prefix)}/{printable(packed_rel)} - "
                               f"externally owned; {printable(str(owner))} holds "
                               "it (--force writes through)")
+                    if apply:
+                        # After every write, so the digest is of this
+                        # machine's Setup as the pull left it; the stamp is
+                        # the Index's for the Setup it laid down. Part of a
+                        # Setup leaves no mark (ADR-0015).
+                        here = (setup_mark.digest_here(home, effective)
+                                if setup_categories == set(SETUP_CATEGORIES)
+                                else None)
+                        stamp = setups[source].get("index_stamp")
+                        if here is not None and isinstance(stamp, str):
+                            setup_mark.record(home, cfg["destination"],
+                                              stamp, here)
+                        else:
+                            setup_mark.clear(home, cfg["destination"])
 
     print()
     print("-" * 74)

@@ -57,7 +57,7 @@ import stat
 import sys
 
 from . import (__version__, capture, config, crypto, external, layout,
-               resolve, sync)
+               resolve, status, sync)
 # No HOME here on purpose: it is bound at import in adapters/__init__, and
 # every command below asks pathlib.Path.home() for itself instead.
 from .adapters import ADAPTERS, CATEGORIES, is_installed
@@ -500,6 +500,10 @@ def cmd_sync(args) -> int:
     return sync.sync(args, pathlib.Path.home())
 
 
+def cmd_status(args) -> int:
+    return status.run(args, pathlib.Path.home())
+
+
 def cmd_capture(args) -> int:
     """Capture into a directory, with no Destination and no key involved.
 
@@ -649,6 +653,21 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"subset of: {', '.join(CATEGORIES)}, or all "
                           "(default: history)")
     syn.set_defaults(func=cmd_sync)
+
+    sta = sub.add_parser(
+        "status",
+        help="say what is out of step with the Archive, and which command "
+             "closes it; reads only, moves nothing",
+        description="Compare this machine with the Archive's Index and say "
+                    "what to push, what to pull, and what is filed and "
+                    "waiting, each with the command that closes it. It "
+                    "downloads no object and moves nothing, so its answers "
+                    "are advice: the push or pull it suggests still makes "
+                    "its own checks. Exits 0 whenever it could answer.")
+    sta.add_argument("--verbose", action="store_true",
+                     help="list each Session, project and filed copy "
+                          "behind the counts")
+    sta.set_defaults(func=cmd_status)
 
     res = sub.add_parser(
         "resolve",

@@ -86,10 +86,18 @@ def _canonical_members(session, home):
 
 def _members_hash(members: dict) -> str:
     """history.tree_hash's encoding, over canonical member bytes."""
+    return _digests_hash({rel: hashlib.sha256(data).hexdigest()
+                          for rel, data in members.items()})
+
+
+def _digests_hash(digests: dict) -> str:
+    """The same encoding over {member: sha256 hex}. A Base is exactly that
+    (bases.digest), so a tree hash can be rebuilt from Bases alone - which is
+    how `status` tells which side of a project moved without a download."""
     digest = hashlib.sha256()
-    for rel in sorted(members):
-        file_hash = hashlib.sha256(members[rel]).hexdigest()
-        digest.update(rel.encode("utf-8") + b"\0" + file_hash.encode() + b"\n")
+    for rel in sorted(digests):
+        digest.update(rel.encode("utf-8") + b"\0" + digests[rel].encode()
+                      + b"\n")
     return digest.hexdigest()
 
 

@@ -130,6 +130,24 @@ replaces the Setup after backing up whatever it overwrites to
 ### 5. Day to day
 
 ```bash
+carryon status
+```
+
+`status` tells you what is out of step, the way `git status` does, and moves
+nothing. It reads the Archive's catalogue rather than downloading anything,
+and each line ends with the command that closes the gap:
+
+```
+status: rclone remote carryon:carryon-archive
+History: 3 to push, 2 to pull - run `carryon sync --apply`
+Setup: home-mac pushed changes (2026-10-19 09:12) - run `carryon pull --apply` to bring them here
+```
+
+`in step with ...` means there is nothing to do. `--verbose` lists the Sessions
+and projects behind each count. Nothing runs on its own: carryon has no
+scheduler and no background process (ADR-0015).
+
+```bash
 carryon sync --apply
 ```
 
@@ -234,6 +252,7 @@ not a setting that is silently ignored.
 | `push` | push this machine's Snapshot, encrypted: the Setup as one sealed object, the History as changed Sessions only — never one the Archive is ahead on. Needs the master key |
 | `pull` | lay the Archive down here: union the History, replace the Setup after a backup |
 | `sync` | carry the History both ways in one pass: pull what the Archive has, then push what it lacks — pull first, on purpose, and it never merges a Session two machines extended at once |
+| `status` | say what is out of step with the Archive and which command closes it, read off the Index without downloading anything; it moves nothing. `--verbose` lists each item |
 | `resolve [PATH...]` | end a divergence in per-project memory after you have merged the Archive's filed copy by hand; with no paths, list what is filed |
 | `pair` | mint a one-time code that hands another machine the master key, via the Destination |
 | `list` | show detected agents and what would be captured |

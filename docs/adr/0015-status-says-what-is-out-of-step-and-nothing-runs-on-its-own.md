@@ -82,7 +82,7 @@ Counts by default, one line per half, each carrying the command that closes
 it, written like git's hints:
 
 ```
-status: rclone:carryon:carryon-archive
+status: rclone remote carryon:carryon-archive
 History: 3 to push, 2 to pull - run `carryon sync --apply`
 Setup: home-mac pushed changes (2026-10-19 09:12) - run `carryon pull --apply` to bring them here
 Setup: changed here since your last push - run `carryon push --apply` to send it
