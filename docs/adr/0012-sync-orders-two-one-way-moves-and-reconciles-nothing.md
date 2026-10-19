@@ -123,3 +123,14 @@ Running unattended raises questions this ADR does not settle — what may run
 with nobody at the checkpoint, and whether a conflict should notify rather
 than merely exit non-zero. The exit code above is the groundwork for it and
 not the thing itself.
+
+## Automation was not taken
+
+> Amendment, 2026-10-19.
+
+The paragraph above named automation as the next request. It was grilled and
+turned down: nothing in carryon runs on a schedule. ADR-0015 records why, and
+what was built instead, which is `carryon status`, a read-only report of what
+is out of step and which command closes it. The exit code this ADR gave a
+landed divergence stands on its own merits, since it is what a person or a
+script running `sync` by hand reads.

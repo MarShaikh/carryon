@@ -131,6 +131,15 @@ extended at once; that divergence is filed, reported, and stays.
 _Avoid_: "sync state" for the High-water mark; "two-way sync" for the
 per-machine Setup merge ADR-0002 puts out of scope
 
+**Status**:
+What this machine and the Archive disagree about, said without moving anything:
+what to push, what to pull, what is filed and waiting. Advisory, because it is
+read off the catalogue rather than the objects; the push or pull it suggests
+still decides for itself. Out of step is not an error, and nothing acts on a
+status by itself.
+_Avoid_: sync status (Sync carries; a status carries nothing), scheduled sync
+(there is none, ADR-0015)
+
 **Re-keying**:
 Rewriting the absolute paths recorded inside a History so they do not belong to
 the machine that wrote them. Happens on the way out, leaving the Archive
@@ -167,6 +176,13 @@ this machine has already seen is the one side of that comparison a Destination
 cannot author. Pairing hands a new machine the mark the pairing machine had.
 _Avoid_: version, sync state (it records how far this machine has got, nothing
 about what was pushed)
+
+**Setup mark**:
+For the Setup, the one this machine last sealed or laid down, and what it held.
+Kept here, like the High-water mark, because it records what this machine has
+seen. It is what tells a Setup changed here apart from a Setup another machine
+pushed since.
+_Avoid_: setup version, setup hash (the Archive keeps neither)
 
 **Base**:
 For one per-project memory file, the version this machine and the Archive last
