@@ -696,7 +696,8 @@ def test_accepted_comes_once_after_a_wrong_key(tmp_path, monkeypatch, capsys):
                      home) == 0
     out = capsys.readouterr().out
     assert out.count("recovery key accepted") == 1
-    assert out.index("not the recovery key") < out.index("accepted")
+    assert (out.index("not the recovery key")
+            < out.index("recovery key accepted"))
 
 
 def test_a_refused_recovery_never_says_accepted(tmp_path, monkeypatch,
@@ -716,4 +717,21 @@ def test_a_refused_recovery_never_says_accepted(tmp_path, monkeypatch,
     with pytest.raises(SystemExit):
         sync.init(ns(recover=True, dest=str(empty), machine="machine-c"),
                   bare_home(tmp_path, "home_c"))
+    assert "accepted" not in capsys.readouterr().out
+
+
+def test_an_index_that_opens_but_will_not_parse_never_says_accepted(
+        tmp_path, monkeypatch, capsys):
+    """Review finding 1. The key is proved by the unseal, but the parse can
+    still refuse, and "accepted" followed by a refusal is the confusion the
+    line exists to remove."""
+    key, spec, master = founded_archive(tmp_path, capsys)
+    dest = destinations.from_spec(spec, tmp_path)
+    dest.write(archive.INDEX_KEY,
+               crypto.seal(b"not an index", master, archive.INDEX_LABEL))
+    home = bare_home(tmp_path)
+    a_terminal(monkeypatch, key)
+
+    with pytest.raises(SystemExit):
+        sync.init(ns(recover=True, dest=spec, machine="machine-b"), home)
     assert "accepted" not in capsys.readouterr().out

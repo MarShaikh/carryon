@@ -20,7 +20,6 @@ import argparse
 import pathlib
 import re
 import sys
-import time
 
 import pytest
 
@@ -512,9 +511,8 @@ def test_a_good_code_says_so_before_anything_else(tmp_path, monkeypatch,
 def test_an_expired_code_never_says_accepted(tmp_path, monkeypatch, capsys):
     _, spec, code = paired_archive(tmp_path, capsys)
     home = bare_home(tmp_path)
-    real_now = time.time()
-    monkeypatch.setattr(sync.time, "time",
-                        lambda: real_now + sync.PAIRING_TTL_SECONDS + 60)
+    # A lifetime below zero rather than a clock moved for the whole process.
+    monkeypatch.setattr(sync, "PAIRING_TTL_SECONDS", -1)
 
     with pytest.raises(SystemExit) as exc:
         sync.init(ns(join=code, dest=spec, machine="machine-b"), home)

@@ -472,12 +472,14 @@ def _recover(args, home) -> int:
                       "letter off. Nothing has been stored - type it again, "
                       "or press Ctrl-D to stop.")
                 master = _ask_recovery_key()
+        index = archive.parse_index(raw)
         # The verdict, as soon as it is known and before anything else is
         # said (ADR-0011's 2026-10-19 amendment): in a real run it came last,
-        # under the probe report, and read as the key not working.
+        # under the probe report, and read as the key not working. After the
+        # parse, which can still refuse, so "accepted" never precedes a
+        # refusal (review finding 1).
         print(f"recovery key accepted: it opened the Archive's Index at "
               f"{dest.describe()}.")
-        index = archive.parse_index(raw)
 
     removed = _index_removed_note(home, spec, index)
     if removed is not None:

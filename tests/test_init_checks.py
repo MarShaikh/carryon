@@ -29,7 +29,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import archive, config, keyring, sync  # noqa: E402
+from carryon import archive, config, destinations, keyring  # noqa: E402
+from carryon import sync  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 from tests.hostile_archive import build_home_a  # noqa: E402
 
@@ -344,7 +345,7 @@ def test_init_says_what_it_checked_in_one_line(tmp_path, capsys):
 
     out = capsys.readouterr().out
     line = ("Destination checked: write, read and delete work at "
-            f"{DirectoryDestination(tmp_path / 'archive').describe()}.\n")
+            f"{destinations.from_spec(spec, home).describe()}.\n")
     assert line in out
     for paragraph in ("storage is private", "ADR-0014", "name no machine"):
         assert paragraph not in out, f"the probe report still says {paragraph!r}"
