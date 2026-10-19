@@ -660,3 +660,60 @@ def test_recover_says_once_per_command_that_state_is_unreadable(
 
     assert sync.init(ns(recover=True), home) == 0
     assert "would not read" in capsys.readouterr().out
+
+
+# --- the verdict (ADR-0011's 2026-10-19 amendment) ---------------------------
+
+
+def test_a_right_key_says_so_before_anything_else(
+        tmp_path, monkeypatch, capsys):
+    """In a real --recover the verdict came last, under the probe's caveats,
+    and the person recovering read the run as the key not working."""
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    a_terminal(monkeypatch, key)
+
+    assert sync.init(ns(recover=True, dest=spec, machine="machine-b"),
+                     home) == 0
+    out = capsys.readouterr().out
+
+    where = destinations.from_spec(spec, home).describe()
+    accepted = f"recovery key accepted: it opened the Archive's Index at {where}."
+    assert accepted in out
+    assert out.index(accepted) < out.index("Destination checked")
+    assert out.index("Destination checked") < out.index("recovered as")
+    assert ("recovered as 'machine-b': this machine opens the Archive again\n"
+            in out)
+
+
+def test_accepted_comes_once_after_a_wrong_key(tmp_path, monkeypatch, capsys):
+    key, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    other, _ = crypto.new_recovery_key()
+    a_terminal(monkeypatch, other, key)
+
+    assert sync.init(ns(recover=True, dest=spec, machine="machine-b"),
+                     home) == 0
+    out = capsys.readouterr().out
+    assert out.count("recovery key accepted") == 1
+    assert out.index("not the recovery key") < out.index("accepted")
+
+
+def test_a_refused_recovery_never_says_accepted(tmp_path, monkeypatch,
+                                                capsys):
+    _, spec, _ = founded_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    other, _ = crypto.new_recovery_key()
+    a_terminal(monkeypatch, other)
+
+    with pytest.raises(SystemExit):
+        sync.init(ns(recover=True, dest=spec, machine="machine-b"), home)
+    assert "accepted" not in capsys.readouterr().out
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    a_terminal(monkeypatch, other)
+    with pytest.raises(SystemExit):
+        sync.init(ns(recover=True, dest=str(empty), machine="machine-c"),
+                  bare_home(tmp_path, "home_c"))
+    assert "accepted" not in capsys.readouterr().out

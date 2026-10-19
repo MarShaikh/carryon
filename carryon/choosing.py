@@ -220,12 +220,13 @@ def _confirm_reachable(dest, tail: str = _FRESH_TAIL) -> None:
 def report(dest) -> None:
     """What a green tick means, in the words the ADR settles on.
 
-    It says what was checked rather than implying what was not - which is
-    also why a Destination whose probe was skipped gets the reason printed
-    instead of a tick. Neither check answers the question that matters most
-    for a Setup - whether the storage is private - and no probe can, so the
-    line that would be read as "this is safe" is the one thing this must
-    not print.
+    It says what was checked and no more - which is also why a Destination
+    whose probe was skipped gets the reason printed instead of a tick. No
+    probe can say whether the storage is private, so the line that would be
+    read as "this is safe" is the one thing this must not print. It used to
+    say so as well, in a paragraph after every probe; since ADR-0014 sealed
+    both halves that paragraph mostly read as a problem, and the README
+    makes the point once (ADR-0011's 2026-10-19 amendment).
     """
     skipped = dest.skips_probe()
     if skipped is not None:
@@ -233,8 +234,3 @@ def report(dest) -> None:
     else:
         print(f"Destination checked: write, read and delete work at "
               f"{dest.describe()}.")
-        print("That is all it says.", end=" ")
-    print("Nothing here can tell whether the storage is private. What "
-          "carryon carries is sealed before it leaves this machine "
-          "(ADR-0014); the bytes this probe just wrote were not, which is "
-          "why they name no machine, no home and no time.")

@@ -166,6 +166,9 @@ carryon asks for the key at a prompt that does not echo. It never takes the key
 as an argument, and without a terminal it refuses. It keeps the key only once
 the key has opened the Archive's Index. A key from another Archive, or a typo
 that still parses, is asked for again with nothing stored, and Ctrl-D stops.
+A right key says so first: `recovery key accepted`, then the Destination
+check, then `recovered as NAME`. A pairing code does the same with
+`pairing code accepted`.
 
 Both ways keep a `config.json` this machine still has. They use that file's
 Destination and machine name and leave the file exactly as it was, your excludes

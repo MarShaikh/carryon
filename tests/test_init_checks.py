@@ -13,9 +13,10 @@ plaintext half of untrusted storage before any master key exists, so it must
 carry no machine name, no home path and no timestamp; random name so two
 machines probing at once cannot collide.
 
-Neither answers the question that matters most for a Setup, which is whether
-the storage is private. No probe can, and what the tests below assert about the
-wording is that it says what was checked rather than implying what was not.
+Neither answers whether the storage is private. No probe can, and what the
+tests below assert about the wording is that it says what was checked and no
+more: one line, with the privacy point left to the README (ADR-0011's
+2026-10-19 amendment).
 """
 
 import argparse
@@ -331,17 +332,22 @@ def test_a_join_refused_by_the_probe_says_the_code_was_not_spent(
         "the refusal spent the blob after all"
 
 
-def test_init_says_what_it_checked_and_not_what_it_did_not(tmp_path, capsys):
-    """No probe can say whether storage is private, and a green tick that
-    implies one is worse than no tick at all."""
+def test_init_says_what_it_checked_in_one_line(tmp_path, capsys):
+    """No probe can say whether storage is private, so the report says what
+    was checked and nothing more. The paragraph that used to argue the point
+    after every probe read as a failure in a real --recover, and the README
+    makes it once instead (ADR-0011's 2026-10-19 amendment)."""
     home = tmp_path / "home"
     home.mkdir()
-    assert sync.init(ns(dest=str(tmp_path / "archive"), machine="a"), home) == 0
+    spec = str(tmp_path / "archive")
+    assert sync.init(ns(dest=spec, machine="a"), home) == 0
 
     out = capsys.readouterr().out
-    assert "write, read and delete" in out
-    assert "private" in out, \
-        "nothing in the report says what the probe cannot answer"
+    line = ("Destination checked: write, read and delete work at "
+            f"{DirectoryDestination(tmp_path / 'archive').describe()}.\n")
+    assert line in out
+    for paragraph in ("storage is private", "ADR-0014", "name no machine"):
+        assert paragraph not in out, f"the probe report still says {paragraph!r}"
 
 
 def test_a_recovery_key_is_still_shown_once(tmp_path, capsys):
@@ -393,7 +399,8 @@ def test_a_git_destination_is_not_probed_and_the_report_says_why(
     assert "commit" in out, "the report does not say why there was no probe"
     assert "write, read and delete work" not in out, \
         "the report claims a probe that never ran"
-    assert "private" in out, "the privacy line must survive the skip"
+    assert "storage is private" not in out, \
+        "the skip carries no privacy paragraph"
 
 
 def test_occupancy_still_guards_a_git_destination(tmp_path, capsys):
