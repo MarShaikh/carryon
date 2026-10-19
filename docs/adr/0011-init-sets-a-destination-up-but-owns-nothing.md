@@ -88,3 +88,34 @@ Provider field tables are per-Provider knowledge and live in one declarative
 table, the way `adapters/` holds per-agent knowledge, so the engine keeps no
 Provider branches. rclone's own full Provider list, for anything the table does
 not name, is a later addition rather than part of this.
+
+## What the report says
+
+> Amendment, 2026-10-19.
+
+The report after a probe used to add a paragraph to its one line. The paragraph
+said a probe cannot tell whether the storage is private, and that the probe's
+own bytes were not sealed. It was written when a Setup went up as plaintext, so
+a public bucket would have published settings and skills, and a tick that read
+as "this is safe" was the one thing the report must not print.
+
+ADR-0014 sealed both halves, so that reason has mostly gone. What is left is
+the shape: object names, sizes and times, and the machine name in each Setup's
+key. That is worth knowing once, when someone chooses a Destination, and the
+README's Destinations section says it there. Printed after every `init`,
+`--join` and `--recover`, the paragraph instead read as a problem. In a real
+`--recover`, it came between the key prompt and the verdict, and the person
+recovering read it as the key not working.
+
+So the report is now the one line that says what was checked: write, read and
+delete work at that Destination. A Destination that was not probed still says
+why. The line still says what was checked and nothing more, so it implies
+nothing about privacy, which is the rule above. It just no longer argues the
+point every time.
+
+`--recover` and `--join` now also say plainly when the thing typed was right,
+before anything else: `recovery key accepted` once the Index opens under the
+key, and `pairing code accepted` once the code has unwrapped an unexpired key.
+The line comes before anything is stored, so it reports the proof rather than
+the outcome. The `recovered as` and `paired as` lines that follow report the
+outcome.

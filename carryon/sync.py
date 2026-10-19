@@ -473,6 +473,13 @@ def _recover(args, home) -> int:
                       "or press Ctrl-D to stop.")
                 master = _ask_recovery_key()
         index = archive.parse_index(raw)
+        # The verdict, as soon as it is known and before anything else is
+        # said (ADR-0011's 2026-10-19 amendment): in a real run it came last,
+        # under the probe report, and read as the key not working. After the
+        # parse, which can still refuse, so "accepted" never precedes a
+        # refusal (review finding 1).
+        print(f"recovery key accepted: it opened the Archive's Index at "
+              f"{dest.describe()}.")
 
     removed = _index_removed_note(home, spec, index)
     if removed is not None:
@@ -506,8 +513,7 @@ def _recover(args, home) -> int:
     _take_key(home, cfg, kept, spec, machine, master,
               archive.index_revision(index))
     choosing.report(dest)
-    print(f"recovered as {machine!r}: this machine opens the Archive at "
-          f"{dest.describe()} again")
+    print(f"recovered as {machine!r}: this machine opens the Archive again")
     _say_config(kept, path)
     return 0
 
@@ -599,6 +605,10 @@ def _join(args, home) -> int:
         raise SystemExit(
             "that pairing code expired (codes live 24 hours) and has now "
             "been deleted - mint a fresh one with `carryon pair`")
+    # After the expiry check, so that "accepted" never precedes a refusal of
+    # the same code (ADR-0011's 2026-10-19 amendment).
+    print(f"pairing code accepted: it unwrapped the key the paired machine "
+          f"left at {dest.describe()}.")
 
     # What this machine knows about the Archive before it has ever read it:
     # the revision the pairing machine saw. It arrived inside the wrap, so
@@ -612,8 +622,7 @@ def _join(args, home) -> int:
     _warn_on_rollback(home, spec, {"revision": revision})
     _take_key(home, cfg, kept, spec, machine, payload["master_key"], revision)
     choosing.report(dest)
-    print(f"paired as {machine!r}: this machine now opens the Archive at "
-          f"{dest.describe()}")
+    print(f"paired as {machine!r}: this machine now opens the Archive")
     _say_config(kept, path)
     if not burnt:
         print(f"warning: the pairing blob at {printable(key)} is still in the "

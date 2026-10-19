@@ -25,7 +25,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import cli, config, keyring, prompting, sync  # noqa: E402
+from carryon import cli, config, destinations, keyring, prompting  # noqa: E402
+from carryon import sync  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 
 PAIR_CODE = re.compile(r"--join ([A-Z0-9]{4}(?:-[A-Z0-9]{4}){3})")
@@ -484,3 +485,48 @@ def test_needs_dest_says_the_code_is_still_good(tmp_path, monkeypatch,
     message = str(exc.value)
     assert "needs --dest" in message
     assert "the code is still good" in message
+
+
+# --- the verdict (ADR-0011's 2026-10-19 amendment) ---------------------------
+
+
+def test_a_good_code_says_so_before_anything_else(tmp_path, monkeypatch,
+                                                  capsys):
+    _, spec, code = paired_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+
+    assert sync.init(ns(join=code, dest=spec, machine="machine-b"), home) == 0
+    out = capsys.readouterr().out
+
+    where = destinations.from_spec(spec, home).describe()
+    accepted = ("pairing code accepted: it unwrapped the key the paired "
+                f"machine left at {where}.")
+    assert accepted in out
+    assert out.index(accepted) < out.index("Destination checked")
+    assert out.index("Destination checked") < out.index("paired as")
+    assert "paired as 'machine-b': this machine now opens the Archive\n" in out
+    assert "storage is private" not in out
+
+
+def test_an_expired_code_never_says_accepted(tmp_path, monkeypatch, capsys):
+    _, spec, code = paired_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    # A lifetime below zero rather than a clock moved for the whole process.
+    monkeypatch.setattr(sync, "PAIRING_TTL_SECONDS", -1)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(join=code, dest=spec, machine="machine-b"), home)
+    assert "expired" in str(exc.value)
+    assert "accepted" not in capsys.readouterr().out
+
+
+def test_a_code_that_will_not_unwrap_never_says_accepted(
+        tmp_path, monkeypatch, capsys):
+    _, spec, code = paired_archive(tmp_path, capsys)
+    home = bare_home(tmp_path)
+    wrong = code[:-1] + ("A" if code[-1] != "A" else "B")
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(ns(join=wrong, dest=spec, machine="machine-b"), home)
+    assert "wrong or expired code" in str(exc.value)
+    assert "accepted" not in capsys.readouterr().out
