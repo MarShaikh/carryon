@@ -58,7 +58,8 @@ Per Session, against its Index entry:
 
 Per-project memory is judged against its Base: only the local copy moved means
 to push, only the Archive's means to pull, and both means to pull, which files
-the divergence. A divergence already filed is reported as filed. For
+the divergence. A divergence already filed is reported as filed, and not
+also as to pull, because the pull would only file it again. For
 per-project memory it points at `carryon resolve`. For a Session it names
 where the copy is filed, because ADR-0002's missing protocol is still missing
 and no command resolves one.
@@ -75,6 +76,16 @@ against the digest. Until a push or pull has written a mark, the Setup is
 reported as not known. Downloading and unsealing this machine's Setup on every
 `status` was the alternative, and was rejected for costing a download each
 time.
+
+A pull that lays a Setup down but not whole keeps the stamp and records a
+digest that matches nothing. Not whole means a write was refused, a file was
+left to its external owner, or this machine holds Setup files the laid-down
+one never had. `status` then goes on saying this machine's Setup differs until
+a push settles it, which is true: a push would publish the difference. The
+digest covers the files and what each item carried, never carryon's own
+wording about an item, so an upgrade that rewords an adapter is not a change
+here. A machine whose own capture would refuse still hears that another
+machine pushed, because a pull does not capture this machine.
 
 ## What it says, and its exit code
 
@@ -114,6 +125,15 @@ unchanged.
 matches but whose other members differ is reported as to push, and the push
 may then skip it as behind after comparing the bytes. That costs one wasted
 suggestion and nothing else, and is the price of not downloading.
+
+**Two narrow cases stay wrong, in the advisory direction.** Memory with a
+member that a pull left to its owner or refused has no Base for that member,
+so the agreed tree can never be rebuilt from the Bases and the project reads
+as to pull on every `status`. A write into push's own staging directory that
+fails makes push's real capture and `status`'s dry one disagree, so the Setup
+reads as changed here after every push. Each needs a state no ordinary machine
+is in, and fixing either needs per-member digests in the Index or a second
+capture on every push.
 
 **A machine is not known on its first `status` after upgrading,** as far as
 its Setup goes, until it pushes or pulls once. The History needs no mark and is

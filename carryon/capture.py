@@ -760,6 +760,7 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
 
     if digest_into is not None:
         digest_into["digest"] = setup_digest(cap.seen, manifest["agents"])
+        digest_into["paths"] = sorted(cap.seen)
     return _finish(cap, manifest, out, dry, archive)
 
 
@@ -768,8 +769,16 @@ def setup_digest(seen: dict, agents: dict) -> str:
     carry, by landing path and content, and the per-agent manifest, which is
     where a skill linked into the shared store or a dotfiles repo is recorded
     rather than copied. Taken on the bytes as read, before re-keying, because
-    the mark it feeds is only ever compared on the machine that took it."""
-    body = json.dumps({"files": seen, "agents": agents}, sort_keys=True,
+    the mark it feeds is only ever compared on the machine that took it.
+
+    Only what the user's machine decides goes in: each item's record minus
+    its note. An adapter's notes, exclusion reasons, platforms and
+    verified_against are carryon's own words, and an upgrade that rewords
+    one must not read as a Setup changed here."""
+    shape = {key: [{k: v for k, v in record.items() if k != "note"}
+                   for record in entry.get("items", ())]
+             for key, entry in agents.items()}
+    body = json.dumps({"files": seen, "agents": shape}, sort_keys=True,
                       separators=(",", ":"), default=str)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import archive, bases, history, setup_mark
+from . import archive, bases, history, resolve, setup_mark
 from .destinations.base import printable
 from .highwater import _begin_command, _index_removed_note, _rollback_note
 from .session import (_canonical_members, _digests_hash, _index_veto,
@@ -58,12 +58,22 @@ def run(args, home) -> int:
         for refusal in refused:
             print(f"  ?? {printable(str(refusal.key))} - {refusal.why}")
         print()
-    unreadable = {refusal.key for refusal in refused}
+    # Per catalogue, as push keeps them: a cwd and a UUID are different
+    # namespaces, and a refusal in one must not hide a key in the other.
+    unreadable = {name: {r.key for r in refused if r.catalogue == name}
+                  for name in ("sessions", "projects")}
 
     found = history.discover(home, list(effective.values()))
-    items = (_sessions(index, found, effective, home, unreadable)
-             + _projects(index, found, effective, home, spec, unreadable))
-    filed_memory, filed_sessions = _filed(index, found, home)
+    memory, filed_sessions = _filed(index, found, home)
+    filed_memory = sorted(_home_path(path, home) for _r, _m, path in memory)
+    # What is filed is reported as filed and not also as something to pull:
+    # the pull would only file it again, and nothing about a filed copy is
+    # closed by `sync` (ADR-0015).
+    items = (_sessions(index, found, effective, home, unreadable["sessions"],
+                       set(filed_sessions))
+             + _projects(index, found, effective, home, spec,
+                         unreadable["projects"],
+                         {_canon_home(r.cwd, home) for r, _m, _p in memory}))
     setup_lines = _setup(dest, index, home, effective, spec)
 
     if not (items or filed_memory or filed_sessions or setup_lines):
@@ -94,8 +104,8 @@ def run(args, home) -> int:
               "- the Archive's copy is under ~/.carryon/conflicts/<uuid>/, "
               "and no command merges a Session")
         if verbose:
-            for path in filed_sessions:
-                print(f"  filed    {printable(path)}")
+            for uuid in filed_sessions:
+                print(f"  filed    ~/.carryon/conflicts/{printable(uuid)}/")
     for line in setup_lines:
         print(line)
     return 0
@@ -105,14 +115,14 @@ def run(args, home) -> int:
 
 
 def _pullable(meta, effective) -> bool:
-    """Whether a pull here could lay this entry down at all: the cases pull
-    itself reports as unrestorable are not something to pull."""
+    """Whether this machine carries History for the entry's agent at all:
+    the cases pull itself reports as unrestorable are not something to
+    pull."""
     agent = meta.get("agent", "")
-    return (agent in effective and not _no_history_here(agent, effective)
-            and bool(meta.get("cwd", True)))
+    return agent in effective and not _no_history_here(agent, effective)
 
 
-def _sessions(index, found, effective, home, unreadable) -> list:
+def _sessions(index, found, effective, home, unreadable, filed) -> list:
     entries = index.get("sessions", {})
     local = {}
     for session in found.sessions:
@@ -127,6 +137,8 @@ def _sessions(index, found, effective, home, unreadable) -> list:
             items.append((PUSH, label))
             continue
         direction = _session_direction(copies, entry, home)
+        if direction == PULL and uuid in filed:
+            continue
         if direction is not None:
             items.append((direction, label))
     for uuid in sorted(entries):
@@ -161,7 +173,8 @@ def _session_direction(copies, entry, home):
     return PULL if _index_veto(entry, canon) is not None else PUSH
 
 
-def _projects(index, found, effective, home, spec, unreadable) -> list:
+def _projects(index, found, effective, home, spec, unreadable,
+              filed) -> list:
     entries = index.get("projects", {})
     known = bases.load(home, spec)
     local = {_canon_home(r.cwd, home): r for r in found.residues if r.cwd}
@@ -184,12 +197,15 @@ def _projects(index, found, effective, home, spec, unreadable) -> list:
             continue
         base = known.get(cwd)
         if not base:
-            items.append((PULL, label))   # pull's prefix rule decides
+            if cwd not in filed:
+                items.append((PULL, label))   # pull's prefix rule decides
             continue
         agreed = _digests_hash(base)
         local_moved, archive_moved = here != agreed, there != agreed
-        items.append((PUSH if local_moved and not archive_moved else PULL,
-                      label))
+        direction = PUSH if local_moved and not archive_moved else PULL
+        if direction == PULL and cwd in filed:
+            continue
+        items.append((direction, label))
     for cwd in sorted(entries):
         meta = entries[cwd]
         if cwd in local or not isinstance(meta, dict):
@@ -201,17 +217,19 @@ def _projects(index, found, effective, home, spec, unreadable) -> list:
     return items
 
 
+def _home_path(path, home) -> str:
+    try:
+        return "~/" + pathlib.Path(path).relative_to(home).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _filed(index, found, home) -> tuple:
-    """(memory, sessions): the filed copies waiting on a person, as paths.
-    Memory is matched the way `carryon resolve` lists it. A Session is filed
-    under ~/.carryon/conflicts/<uuid>/, and only a directory named for a
-    Session this machine or the Index knows is counted as one."""
-    memory = []
-    for residue in (r for r in found.residues if r.cwd):
-        directory = bases.project_conflict_dir(home, residue.project_dir)
-        for rel in residue.files:
-            if (directory / rel).is_file():
-                memory.append(f"~/.carryon/conflicts/{directory.name}/{rel}")
+    """(memory, sessions): the filed copies waiting on a person. Memory is
+    `carryon resolve`'s own list. A Session is filed under
+    ~/.carryon/conflicts/<uuid>/, and only a directory named for a Session
+    this machine or the Index knows is counted as one."""
+    memory = resolve.filed_memory(found, home)
     known = ({s.uuid for s in found.sessions}
              | set(index.get("sessions", {})))
     sessions = []
@@ -224,8 +242,8 @@ def _filed(index, found, home) -> tuple:
         except OSError:
             holds = False
         if holds:
-            sessions.append(f"~/.carryon/conflicts/{uuid}/")
-    return sorted(memory), sessions
+            sessions.append(uuid)
+    return memory, sessions
 
 
 # --- the Setup ---------------------------------------------------------------
@@ -233,13 +251,18 @@ def _filed(index, found, home) -> tuple:
 
 def _setup(dest, index, home, effective, spec) -> list:
     here = setup_mark.digest_here(home, effective)
-    if here is None:
-        return ["Setup: a push would refuse it - `carryon push` shows why"]
     mark = setup_mark.load(home, spec)
-    if mark is None:
-        return ["Setup: not known here until a full push or pull"]
-    changed_here = here != mark["digest"]
     lines = []
+    if here is None:
+        # A pull does not capture this machine, so a refusal here does not
+        # stop one, and another machine's newer Setup is still worth saying.
+        lines.append("Setup: a push would refuse it - `carryon push` shows "
+                     "why")
+    elif mark is None:
+        return ["Setup: not known here until a full push or pull"]
+    if mark is None:
+        return lines
+    changed_here = here is not None and here != mark["digest"]
     setups, _unusable = _setup_catalogue(dest, index)
     source, _ignored = _choose_setup_source(setups)
     if source is not None and setups[source].get("index_stamp") != mark["stamp"]:

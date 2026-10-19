@@ -22,9 +22,16 @@ import json
 import pathlib
 
 from . import capture, config
+from .adapters import SETUP_CATEGORIES
 from .highwater import _load_state, _state_path
 
 KEY = "setup_marks"
+
+# A digest no capture produces. Recorded by a pull whose Setup did not land
+# whole - a write refused, one left to its external owner, or something here
+# the laid-down Setup never held - so the stamp still says which Setup this
+# machine has seen, and `status` still says this machine's Setup differs.
+UNSETTLED = ""
 
 
 def load(home, spec: str):
@@ -40,11 +47,17 @@ def load(home, spec: str):
     return {"stamp": stamp, "digest": digest}
 
 
-def digest_here(home, effective):
-    """The digest of this machine's whole Setup as it stands, or None when a
-    capture of it would refuse. A dry capture, so nothing is written, and its
-    plan is swallowed: the caller is a pull that has already reported, or a
-    `status` whose output is its own."""
+def whole(setup_categories, want_agents=None) -> bool:
+    """Whether a command moved this machine's whole Setup, which is the only
+    move a mark may describe."""
+    return set(setup_categories) == set(SETUP_CATEGORIES) and not want_agents
+
+
+def capture_here(home, effective) -> tuple:
+    """(digest, landing paths) for this machine's whole Setup as it stands,
+    or (None, ()) when a capture of it would refuse. A dry capture, so
+    nothing is written, and its plan is swallowed: the caller is a pull that
+    has already reported, or a `status` whose output is its own."""
     # Imported here, as resolve does: sync imports this module.
     from .sync import _swapped_registry
     seen = {}
@@ -53,15 +66,22 @@ def digest_here(home, effective):
         code, _manifest = capture.run(
             out=pathlib.Path(home) / ".carryon" / "staging" / "status",
             dry=True, home=pathlib.Path(home), digest_into=seen)
-    return seen.get("digest") if code == 0 else None
+    if code != 0 or "digest" not in seen:
+        return None, ()
+    return seen["digest"], frozenset(seen["paths"])
 
 
-def record(home, spec: str, stamp: str, digest: str) -> None:
-    _write(home, spec, {"stamp": stamp, "digest": digest})
+def digest_here(home, effective):
+    return capture_here(home, effective)[0]
 
 
-def clear(home, spec: str) -> None:
-    _write(home, spec, None)
+def settle(home, spec: str, stamp, digest) -> None:
+    """Record {stamp, digest}, or clear the mark when either is missing:
+    the one rule every command that moves a Setup ends on."""
+    if isinstance(stamp, str) and isinstance(digest, str):
+        _write(home, spec, {"stamp": stamp, "digest": digest})
+    else:
+        _write(home, spec, None)
 
 
 def _write(home, spec: str, entry) -> None:

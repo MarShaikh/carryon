@@ -335,3 +335,96 @@ def test_memory_with_no_base_is_to_pull(two, capsys):
     memory_file(home_b).write_text("b's unrelated note.\n")
     _code, out = run(home_b, capsys, verbose=True)
     assert memory_line(out).group(1) == "pull", out
+
+
+# --- review round 1: regressions ---------------------------------------------
+
+
+def test_a_session_pull_filed_is_filed_and_not_also_to_pull(two, capsys):
+    """C's rollout diverged on b. Once a pull has filed the Archive's copy,
+    `sync` cannot close it, so it is reported as filed and nothing else."""
+    _home_a, home_b, _spec = two
+    assert sync.pull(ns(apply=True), home_b) == 2
+    _code, out = run(home_b, capsys, verbose=True)
+    assert UUID_C not in "".join(line for line in out.splitlines(True)
+                                 if line.startswith("  pull")), out
+    assert "Filed: 1 Session diverged" in out
+    assert f"  filed    ~/.carryon/conflicts/{UUID_C}/" in out
+
+
+def test_memory_a_pull_filed_is_filed_and_not_also_to_pull(agreed, capsys):
+    home_a, home_b, _spec = agreed
+    memory_file(home_a).write_text("a's newer note.\n")
+    assert sync.push(ns(apply=True, category="history"), home_a) == 0
+    memory_file(home_b).write_text("b's own note.\n")
+    sync.pull(ns(apply=True, category="history"), home_b)
+    _code, out = run(home_b, capsys, verbose=True)
+    assert memory_line(out) is None, out
+    assert "Filed: 1 memory file diverged" in out
+
+
+def test_a_setup_pulled_short_of_an_owned_file_still_differs(tmp_path,
+                                                             capsys):
+    """b's CLAUDE.md belongs to a dotfiles repo, so the pull leaves it alone:
+    the Setup did not land whole, and b's still differs from the Archive's."""
+    home_a = build_home_a(tmp_path)
+    spec = str(tmp_path / "archive")
+    sync.init(ns(dest=spec, machine="machine-a"), home_a)
+    assert sync.push(ns(apply=True), home_a) == 0
+    home_b = build_home_b(tmp_path, dotfiles=True)
+    link_home(home_b, spec, "machine-b", master_from=home_a)
+    sync.pull(ns(apply=True), home_b)
+    _code, out = run(home_b, capsys)
+    assert ("Setup: changed here since your last push - run "
+            "`carryon push --apply` to send it") in out.splitlines(), out
+    assert "pushed changes" not in out
+
+
+def test_a_setup_file_only_this_machine_has_is_still_to_push(two, capsys):
+    """The laid-down Setup never held b's settings.local.json, so agreeing
+    with the Archive would hide a file only a push can publish."""
+    _home_a, home_b, _spec = two
+    (home_b / ".claude").mkdir(exist_ok=True)
+    (home_b / ".claude" / "settings.local.json").write_text('{"b": 1}')
+    sync.pull(ns(apply=True), home_b)
+    _code, out = run(home_b, capsys)
+    assert ("Setup: changed here since your last push - run "
+            "`carryon push --apply` to send it") in out.splitlines(), out
+
+
+def test_a_setup_pulled_whole_is_in_step(two, capsys):
+    _home_a, home_b, _spec = two
+    sync.pull(ns(apply=True), home_b)
+    _code, out = run(home_b, capsys)
+    assert "Setup:" not in out, out
+
+
+def test_an_adapter_reworded_by_an_upgrade_is_not_a_setup_change(two):
+    import dataclasses
+    from carryon import setup_mark
+    home_a, _home_b, _spec = two
+    effective = sync._effective_adapters(config.load(home_a), home_a)
+    reworded = {
+        key: dataclasses.replace(
+            adapter, verified_against="a later version",
+            items=tuple(dataclasses.replace(item, note="reworded")
+                        for item in adapter.items))
+        for key, adapter in effective.items()}
+    assert (setup_mark.digest_here(home_a, reworded)
+            == setup_mark.digest_here(home_a, effective))
+
+
+def test_a_setup_this_machine_would_refuse_still_says_what_to_pull(
+        two, capsys):
+    home_a, home_b, _spec = two
+    sync.pull(ns(apply=True), home_b)
+    (home_a / ".claude" / "CLAUDE.md").write_text("New instructions.\n")
+    assert sync.push(ns(apply=True), home_a) == 0
+    claude_md = home_b / ".claude" / "CLAUDE.md"
+    claude_md.unlink()
+    claude_md.symlink_to(home_b / ".carryon" / "config.json")
+    _code, out = run(home_b, capsys)
+    assert "Setup: a push would refuse it" in out
+    assert re.search(r"^Setup: machine-a pushed changes \(.*\) - run "
+                     r"`carryon pull --apply` to bring them here$", out,
+                     re.M), out

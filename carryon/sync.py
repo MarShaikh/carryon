@@ -986,12 +986,10 @@ def push(args, home) -> int:
         # Index does not. A partial Setup sealed a new stamp over part of
         # the stored one, so no digest of this machine's whole Setup
         # describes it, and the mark goes rather than lies (ADR-0015).
-        if (setup_categories == set(SETUP_CATEGORIES)
-                and want_agents is None and "digest" in setup_seen):
-            setup_mark.record(home, cfg["destination"], setup_stamp,
-                              setup_seen["digest"])
-        else:
-            setup_mark.clear(home, cfg["destination"])
+        setup_mark.settle(
+            home, cfg["destination"], setup_stamp,
+            setup_seen.get("digest")
+            if setup_mark.whole(setup_categories, want_agents) else None)
     if apply:
         # After the Index is sealed, so a Base never records an agreement
         # with a stored tree the Index does not name. A push replaces the
@@ -1195,6 +1193,27 @@ def _backup_root(home) -> pathlib.Path:
     """
     return (pathlib.Path(home) / ".carryon" / "backups"
             / f"{_utc_now()}-{crypto.new_stamp()}")
+
+
+def _settle_pulled_setup(home, spec, effective, staging, stamp, whole,
+                         short) -> None:
+    """The Setup mark a pull leaves, after every write, so the digest is of
+    this machine's Setup as the pull left it and the stamp is the Index's
+    for the Setup it laid down (ADR-0015). Part of a Setup leaves no mark.
+    A Setup that did not land whole, or a machine holding Setup files the
+    laid-down one never had, keeps the stamp with a digest that matches
+    nothing: this machine has seen that Setup and does not hold it, which is
+    what a push would publish."""
+    if not whole:
+        setup_mark.settle(home, spec, None, None)
+        return
+    digest, paths = setup_mark.capture_here(home, effective)
+    if digest is not None:
+        stored = {p.relative_to(staging).as_posix()
+                  for p in staging.rglob("*") if p.is_file()}
+        if short or set(paths) - stored:
+            digest = setup_mark.UNSETTLED
+    setup_mark.settle(home, spec, stamp, digest)
 
 
 def pull(args, home) -> int:
@@ -1848,6 +1867,9 @@ def pull(args, home) -> int:
                     # run never writes into a directory an earlier run made.
                     state_ids = config.state_identities(home)
                     prefix = archive.setup_prefix(source)
+                    # Whether this Setup landed whole, for the mark below:
+                    # anything refused or left to its owner did not.
+                    leg_short = bool(refused) or bool(skip)
                     for target, source_path in do:
                         rel = _rel_to_home(target, home)
                         packed_rel = source_path.relative_to(staging).as_posix()
@@ -1863,6 +1885,7 @@ def pull(args, home) -> int:
                             state_ids, force=force)
                         if reason is not None:
                             setup_refused += 1
+                            leg_short = True
                             print(f"  refuse   ~/{printable(rel)}: {reason}")
                             continue
                         rk_near += stats.near_misses if stats else 0
@@ -1878,19 +1901,10 @@ def pull(args, home) -> int:
                               f"externally owned; {printable(str(owner))} holds "
                               "it (--force writes through)")
                     if apply:
-                        # After every write, so the digest is of this
-                        # machine's Setup as the pull left it; the stamp is
-                        # the Index's for the Setup it laid down. Part of a
-                        # Setup leaves no mark (ADR-0015).
-                        here = (setup_mark.digest_here(home, effective)
-                                if setup_categories == set(SETUP_CATEGORIES)
-                                else None)
-                        stamp = setups[source].get("index_stamp")
-                        if here is not None and isinstance(stamp, str):
-                            setup_mark.record(home, cfg["destination"],
-                                              stamp, here)
-                        else:
-                            setup_mark.clear(home, cfg["destination"])
+                        _settle_pulled_setup(
+                            home, cfg["destination"], effective, staging,
+                            setups[source].get("index_stamp"),
+                            setup_mark.whole(setup_categories), leg_short)
 
     print()
     print("-" * 74)
