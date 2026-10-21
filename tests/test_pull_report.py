@@ -128,3 +128,15 @@ def test_a_session_that_only_gained_a_file_counts_as_pulled(home_b, capsys):
 
     _, out = pull(home_b, capsys, apply=True)
     assert "History: 1 Session pulled (2 unchanged), " in out, out
+
+
+def test_every_moving_command_takes_verbose_at_the_cli(home_b, capsys,
+                                                       monkeypatch):
+    """The flag is parsed, not only read off a namespace the tests build."""
+    from carryon import cli
+    monkeypatch.setenv("HOME", str(home_b))
+    cli.main(["pull", "--apply", "--verbose"])
+    assert f"  new      {UUID_F} (claude-code)" in capsys.readouterr().out
+    for command in ("push", "sync"):
+        assert cli.main([command, "--verbose"]) in (0, 1, 2)
+        capsys.readouterr()

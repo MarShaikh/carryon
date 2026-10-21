@@ -631,6 +631,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "(dotfiles symlinks) instead of skipping them")
     pul.add_argument("--category", metavar="A,B",
                      help=f"subset of: {', '.join(CATEGORIES)}")
+    pul.add_argument("--verbose", action="store_true",
+                     help="list each Session and file as it lands")
     pul.set_defaults(func=cmd_pull)
 
     syn = sub.add_parser(
