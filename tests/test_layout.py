@@ -120,3 +120,14 @@ def test_unverified_platform_is_flagged(tmp_path):
 
     report = layout.inspect(home, platform="darwin")
     assert report["claude-code"]["platform_verified"] is True
+
+
+def test_an_adapter_that_claims_linux_is_verified_there(tmp_path):
+    """Every Linux claim is checked on Linux by CI; this is the half of the
+    report that says so, for the one adapter that makes the claim."""
+    home = build_home(tmp_path)
+    (home / ".agents").mkdir()
+    (home / ".agents" / ".skill-lock.json").write_text("{}")
+    report = layout.inspect(home, platform="linux")
+    assert report["agents-convention"]["platform_verified"] is True
+    assert report["claude-code"]["platform_verified"] is False

@@ -266,11 +266,16 @@ def partial_push_home(tmp_path) -> tuple:
     return home, dest_root
 
 
+# Named ids, because pytest's default id is the value itself and it exports
+# the id as PYTEST_CURRENT_TEST into every child process. Linux refuses any
+# one environment string over 128 KiB with E2BIG, so NESTED as an id made
+# openssl unrunnable there - a failure of the test's name, not of carryon, and
+# one macOS, with no per-string limit, never showed.
 @pytest.mark.parametrize("stored", [
     "{not json at all",
     NESTED,
     '{"agents": "not-an-object", "categories": 7}',
-])
+], ids=["not-json", "nested-past-recursion", "wrong-types"])
 def test_a_hostile_stored_manifest_does_not_traceback_out_of_a_push(
         tmp_path, capsys, stored):
     """A partial push must first read the Archive's stored MANIFEST to overlay

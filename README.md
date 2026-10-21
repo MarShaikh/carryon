@@ -28,10 +28,11 @@ decision is in [docs/adr/](docs/adr/).
 
 ## What you need
 
-- **macOS.** Nothing has been run on Linux or Windows yet (see
-  [Platform support](#platform-support)).
+- **macOS or Linux.** The suite runs on both in CI, but the agents' own
+  layouts have been checked on macOS only (see
+  [Platform support](#platform-support)). Nothing has been run on Windows.
 - **Python 3.9 or newer.** carryon has no Python dependencies.
-- **`openssl`**, which macOS already has. Encryption shells out to it, so the
+- **`openssl`**, which macOS and Linux distributions already have. Encryption shells out to it, so the
   machine you are moving *to* needs nothing installed beyond carryon itself.
 - **A Destination**: somewhere both machines can reach. Any one of these:
   - a synced folder (Dropbox, Google Drive, iCloud Drive, Syncthing). No
@@ -412,7 +413,10 @@ adding that shape is engine work rather than a declaration.
 ## Platform support
 
 Every adapter is declared for `darwin` and was checked there; only the
-`~/.agents` one also claims Linux. Nothing has been run on Linux or Windows.
+`~/.agents` one also claims Linux. The test suite runs on macOS and Ubuntu in
+CI, which shows carryon itself works on Linux; it does not show where an agent
+keeps its files there, which is what an adapter's platform claim is about.
+Nothing has been run on Windows.
 `doctor` tells you when you are on a platform an adapter does not cover, and an
 adapter's `verified_against` records the version and OS it was actually checked
 on rather than a guess.
