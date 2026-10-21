@@ -52,7 +52,8 @@ import time
 from datetime import datetime, timezone
 
 from . import (archive, bases, capture, choosing, config, crypto,
-               destinations, external, history, keyring, prompting, rekey)
+               destinations, external, history, keyring, prompting, rekey,
+               setup_mark)
 from .adapters import ADAPTERS, CATEGORIES, HISTORY, SETUP_CATEGORIES
 from .destinations.base import printable
 
@@ -726,6 +727,9 @@ def push(args, home) -> int:
     # for inspection.
     setup_code = 0
     setup_pushed = False
+    # Filled by the capture with the digest the Setup mark records
+    # (ADR-0015); empty when no capture ran.
+    setup_seen = {}
     setup_withheld = setup_near = 0
     setup_undecodable = []
     # One value this push writes into the Setup's tag and into the encrypted
@@ -778,7 +782,8 @@ def push(args, home) -> int:
             with _swapped_registry(effective):
                 setup_code, manifest = capture.run(
                     out=staging, dry=not apply, want_agents=want_agents,
-                    want_categories=setup_categories, home=home)
+                    want_categories=setup_categories, home=home,
+                    digest_into=setup_seen)
             if setup_code == 0 and apply:
                 manifest, setup_withheld, setup_near, setup_undecodable = \
                     _neutralise_staged_setup(staging, manifest, home)
@@ -976,6 +981,15 @@ def push(args, home) -> int:
         archive.save_index(dest, master, index)
         _record_revision(home, cfg["destination"],
                          archive.index_revision(index))
+    if apply and setup_pushed:
+        # After the Index is sealed, so the mark never names a stamp the
+        # Index does not. A partial Setup sealed a new stamp over part of
+        # the stored one, so no digest of this machine's whole Setup
+        # describes it, and the mark goes rather than lies (ADR-0015).
+        setup_mark.settle(
+            home, cfg["destination"], setup_stamp,
+            setup_seen.get("digest")
+            if setup_mark.whole(setup_categories, want_agents) else None)
     if apply:
         # After the Index is sealed, so a Base never records an agreement
         # with a stored tree the Index does not name. A push replaces the
@@ -1179,6 +1193,27 @@ def _backup_root(home) -> pathlib.Path:
     """
     return (pathlib.Path(home) / ".carryon" / "backups"
             / f"{_utc_now()}-{crypto.new_stamp()}")
+
+
+def _settle_pulled_setup(home, spec, effective, staging, stamp, whole,
+                         short) -> None:
+    """The Setup mark a pull leaves, after every write, so the digest is of
+    this machine's Setup as the pull left it and the stamp is the Index's
+    for the Setup it laid down (ADR-0015). Part of a Setup leaves no mark.
+    A Setup that did not land whole, or a machine holding Setup files the
+    laid-down one never had, keeps the stamp with a digest that matches
+    nothing: this machine has seen that Setup and does not hold it, which is
+    what a push would publish."""
+    if not whole:
+        setup_mark.settle(home, spec, None, None)
+        return
+    digest, paths = setup_mark.capture_here(home, effective)
+    if digest is not None:
+        stored = {p.relative_to(staging).as_posix()
+                  for p in staging.rglob("*") if p.is_file()}
+        if short or set(paths) - stored:
+            digest = setup_mark.UNSETTLED
+    setup_mark.settle(home, spec, stamp, digest)
 
 
 def pull(args, home) -> int:
@@ -1832,6 +1867,9 @@ def pull(args, home) -> int:
                     # run never writes into a directory an earlier run made.
                     state_ids = config.state_identities(home)
                     prefix = archive.setup_prefix(source)
+                    # Whether this Setup landed whole, for the mark below:
+                    # anything refused or left to its owner did not.
+                    leg_short = bool(refused) or bool(skip)
                     for target, source_path in do:
                         rel = _rel_to_home(target, home)
                         packed_rel = source_path.relative_to(staging).as_posix()
@@ -1847,6 +1885,7 @@ def pull(args, home) -> int:
                             state_ids, force=force)
                         if reason is not None:
                             setup_refused += 1
+                            leg_short = True
                             print(f"  refuse   ~/{printable(rel)}: {reason}")
                             continue
                         rk_near += stats.near_misses if stats else 0
@@ -1861,6 +1900,11 @@ def pull(args, home) -> int:
                               f"{printable(prefix)}/{printable(packed_rel)} - "
                               f"externally owned; {printable(str(owner))} holds "
                               "it (--force writes through)")
+                    if apply:
+                        _settle_pulled_setup(
+                            home, cfg["destination"], effective, staging,
+                            setups[source].get("index_stamp"),
+                            setup_mark.whole(setup_categories), leg_short)
 
     print()
     print("-" * 74)

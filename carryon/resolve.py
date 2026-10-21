@@ -125,13 +125,22 @@ def _prune(directory: pathlib.Path, stop: pathlib.Path) -> None:
         directory = directory.parent
 
 
-def _list(found, home) -> int:
+def filed_memory(found, home) -> list:
+    """(residue, member, filed path) for every memory file a pull filed and
+    nobody has resolved yet. `carryon status` counts the same list, so the
+    two can never disagree about what is waiting."""
     pending = []
     for residue in (r for r in found.residues if r.cwd):
         for rel in residue.files:
             filed = _filed(home, residue, rel)
             if filed.is_file():
-                pending.append((home / residue.project_dir / rel, filed))
+                pending.append((residue, rel, filed))
+    return pending
+
+
+def _list(found, home) -> int:
+    pending = [(home / residue.project_dir / rel, filed)
+               for residue, rel, filed in filed_memory(found, home)]
     if not pending:
         print("Nothing is filed: no per-project memory file is waiting to "
               "be resolved.")
