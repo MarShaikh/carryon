@@ -124,7 +124,7 @@ def main(argv) -> int:
     if len(argv) != 4 or argv[1] not in ("seal", "open"):
         print(__doc__.strip().splitlines()[2], file=sys.stderr)
         return 2
-    mode, where, version = argv[1], pathlib.Path(argv[2]), \
+    mode, where, version = argv[1], pathlib.Path(argv[2]).resolve(), \
         openssl_version(argv[3])
     if mode == "seal":
         where.mkdir(parents=True, exist_ok=True)
