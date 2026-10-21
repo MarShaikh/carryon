@@ -157,7 +157,7 @@ def test_pull_does_not_write_through_a_hard_link(tmp_path, capsys):
 
     assert managed.read_text() == MANAGED, \
         "pull rewrote a file a dotfiles repo owns through a hard link"
-    assert "externally owned" in out
+    assert "a link already holds each path" in out
     assert "journal.jsonl" in out
 
 
@@ -217,7 +217,7 @@ def test_the_setup_leg_defers_to_a_hard_link_too(tmp_path, capsys):
 
     assert managed.read_text() == MANAGED, \
         "the Setup leg wrote through a hard link"
-    assert "externally owned" in out
+    assert "  skipped: " in out and "(--force writes through)" in out
 
 
 # --- the guard has to be about the path the write takes ----------------------
@@ -292,8 +292,7 @@ def test_a_directory_where_a_member_lands_is_reported_not_raised(tmp_path,
 
     assert code == 0
     assert UUID_A in out
-    assert "-" * 20 in out, "the pull ended before its report"
-    assert "Sessions:" in out
+    assert "History: " in out, "the pull ended before its report"
 
 
 def test_a_directory_where_a_residue_member_lands_is_reported_not_raised(
@@ -312,7 +311,7 @@ def test_a_directory_where_a_residue_member_lands_is_reported_not_raised(
     out = capsys.readouterr().out
 
     assert code == 0
-    assert "Project residue:" in out, "the pull ended before its report"
+    assert "History: " in out, "the pull ended before its report"
     assert "MEMORY.md" in out, "the member it could not write went unnamed"
     assert (root / "memory" / "MEMORY.md").is_dir(), \
         "the directory standing in the way was written over"
@@ -338,7 +337,7 @@ def test_a_planted_link_into_state_defers_rather_than_aborting_the_pull(
     assert code == 0
     assert not (home_b / ".carryon" / "anything").exists(), \
         "a restored History wrote into carryon's own state"
-    assert "externally owned" in out
+    assert "  not written: " in out
     assert "MEMORY.md" in out
 
 
@@ -372,7 +371,7 @@ def test_a_symlink_loop_reads_the_same_on_both_runners(tmp_path, capsys):
 
     assert code == 0
     assert "MEMORY.md" in out
-    assert "Sessions:" in out
+    assert "History: " in out
 
 
 # --- the capture leg of a History --------------------------------------------

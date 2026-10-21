@@ -319,7 +319,7 @@ def test_a_pull_that_restored_its_setup_exits_zero(paired, capsys):
     report = capsys.readouterr().out
 
     assert code == 0, report
-    assert "refuse" not in report, report
+    assert "not restored" not in report, report
     assert (paired.home_b / ".claude" / "settings.json").exists()
 
 
@@ -346,7 +346,7 @@ def test_a_pull_whose_setup_was_refused_does_not_exit_zero(paired, capsys):
     code = sync.pull(ns(apply=True), paired.home_b)
     report = capsys.readouterr().out
 
-    assert "refuse" in report, report
+    assert "Setup: not restored - " in report, report
     assert code == 2, ("a refused Setup reported success:\n" + report)
 
 
@@ -361,7 +361,7 @@ def test_a_dry_run_that_would_refuse_a_setup_says_so_in_its_status(paired,
     code = sync.pull(ns(apply=False), paired.home_b)
     report = capsys.readouterr().out
 
-    assert "refuse" in report, report
+    assert "Setup: not restored - " in report, report
     assert code == 1, report
 
 

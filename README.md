@@ -138,6 +138,19 @@ A pull unions the History, so Sessions from both machines end up on both. It
 replaces the Setup after backing up whatever it overwrites to
 `~/.carryon/backups/`.
 
+```
+Pulling from rclone remote carryon:carryon-archive
+
+Setup: restored from machine 'mac-a' (pushed 2026-10-21T09:12:00Z): 12 files written
+  skipped: ~/.claude/CLAUDE.md - ~/dotfiles/CLAUDE.md holds it (--force writes through)
+  files it replaced are backed up under ~/.carryon/backups/2026-10-21T09:15:02Z-…
+History: 3 Sessions pulled (20 unchanged), 1 project memory pulled (4 unchanged)
+  diverged: 1 Session - this machine's copy is kept and the Archive's is under ~/.carryon/conflicts/:
+    3f2a9c1e-… (claude-code)
+```
+
+`--verbose` lists each Session and file as it lands.
+
 ### 5. Day to day
 
 ```bash

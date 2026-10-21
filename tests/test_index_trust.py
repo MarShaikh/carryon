@@ -305,7 +305,7 @@ def test_an_archive_with_no_index_restores_nothing_and_says_why(tmp_path,
 
     assert not (home_b / ".claude" / "settings.json").exists(), \
         "a Setup no Index calls current was restored"
-    assert "no Index at all" in out, \
+    assert "but no Index, and this machine has never read one there" in out, \
         "the one case nothing can decide is refused without saying so"
     assert "the Index records as current" not in out, \
         "a missing Index was reported as one that disagrees"

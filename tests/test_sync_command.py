@@ -245,7 +245,7 @@ def test_sync_without_apply_writes_nothing_and_names_the_caveat(
     assert "real pull" in lowered, \
         "the dry run never says the push plan is provisional on the pull: " \
         + out
-    assert "push more" in lowered or "grow" in lowered, \
+    assert "carry more" in lowered or "may differ" in lowered, \
         "the caveat does not say the push half can only grow: " + out
 
 
@@ -535,7 +535,8 @@ def test_sync_publishes_past_a_pull_that_finished_short(partner, tmp_path,
     assert sync.sync(ns(apply=True), partner) == 2
     out = capsys.readouterr().out
 
-    assert "pull finished with 1 object(s) the Archive would not open" in out
+    assert ("1 object in the Archive couldn't be opened - push again from "
+            "a machine that still has them:") in out
     assert "Pushing to " in out, \
         "the push half never ran past the finished-short pull"
     index = archive.load_index(dest, keyring.fetch_master(home=partner))
@@ -639,12 +640,12 @@ def test_the_dry_run_caveat_is_honest_when_the_setup_travels(partner, capsys):
     capsys.readouterr()
     assert sync.sync(ns(apply=False), partner) in (0, 1)
     history_only = capsys.readouterr().out
-    assert "never less" in history_only
-    assert "replaces same-named" not in history_only
+    assert "can only carry more" in history_only
+    assert "can replace Setup files" not in history_only
 
     assert sync.sync(ns(apply=False, category="all"), partner) in (0, 1, 2)
     widened = capsys.readouterr().out
-    assert "replaces same-named" in widened, \
+    assert "can replace Setup files" in widened, \
         "the widened dry run kept the History-only reassurance"
-    assert "never less" not in widened.split("sync dry run")[1].split(
-        "PUSH")[0]
+    assert "can only carry more" not in widened.split("sync dry run")[1].split(
+        "Dry run: would push")[0]

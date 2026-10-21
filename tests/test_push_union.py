@@ -797,7 +797,7 @@ def test_a_destination_dying_at_the_setup_catalogue_does_not_abort_the_pull(
     out = capsys.readouterr().out
 
     assert main_path(home_b).is_file(), "the History half did not land"
-    assert "-" * 74 in out, "the pull died before its summary"
+    assert "History: " in out, "the pull died before its summary"
     assert "Setup" in out and "git fetch" in out, \
         "the skipped Setup half is not named with its reason"
 
@@ -819,11 +819,11 @@ def test_a_destination_dying_while_serving_a_session_is_a_skip_not_an_abort(
     assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
-    assert "-" * 74 in out, "the pull died before its summary"
+    assert "History: " in out, "the pull died before its summary"
     assert (home_b / ".claude" / "settings.json").is_file(), \
         "the Setup half was lost with the failed Session read"
     assert UUID_1 in out, "the skipped Session is not named in the report"
-    assert UUID_1 in out.split("pull finished with")[1], \
+    assert UUID_1 in out.split("still has them:")[1], \
         "the closing sentence stopped naming the skipped Session"
 
 
@@ -840,6 +840,6 @@ def test_a_destination_dying_while_laying_out_the_setup_is_one_refusal(
     out = capsys.readouterr().out
 
     assert main_path(home_b).is_file(), "the History half did not land"
-    assert "-" * 74 in out
+    assert "History: " in out
     assert "machine-a" in out and "git fetch" in out, \
         "the unreadable Setup is not named with its reason"

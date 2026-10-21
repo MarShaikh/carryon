@@ -580,14 +580,13 @@ def test_pull_lands_a_history_rekeyed_and_unions_with_b(joined, capsys):
     conflict = home_b / ".carryon" / "conflicts" / U3 / (U3 + ".jsonl")
     assert conflict.is_file()
     assert json.loads(conflict.read_text().splitlines()[0])["cwd"] == cwd_web_b
-    assert "1 divergent" in out
+    assert "  diverged: 1 Session - " in out
 
     # Setup: the dotfiles symlink is deferred to (ADR-0007) and named ...
     assert (home_b / ".claude" / "settings.json").is_symlink()
     assert (home_b / "dotfiles" / "settings.json").read_text() == \
         '{"model": "dotfiles"}'
-    assert ".claude/settings.json" in out
-    assert "externally owned" in out
+    assert "  skipped: ~/.claude/settings.json - " in out
     # ... while the plain file was backed up, then replaced
     assert (home_b / ".claude" / "CLAUDE.md").read_text() == "Answer briefly.\n"
     backups = list((home_b / ".carryon" / "backups").iterdir())
@@ -611,7 +610,7 @@ def test_second_pull_is_a_no_op_on_the_agent_trees(joined, capsys):
 
     assert tree_state(home_b / ".claude") == claude_before
     assert tree_state(home_b / ".carryon" / "conflicts") == conflicts_before
-    assert "0 new, 0 replaced" in out
+    assert "History: 0 Sessions pulled" in out
 
 
 def test_a_session_served_at_another_sessions_key_is_withheld_and_flagged(
@@ -831,15 +830,15 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
     out = capsys.readouterr().out
 
     # -- it finished: the report reached its summary, and said so ------------
-    assert "-" * 74 in out, "the pull stopped before it printed its summary"
     # U1 is the corrupted one, so what is left is U2 new and U3 divergent -
     # spelled out rather than counted loosely, because 'the pull carried on'
     # and 'the pull carried on and restored the rest' are different claims.
-    assert "Sessions: 1 new, 0 replaced, 0 unchanged, 0 ahead locally, " \
-        "1 divergent (kept aside)" in out
-    assert "Project residue: 1 file(s) written" in out
-    assert "Setup: 3 file(s) written, 1 externally owned and skipped" in out
-    assert "object(s) the Archive would not open" in out
+    assert ("History: 1 Session pulled (0 unchanged), "
+            "1 project memory pulled (0 unchanged)") in out, \
+        "the pull stopped before it printed its summary"
+    assert "  diverged: 1 Session - " in out
+    assert "): 3 files written" in out and "  skipped: " in out
+    assert "1 object in the Archive couldn't be opened" in out
 
     # -- all three named, none of them silently dropped ----------------------
     # The link never became a read at all: a Destination that serves a symlink
@@ -850,11 +849,11 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
         "a link planted at an object key went unmentioned"
     # The invented machine is named and loses, and nothing it carries is
     # weighed: an unvouched name cannot be the Setup this pull restores.
-    assert "no master key holder ever pushed a Setup under that name" in out, \
+    assert "no master key holder pushed it" in out, \
         "the invented machine went unmentioned"
     assert U1 in out and "integrity check" in out, \
         "the corrupted Session was dropped without a word"
-    assert U1 in out.split("pull finished with")[1], \
+    assert U1 in out.split("still has them:")[1], \
         "the closing sentence stopped naming the unopenable object"
 
     # The attacker names the object AND the report line is the safety
@@ -904,7 +903,7 @@ def test_a_hostile_destination_cannot_stop_or_poison_a_pull(joined, capsys):
     second = capsys.readouterr().out
     assert tree_state(home_b / ".claude") == claude_before, \
         "a second pull against the same planted Archive moved the agent tree"
-    assert "Sessions: 0 new, 0 replaced" in second
+    assert "History: 0 Sessions pulled" in second
     assert LINKED_OBJECT in second and "rogue" in second and U1 in second, \
         "the second pull stopped naming what the first one named"
 
@@ -1365,7 +1364,7 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
     assert "deleted at the Destination" in str(exc.value)
     assert tree_state(home_b / ".claude") == before, \
         "a pull against an Archive with no Index still wrote to the agent tree"
-    assert "Setup: from machine" not in first
+    assert "Setup: restored from machine" not in first
 
     # Now the shape that has nothing left to contradict itself: every other
     # encrypted object gone, leaving the sealed Setup alone. Before ADR-0014
@@ -1389,7 +1388,7 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
     assert "refusing to pull" in str(swept.value)
     assert tree_state(home_b / ".claude") == before, \
         "the Setup was restored from an Archive whose Index had been deleted"
-    assert "Setup: from machine" not in second
+    assert "Setup: restored from machine" not in second
     assert not (home_b / ".carryon" / "backups").exists(), \
         "a backup was taken, so a write towards the Setup was attempted"
 
@@ -1428,15 +1427,15 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
 
     assert sync.pull(ns(apply=True), home_b) == 2
     unmarked = capsys.readouterr().out
-    assert "Setup: none restored" in unmarked, \
+    assert "Setup: not restored - " in unmarked, \
         "a sealed Setup with no Index behind it restored on an unmarked machine"
-    assert "this Archive serves no Index at all" in unmarked
+    assert "but no Index, and this machine has never read one there" in unmarked
     # The sentence only this arm reaches: the two refusals above fire on the
     # mark, so the report has to say the mark is absent rather than imply a
     # check it never ran.
-    assert "has never read one at this Destination either" in unmarked, \
+    assert "and this machine has never read one there" in unmarked, \
         "the report does not say the one thing that would have settled it"
-    assert "refused whole" not in unmarked, \
+    assert "freshness stamp" not in unmarked, \
         "the Setup was chosen and refused as a replay, not left unchosen"
     assert "ADR-0004" not in unmarked, \
         "the notes still cite the keyless push ADR-0014 removed"
@@ -1470,7 +1469,7 @@ def test_a_deleted_index_never_downgrades_the_setup_restore(joined, capsys):
         joined.dest.write(key, data)
     assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
-    assert "Setup: from machine 'mac-a'" in out
+    assert "Setup: restored from machine 'mac-a'" in out
     assert "nothing in the encrypted Index vouches" not in out, \
         "the restored Setup was the downgraded one even with the Index intact"
     assert (home_b / ".claude" / "CLAUDE.md").read_text() == "Answer briefly.\n"
@@ -1529,7 +1528,7 @@ def test_a_restored_session_is_never_written_through_a_planted_link(
     (web / (U3 + ".jsonl")).unlink()
     os.link(repo / "u3.jsonl", web / (U3 + ".jsonl"))
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True, verbose=True), home_b) == 0
     out = capsys.readouterr().out
 
     # -- the links still stand and the repo behind them is untouched ---------
@@ -1545,8 +1544,8 @@ def test_a_restored_session_is_never_written_through_a_planted_link(
             f"a Session's contents reached the project repo at {rel}"
 
     # -- each one named, and counted as deference rather than as a failure ---
-    assert "externally owned" in out
-    assert "History: 4 file(s) externally owned and skipped" in out
+    assert ("  not written: 4 files - a link already holds each path (a "
+            "History is never written through one, --force included):") in out
     for rel in (f".claude/projects/{slug}/{U1}/subagents/sub-1.jsonl",
                 f".claude/projects/{slug}/{U1}/workflows/run-1/journal.jsonl",
                 f".claude/projects/{slug}/memory/MEMORY.md",
@@ -1558,7 +1557,7 @@ def test_a_restored_session_is_never_written_through_a_planted_link(
     main = app / (U1 + ".jsonl")
     assert json.loads(main.read_text().splitlines()[0])["cwd"] == cwd_app_b
     assert (app / (U2 + ".jsonl")).is_file()
-    assert "Sessions: 2 new" in out
+    assert "History: 3 Sessions pulled (0 unchanged)" in out
     assert "replace" in out, \
         "U3 was not on the replacement path, so the sweep was never asked"
 
@@ -1650,7 +1649,7 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
         "the skip did not tell the user what to do about it"
 
     # A does what it was told.
-    assert sync.pull(ns(apply=True), home_a) == 0
+    assert sync.pull(ns(apply=True, verbose=True), home_a) == 0
     pull_a = capsys.readouterr().out
 
     # -- both journals survive, and A ends on the longer main ---------------
@@ -1672,12 +1671,10 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
 
     # -- and the report said what it did to the tree ------------------------
     assert f"replace  {U1}" in pull_a
-    assert f"keep     {U1}" in pull_a, \
+    assert f"keep     {U1} (claude-code) - 1 file(s) only this machine has" \
+        in pull_a, \
         "the kept local journal was never named, so a user cannot tell a " \
         "union from a deletion"
-    assert "1 file(s) this machine holds and the Archive did not" in pull_a
-    assert "Sessions: 1 local file(s) kept in Sessions the incoming tree " \
-           "landed on" in pull_a
 
     # -- and the cure actually worked: A's push now goes through ------------
     assert sync.push(ns(apply=True), home_a) == 0
@@ -1707,7 +1704,7 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
 
     # Still 2: U3 is still divergent, and every pull that meets it says so
     # (ADR-0012) - the union this leg is about is asserted on the tree below.
-    assert sync.pull(ns(apply=True), home_b) == 2
+    assert sync.pull(ns(apply=True, verbose=True), home_b) == 2
     pull_b = capsys.readouterr().out
     assert (app_b / U1 / "subagents" / "only-on-a.jsonl").is_file(), \
         "a member the Archive held and this machine did not never landed"
@@ -1817,18 +1814,18 @@ def test_a_damaged_archive_lands_everything_undamaged_and_names_the_rest(
     out = capsys.readouterr().out
 
     # -- it finished: the report reached its summary -------------------------
-    assert "-" * 74 in out, "the pull stopped before it printed its summary"
-    assert "Sessions: 0 new, 0 replaced, 0 unchanged, 0 ahead locally, " \
-        "1 divergent (kept aside)" in out
-    assert "Project residue: 1 file(s) written" in out
-    assert "Setup: 3 file(s) written, 1 externally owned and skipped" in out
+    assert ("History: 0 Sessions pulled (0 unchanged), "
+            "1 project memory pulled (0 unchanged)") in out, \
+        "the pull stopped before it printed its summary"
+    assert "  diverged: 1 Session - " in out
+    assert "): 3 files written" in out and "  skipped: " in out
 
     # -- both damaged records named, neither silently dropped ----------------
     assert U1 in out and "not a tar" in out, \
         "the damaged Session object was dropped without a word"
     assert U2 in out and "sessions" in out, \
         "the Index entry this machine could not use went unmentioned"
-    closing = out.split("pull finished with")[1]
+    closing = out.split("still has them:")[1]
     assert U1 in closing and U2 in closing, \
         "the closing sentence does not say what was left behind"
     # The key is a string this machine cannot encode, and the report line is
@@ -1929,7 +1926,7 @@ def test_a_push_over_a_damaged_archive_carries_the_rest_and_keeps_the_damage(
     # (ADR-0012).
     capsys.readouterr()
     assert sync.pull(ns(apply=True), home_b) == 2
-    closing = capsys.readouterr().out.split("pull finished with")[1]
+    closing = capsys.readouterr().out.split("still has them:")[1]
     assert U1 in closing and U2 + r"\udcff" in closing, \
         "the closing sentence stopped naming the record no push could repair"
     assert list((home_b / ".claude").rglob(U2 + ".jsonl")), \
@@ -2046,7 +2043,7 @@ def test_a_damaged_state_file_stops_neither_a_push_nor_a_pull(
         assert sync.pull(ns(apply=True), home_b) == 2, \
             f"a state.json that is {name} refused a pull"
     pull_out = capsys.readouterr().out
-    assert "-" * 74 in pull_out, \
+    assert "History: " in pull_out, \
         f"the pull stopped before its summary over a state.json that is {name}"
     assert "state.json" in pull_out and "warning" in pull_out
     assert "refusing to pull" not in pull_out, \
@@ -2090,7 +2087,8 @@ def test_the_state_file_is_still_the_check_it_is_there_to_be(joined, capsys):
         "a readable mark ahead of the Archive did not refuse the Setup"
     out = capsys.readouterr().out
     assert "rolled back" in out
-    assert "Setup: none restored" in out
+    assert "Setup: not restored - the Archive's Index has been rolled back" \
+        in out
 
     # ... and with the same claim in a file this machine cannot read, the very
     # same Archive restores. That is the cost of the rule stated as a test
@@ -2102,7 +2100,7 @@ def test_the_state_file_is_still_the_check_it_is_there_to_be(joined, capsys):
         assert sync.pull(ns(apply=True), home_b) == 2
     unmarked = capsys.readouterr().out
     assert "rolled back" not in unmarked
-    assert "Setup: from machine 'mac-a'" in unmarked
+    assert "Setup: restored from machine 'mac-a'" in unmarked
 
 
 # --- stage 12: what the shell sees when a Setup is refused -------------------
@@ -2147,13 +2145,14 @@ def test_a_pull_whose_setup_is_refused_exits_non_zero_through_the_cli(
         "a refused Setup came back as a successful pull"
     out = capsys.readouterr().out
     assert "failed its integrity check" in out
+    assert ("The key is right, so it was changed or damaged at the "
+            "Destination; nothing was restored from it.") in out
     # The refusal is whole, and the summary is where a script reads that: the
     # seal's own sentence says why one object was refused, these two say that
     # nothing out of it was used. The freshness door spells its refusal
     # 'refused whole' instead, which is why the phrase this used to pin is not
     # the one a damaged seal produces.
-    assert "Setup: 0 file(s) written" in out
-    assert "Setup: none of it landed" in out, \
+    assert "Setup: not restored - " in out, \
         "the status changed and the report never explained why"
 
     # Nothing of the Setup moved: the plain file was not replaced, the
@@ -2170,7 +2169,7 @@ def test_a_pull_whose_setup_is_refused_exits_non_zero_through_the_cli(
 
     # ... while the History did land, which is the half that must not be
     # hostage to the Setup's refusal (ADR-0002: a History accumulates).
-    assert "Sessions: 2 new" in out
+    assert "History: 2 Sessions pulled" in out
     app_b = home_b / ".claude" / "projects" / rekey.encode_project_dir(
         str(home_b / PROJ_APP))
     assert (app_b / (U1 + ".jsonl")).is_file()
@@ -2306,7 +2305,7 @@ def test_the_whole_journey_works_against_a_git_destination(tmp_path, capsys):
         # directory - ADR-0012's exit code.
         assert sync.pull(ns(apply=True), home_b) == 2
     pull_out = capsys.readouterr().out
-    assert "PULLING <- git repository" in pull_out
+    assert "Pulling from git repository" in pull_out
 
     cwd_app_b = str(home_b / PROJ_APP)
     app_b = home_b / ".claude" / "projects" / rekey.encode_project_dir(
@@ -2330,7 +2329,7 @@ def test_the_whole_journey_works_against_a_git_destination(tmp_path, capsys):
     with time_limit(JOURNEY_LIMIT):
         assert sync.push(ns(apply=True), home_b) == 0
         back = capsys.readouterr().out
-        assert sync.pull(ns(apply=True), home_a) == 0
+        assert sync.pull(ns(apply=True, verbose=True), home_a) == 0
         home_again = capsys.readouterr().out
     assert "History: 1 Session pushed (2 unchanged, 1 skipped)" in back
     assert "new      " + UB in home_again, \

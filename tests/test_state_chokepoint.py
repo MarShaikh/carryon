@@ -1210,7 +1210,7 @@ def test_an_ordinary_setup_backup_still_works(tmp_path, capsys):
     saved = [p for p in backups_of(home_b) if p.name == "settings.json"]
     assert saved, "the Setup was replaced with no backup taken"
     assert saved[0].read_text() == LOCAL_SETTINGS
-    assert "backed up to" in report
+    assert "  files it replaced are backed up under " in report
 
 
 def test_a_link_above_the_backup_directory_is_not_written_through(tmp_path,

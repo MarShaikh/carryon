@@ -68,6 +68,7 @@ MODULES = (
     "tests.test_sync_hostile",
     "tests.test_push_union",
     "tests.test_push_report",
+    "tests.test_pull_report",
     "tests.test_pull_never_deletes",
     "tests.test_residue_base",
     "tests.test_pull_member_union",

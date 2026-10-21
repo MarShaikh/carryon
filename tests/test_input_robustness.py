@@ -319,7 +319,7 @@ def test_an_index_cwd_that_is_not_a_string_is_refused_before_the_pull_writes(
 
     assert "cwd" in out, "the refusal does not name the field"
     assert U2 in out, "the refusal does not name the entry"
-    assert "-" * 74 in out, "the pull stopped before it printed its summary"
+    assert "History: " in out, "the pull stopped before it printed its summary"
     assert restored_sessions(archived.home_b) == {U1}, \
         "one entry with an unreadable field took the whole Archive with it"
 
@@ -881,7 +881,7 @@ def test_a_session_uuid_a_filename_can_hold_is_escaped_in_the_report(
     link_home(home_b, dest_spec, "machine-b", master_from=home)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True, verbose=True), home_b) == 0
     out = capsys.readouterr().out
 
     assert "\\x1b" in out, "the Index key went into the report unescaped"
@@ -1063,7 +1063,7 @@ def test_a_memory_file_this_machine_cannot_read_does_not_end_a_pull(
     finally:
         memory.chmod(0o644)
 
-    assert "Project residue:" in out, "the pull ended before its report"
+    assert "History: " in out, "the pull ended before its report"
     assert "could not be read" in out, \
         "the residue it could not compare against went unnamed"
 

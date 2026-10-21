@@ -228,11 +228,10 @@ def _setup_catalogue(dest, index) -> tuple:
             refused.append((machine, why))
             continue
         if machine not in sealed:
-            refused.append((machine, "the Archive holds it as a plaintext "
-                                     "tree, which is how Setups were stored "
-                                     "before they were sealed (ADR-0014) - "
-                                     "push again from a machine that holds "
-                                     "the master key to replace it"))
+            # How Setups were stored before they were sealed (ADR-0014).
+            refused.append((machine, "it is unencrypted, from an older "
+                                     "carryon - push again from a machine "
+                                     "with the master key to replace it"))
             continue
         entry = entries.get(vouched.get(machine), {})
         known = entry.get("pushed_at", "") if isinstance(entry, dict) else ""
@@ -297,6 +296,10 @@ def _choose_setup_source(setups: dict) -> tuple:
     return None, sorted(setups)
 
 
+_PUSH_AGAIN = (" Push a Setup from a machine with the master key, then pull "
+               "again.")
+
+
 def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
     """Why this pull restores no Setup, for the report.
 
@@ -312,39 +315,29 @@ def _no_setup_source_note(setups: dict, index_names, index_absent=True) -> str:
     verdict comes from: the Index, or its absence."""
     held = ", ".join(printable(m) for m in sorted(setups))
     if not index_names and not index_absent:
+        # The Index is sealed and a keyed push records itself (ADR-0014),
+        # so a name under setups/ no push accounts for was put there.
         return (
-            f"\nSetup: none restored - the Archive holds Setups for {held}, "
-            "and the encrypted Index records no Setup push at all. The Index "
-            "is sealed, so that is a master key holder saying nothing here is "
-            "vouched for; since ADR-0014 a push cannot write a Setup without "
-            "the master key and a keyed push records itself, so a name under "
-            "setups/ that no push accounts for is one someone put there. Push "
-            "a Setup from a machine that holds the master key, then pull "
-            "again.")
+            f"Setup: not restored - the Archive holds Setups for {held}, but "
+            "the Index records no Setup push, so none of them is vouched "
+            f"for.{_PUSH_AGAIN}")
     if index_names:
         missing = ", ".join(printable(m) for m in index_names)
+        # What those objects being deleted, and a name nobody vouches for
+        # left in their place, looks like from here.
         return (
-            "\nSetup: none restored - the encrypted Index records Setup "
-            f"pushes for {missing}, and the Archive holds an object for none "
-            f"of them. What it holds is {held}, which no master key holder "
-            "ever pushed. The Index is the record of what was pushed here, so "
-            "this is what those objects being deleted - and a name nobody "
-            "vouches for being left in their place - looks like from this "
-            "machine. Push a Setup from a machine that holds the master key, "
-            "then pull again.")
+            f"Setup: not restored - the Index records Setup pushes for "
+            f"{missing}, but the Archive holds none of them, only {held}, "
+            f"which no master key holder pushed.{_PUSH_AGAIN}")
     # Only a machine with no record of an Index here gets this far:
     # _refuse_on_index_removal stops the pull before the Setup leg on any
     # machine that has read one. So saying so is a fact, not a guess, and it
     # is the fact that would otherwise have settled the case.
     some, which = (("a Setup", "whether it is current") if len(setups) == 1
                    else ("Setups", "which of them is current"))
+    # The seal says who wrote a Setup and never when, and a keyed push always
+    # writes the Index (ADR-0014): a Setup with no Index most likely lost it.
     return (
-        f"\nSetup: none restored - the Archive holds {some} for {held}, and "
-        "this Archive serves no Index at all, so there is no master key "
-        f"holder's record here to say {which}. This machine has never read "
-        "one at this Destination either, which would have settled it. A Setup "
-        "opens under the master key or not at all, but the seal says who "
-        "wrote it and never when. Since ADR-0014 a keyed push always writes "
-        "the Index, so an Archive with a Setup and no Index is most likely "
-        "one the Index was removed from. Push a Setup from a machine that "
-        "holds the master key, then pull again.")
+        f"Setup: not restored - the Archive holds {some} for {held} but no "
+        "Index, and this machine has never read one there, so nothing says "
+        f"{which}.{_PUSH_AGAIN}")

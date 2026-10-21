@@ -177,7 +177,7 @@ def test_a_filed_session_names_where_it_is(two, capsys):
     (filed / (UUID_A + ".jsonl")).write_text('{"n":1}\n')
     _code, out = run(home_b, capsys)
     assert ("Filed: 1 Session diverged - the Archive's copy is under "
-            "~/.carryon/conflicts/<uuid>/, and no command merges a Session"
+            "~/.carryon/conflicts/<uuid>/ for you to merge"
             in out), out
     assert "in step" not in out
 

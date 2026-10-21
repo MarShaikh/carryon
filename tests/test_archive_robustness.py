@@ -61,7 +61,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from carryon import (archive, config, crypto, destinations,  # noqa: E402
-                     history, keyring, rekey, sync)
+                     history, keyring, rekey, status, sync)
 
 # A lone surrogate: legal JSON, legal in a Python str, six ASCII characters on
 # the Destination, and impossible to encode as UTF-8 - which is what crypto
@@ -301,6 +301,26 @@ def test_a_session_key_this_machine_cannot_spell_is_refused_by_name(
         "the key this machine cannot encode was printed rather than escaped"
     assert restored_sessions(archived.home_b) == {U1, U2}, \
         "one unusable key took every Session in the Archive down with it"
+
+
+def test_an_unreadable_index_entry_is_named_by_status_and_push(
+        archived, capsys):
+    """The same entry, in each command's words: status leaves it out of its
+    counts, push carries it through the Index it seals."""
+    bad = LONE_SURROGATE + "-x"
+    tamper_index(archived, lambda index: index["sessions"].update(
+        {bad: dict(index["sessions"][U1])}))
+    capsys.readouterr()
+
+    assert status.run(ns(), archived.home_a) == 0
+    out = capsys.readouterr().out
+    assert ("1 entry in the Archive's Index couldn't be read - left out "
+            "below:\n  \\udcff-x: ") in out, out
+
+    assert sync.push(ns(apply=True), archived.home_a) == 0
+    out = capsys.readouterr().out
+    assert ("1 entry in the Archive's Index couldn't be read - carried "
+            "through unchanged:\n  \\udcff-x: ") in out, out
 
 
 def test_a_project_key_this_machine_cannot_spell_is_refused_by_name(

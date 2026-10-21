@@ -126,7 +126,7 @@ def test_a_replayed_empty_index_cannot_downgrade_a_paired_machines_pull(
     settings = home_b / ".claude" / "settings.json"
     assert not settings.exists() or "attacker" not in settings.read_text(), \
         "a replayed empty Index laundered an unvouched Setup into $HOME"
-    assert "none restored" in out
+    assert "Setup: not restored - " in out
 
 
 def test_an_archive_with_a_setup_and_no_index_restores_nothing(tmp_path,
@@ -176,10 +176,10 @@ def test_an_archive_with_a_setup_and_no_index_restores_nothing(tmp_path,
 
     assert not (home_b / ".claude" / "settings.json").exists(), \
         "a Setup nothing calls current was restored"
-    assert "no Index at all" in out, \
+    assert "but no Index, and this machine has never read one there" in out, \
         "the report does not say the Archive serves no Index"
-    assert "Setup: none restored" in out
-    assert "refused whole" not in out, \
+    assert "Setup: not restored - the Archive holds" in out
+    assert "freshness stamp" not in out and "is an older one" not in out, \
         "a Setup was chosen and then refused, rather than never chosen"
     assert "ADR-0004" not in out, \
         "the report still cites the keyless push ADR-0014 removed"
@@ -267,7 +267,7 @@ def test_a_rollback_still_lets_the_history_half_land(tmp_path, capsys):
     # is what this test is about, and it still landed and still reported.
     assert code == 2
     assert "rolled back" in out
-    assert "Sessions:" in out, "the History half never reported"
+    assert "History: " in out, "the History half never reported"
 
 
 # --- the push leg's door into the same check ---------------------------------
@@ -305,7 +305,7 @@ def test_a_partial_push_cannot_relabel_a_replayed_tree(tmp_path, capsys):
     link_home(home_b, str(dest_root), "machine-b", master_from=home_a)
     capsys.readouterr()
     assert sync.pull(ns(apply=True), home_b) == 2
-    assert "refuse" in capsys.readouterr().out, \
+    assert "Setup: not restored - " in capsys.readouterr().out, \
         "the pull leg's freshness check is not what is under test here"
 
     # A stop, not a skip, matching its two siblings on this path: a partial
@@ -376,8 +376,8 @@ def test_an_index_entry_with_no_object_field_is_a_report_line(tmp_path,
     assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
-    assert "Sessions:" in out, "the pull ended before its report"
-    assert "would not open" in out
+    assert "History: " in out, "the pull ended before its report"
+    assert "in the Archive couldn't be opened" in out
 
 
 def test_an_index_setup_entry_with_a_numeric_time_is_a_report_line(tmp_path,
@@ -438,7 +438,7 @@ def test_an_index_setup_entry_that_is_not_an_object_is_a_report_line(
     # so it counts - as a code, once everything else landed (ADR-0012).
     assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
-    assert "Index this machine could not read" in out
+    assert "Index entry couldn't be read" in out
 
 
 def test_the_pairing_payload_still_hands_over_a_usable_anchor(tmp_path,
@@ -495,5 +495,5 @@ def test_no_setup_is_restored_when_the_index_names_none_but_exists(tmp_path,
 
     settings = home_b / ".claude" / "settings.json"
     assert not settings.exists() or "attacker" not in settings.read_text()
-    assert "none restored" in out
+    assert "Setup: not restored - " in out
     assert json.loads(EVIL_SETTINGS)["model"] == "attacker"  # the plant is real

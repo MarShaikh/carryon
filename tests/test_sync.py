@@ -450,7 +450,7 @@ def test_rekey_stats_are_reported_on_push_and_pull(tmp_path, capsys):
     home_b.mkdir()
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
     capsys.readouterr()
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True, verbose=True), home_b) == 0
     out = capsys.readouterr().out
     assert "not UTF-8" in out
     assert "bare '~'" in out
@@ -633,9 +633,9 @@ def test_pull_unions_restores_new_and_never_deletes_local(
     memory = project / "memory" / "MEMORY.md"
     assert memory.read_text() == f"Notes live in {cwd_b}/notes.\n"
 
-    assert "1 new" in out
-    assert "1 replaced" in out
-    assert "1 divergent" in out
+    assert ("History: 2 Sessions pulled (1 unchanged), "
+            "1 project memory pulled (0 unchanged)") in out
+    assert "  diverged: 1 Session - " in out
     assert UUID_C in out
 
 
@@ -661,8 +661,8 @@ def test_pull_backs_up_the_setup_and_skips_externally_owned(
     # externally owned: skipped, named with its owner (ADR-0007)
     assert (home_b / ".claude" / "CLAUDE.md").is_symlink()
     assert (home_b / "dotfiles" / "CLAUDE.md").read_text() == "dotfiles owns this\n"
-    assert ".claude/CLAUDE.md" in out
-    assert "externally owned" in out
+    assert "  skipped: ~/.claude/CLAUDE.md - " in out
+    assert "(--force writes through)" in out
     assert "dotfiles" in out, "the report names the owner"
 
 
@@ -703,7 +703,7 @@ def test_pull_reports_rather_than_dies_when_chats_are_excluded(
                / rekey.encode_project_dir(str(home_b / PROJ_REL)))
     assert not (project / (UUID_F + ".jsonl")).exists()
     # the codex Session still went through the union: divergent, kept aside
-    assert "1 divergent" in out
+    assert "  diverged: 1 Session - " in out
     assert (home_b / ".carryon" / "conflicts" / UUID_C).is_dir()
 
 
@@ -723,9 +723,10 @@ def test_pull_dry_run_writes_nothing(tmp_path, pushed, capsys):
 
     assert tree_state(home_b) == home_before
     assert {k: dest.read(k) for k in dest.list("")} == dest_before
-    assert "1 new" in out
-    assert "1 divergent" in out
-    assert "externally owned" in out, "the dry run still shows the full plan"
+    assert "History: 2 Sessions to pull" in out
+    assert "  diverged: 1 Session - " in out
+    assert "  skipped: ~/.claude/CLAUDE.md - " in out, \
+        "the dry run still shows the full plan"
 
 
 # --- cli and restore notes ---------------------------------------------------
