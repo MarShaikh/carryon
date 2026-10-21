@@ -374,7 +374,8 @@ def test_push_names_the_withheld_hard_link_and_still_pushes(tmp_path, capsys):
     report = capsys.readouterr().out
 
     assert code == 0, "one link in one project refused a whole History"
-    assert "WITHHELD" in report
+    assert ("1 History path not carried - they lead to carryon's own key or "
+            "config:") in report, report
     assert f"{UUID_A}/notes.md" in report
     assert not archive_plaintext_containing(tmp_path / "archive", secret), \
         "the master key reached the Archive"

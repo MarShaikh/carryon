@@ -334,8 +334,8 @@ def joined(tmp_path, journey, capsys):
 
 def test_history_credential_is_reported_never_refused(journey):
     out = journey.push_out
-    assert "REPORTED in 1" in out
-    assert U2 in out, "the report names the Session the credential is in"
+    assert ("possible secrets in 1 History file, carried encrypted "
+            "(--verbose names them)") in out
     assert "REFUSED" not in out, \
         "a History hit reports and carries on (ADR-0001); refusal is for a Setup"
     assert len(journey.dest.list("carryon/sessions/")) == 3, \
@@ -443,7 +443,7 @@ def test_a_real_push_leaves_the_setup_sealed_and_its_bookkeeping_intact(
 
     # The sealed key, by name, and the word that replaced 'clean': there is
     # one promise now and it is about storage, not content (ADR-0014).
-    assert "Setup: pushed to carryon/setups/mac-a.tar.enc (encrypted)" in \
+    assert "Setup: pushed, encrypted (Claude Code" in \
         journey.push_out, "the push report's Setup line is not what it says"
     assert "clean" not in journey.push_out, \
         "the push report still calls something clean (CONTEXT.md retired it)"
@@ -482,8 +482,8 @@ def test_second_push_uploads_zero_new_session_objects(journey, capsys):
         + journey.dest.list("carryon/projects/") == keys
     # encryption is salted, so byte-identical objects prove no re-upload
     assert {k: journey.dest.read(k) for k in keys} == before
-    assert "Sessions: 0 pushed, 3 unchanged" in out
-    assert "Project residue: 0 pushed, 1 unchanged" in out
+    assert ("History: 0 Sessions pushed (3 unchanged), "
+            "0 project memories pushed (1 unchanged)") in out
 
 
 # --- stage 3: pair and join ---------------------------------------------------
@@ -664,7 +664,7 @@ def test_pushing_back_from_b_leaves_neither_machines_home_in_the_archive(
 
     assert sync.push(ns(apply=True), joined.home_b) == 0
     out = capsys.readouterr().out
-    assert "Sessions: 1 pushed, 2 unchanged, 1 skipped" in out
+    assert "History: 1 Session pushed (2 unchanged, 1 skipped)" in out
     assert U3 in out, "the skipped divergent Session is named"
 
     master = keyring.fetch_master(home=joined.home_b)
@@ -1068,12 +1068,12 @@ def test_a_handpicked_path_resolving_into_carryon_state_is_refused(
     config.save(cfg, home)
     assert sync.push(ns(apply=True), home) == 2
     out = capsys.readouterr().out
-    assert "SETUP REFUSED" in out
+    assert "Setup: not pushed - carryon won't carry these paths:" in out
     assert "reads carryon's own state" in out
     assert ".mytool/cfg.json" in out, "the refusal names the planted link"
     # the refusal is the Setup's, not the push's: the History is encrypted
     # and unchanged, so it reports rather than refuses (ADR-0001)
-    assert "Sessions: 0 pushed, 3 unchanged" in out
+    assert "History: 0 Sessions pushed (3 unchanged)" in out
     assert carried_bytes(journey.archive_root) == before, \
         "a refused Setup still changed the Archive"
     assert not journey.dest.read("carryon/setups/mac-a/handpicked/"
@@ -1143,9 +1143,10 @@ def test_a_push_from_behind_never_shortens_the_archives_session(
 
     # said by name: U1 skipped as behind, U3 skipped as divergent, B's own
     # UB pushed, U2 agreed on - and the summary counts all four
-    assert f"skip     {U1}" in out
-    assert "behind the Archive's" in out and "pull first" in out
-    assert "Sessions: 1 pushed, 1 unchanged, 2 skipped" in out
+    assert "Skipped 2 Sessions rather than overwrite the Archive's copy:" in out
+    assert f"  {U1} (claude-code): this machine's copy is behind" in out
+    assert "run `carryon pull` first" in out
+    assert "History: 1 Session pushed (1 unchanged, 2 skipped)" in out
 
     # the Archive's longer copy survived, object and Index entry both
     assert joined.dest.read(entry_before["object"]) == blob_before, \
@@ -1638,14 +1639,14 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
 
     # B pushes first, so the Archive holds the longer main and B's journal.
     assert sync.push(ns(apply=True), home_b) == 0
-    assert f"skip     {U1}" not in capsys.readouterr().out, \
+    assert f"  {U1} (claude-code): " not in capsys.readouterr().out, \
         "B was not ahead of the Archive, so this leg never reaches the union"
 
     # A pushes and is refused, by name, with the cure named too.
     assert sync.push(ns(apply=True), home_a) == 0
     push_a = capsys.readouterr().out
-    assert f"skip     {U1}" in push_a
-    assert "pull first" in push_a, \
+    assert f"  {U1} (claude-code): " in push_a
+    assert "run `carryon pull` first" in push_a, \
         "the skip did not tell the user what to do about it"
 
     # A does what it was told.
@@ -1681,7 +1682,7 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
     # -- and the cure actually worked: A's push now goes through ------------
     assert sync.push(ns(apply=True), home_a) == 0
     push_again = capsys.readouterr().out
-    assert f"skip     {U1}" not in push_again, \
+    assert U1 not in push_again, \
         "'pull first' did not make the push that follows it possible"
     master = keyring.fetch_master(home=home_a)
     stored = _stored_session_members(joined.dest, master, U1)
@@ -1701,7 +1702,7 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
 
     assert sync.push(ns(apply=True), home_b) == 0
     push_b = capsys.readouterr().out
-    assert "pull first" in push_b, \
+    assert "`carryon pull` first" in push_b, \
         "B was not behind on anything, so this leg tests nothing"
 
     # Still 2: U3 is still divergent, and every pull that meets it says so
@@ -1720,7 +1721,7 @@ def test_a_behind_machine_pulls_and_keeps_every_journal_only_it_had(
 
     assert sync.push(ns(apply=True), home_b) == 0
     push_b_again = capsys.readouterr().out
-    assert "pull first" not in push_b_again, \
+    assert "`carryon pull` first" not in push_b_again, \
         "pulling first did not make the push it named possible:\n" \
         + push_b_again
 
@@ -2024,11 +2025,11 @@ def test_a_damaged_state_file_stops_neither_a_push_nor_a_pull(
         assert sync.push(ns(apply=True), home_a) == 0, \
             f"a state.json that is {name} refused a push"
     push_out = capsys.readouterr().out
-    assert "-" * 74 in push_out, \
+    assert "History: " in push_out, \
         f"the push stopped before its summary over a state.json that is {name}"
     assert "state.json" in push_out and "warning" in push_out, \
         "the mark could not be read and the push said nothing about it"
-    assert "Sessions: 1 pushed" in push_out, \
+    assert "History: 1 Session pushed" in push_out, \
         "the push warned about the mark and carried no Session"
 
     master = keyring.fetch_master(home=home_a)
@@ -2259,7 +2260,7 @@ def test_the_whole_journey_works_against_a_git_destination(tmp_path, capsys):
         push_out = capsys.readouterr().out
     assert "git repository" in push_out, \
         "the push did not go over the git Destination"
-    assert "REPORTED in 1" in push_out and U2 in push_out, \
+    assert "possible secrets in 1 History file" in push_out, \
         "the History credential stopped being reported over git (ADR-0001)"
 
     # -- what actually reached the remote, read with git's own plumbing ------
@@ -2331,7 +2332,7 @@ def test_the_whole_journey_works_against_a_git_destination(tmp_path, capsys):
         back = capsys.readouterr().out
         assert sync.pull(ns(apply=True), home_a) == 0
         home_again = capsys.readouterr().out
-    assert "Sessions: 1 pushed, 2 unchanged, 1 skipped" in back
+    assert "History: 1 Session pushed (2 unchanged, 1 skipped)" in back
     assert "new      " + UB in home_again, \
         "B's own Session never came back down to A over git"
     own_a = (home_a / ".claude" / "projects"

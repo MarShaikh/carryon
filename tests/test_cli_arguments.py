@@ -120,6 +120,8 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("sync", "apply"): "a flag",
     ("resolve", "apply"): "a flag",
     ("status", "verbose"): "a flag",
+    ("push", "verbose"): "a flag",
+    ("sync", "verbose"): "a flag",
     ("sync", "category"): "a subset of a known set - sync._subset, the one parser",
     ("init", "join"): "a pairing code - sync.parse_pairing_code, which admits "
                       "16 characters from one alphabet and is a stricter door "

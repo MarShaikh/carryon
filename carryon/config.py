@@ -219,11 +219,11 @@ def machine_name_refusal(name):
     return None
 
 
+# A hard link needs no read permission on its target, so writing through
+# one is the same publication a symlink would be (ADR-0007).
 HARD_LINK_AT_STATE = (
-    "another name already points at that same file, and writing it would "
-    "rewrite whatever holds the other name - a hard link needs no read "
-    "permission on its target, so this is the same publication a symlink "
-    "would be (ADR-0007). Remove the extra name, or move it aside.")
+    "another name points at the same file, so writing it would change that "
+    "file too. Remove the extra name, or move it aside.")
 
 
 def write_state_bytes(path, data: bytes, mode: int = 0o600,
@@ -286,11 +286,9 @@ def write_state_bytes(path, data: bytes, mode: int = 0o600,
         return None
     if external.HARD_LINK_OWNER in why:
         return HARD_LINK_AT_STATE
-    return (f"carryon would not write its own state here: {why}. A symlink "
-            "at that name is the usual cause - carryon never writes through "
-            "a link it does not own (ADR-0007), because that edits the tree "
-            "the link points into. Remove the link, or move that tree's copy "
-            "aside.")
+    # carryon never writes through a link it does not own (ADR-0007).
+    return (f"carryon won't write its own state here: {why}. This is "
+            "usually a symlink - remove it, or move it aside.")
 
 
 def state_write_path(home, *parts, directory: bool = False) -> tuple:
@@ -359,14 +357,13 @@ def state_write_path(home, *parts, directory: bool = False) -> tuple:
         path = path / part
         status, owner = external.owner_of(path, state)
         if status == external.EXTERNALLY_OWNED:
+            # Writing through it edits a tree carryon does not own
+            # (ADR-0007). carryon answers for the directories it makes under
+            # its state directory, not for where that directory lives.
             return None, (
-                f"carryon would not write inside its own state directory "
-                f"here: {printable(str(owner))} holds "
-                f"{printable(str(path))}, and writing through it edits a tree "
-                "carryon does not own (ADR-0007). Move that link aside, or "
-                "point ~/.carryon itself somewhere instead: carryon answers "
-                "for the directories it makes under its state directory, not "
-                "for where its state directory lives")
+                f"carryon won't write inside its own state directory: "
+                f"{printable(str(owner))} holds {printable(str(path))}. Move "
+                "that link aside, or point ~/.carryon itself somewhere else")
         if index < len(parts) - 1 or directory:
             try:
                 path.mkdir(parents=True, exist_ok=True)

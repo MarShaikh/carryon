@@ -113,10 +113,8 @@ def _no_history_here(agent: str, effective: dict) -> bool:
 
 
 _DIVERGED_SKIP = ("this machine's copy and the Archive's have diverged - "
-                  "neither main Transcript is a byte-prefix of the other, so "
-                  "neither may overwrite the other. Pull first: the "
-                  "Archive's copy lands under ~/.carryon/conflicts/ and this "
-                  "one stays put (ADR-0002)")
+                  "`carryon pull` files the Archive's copy under "
+                  "~/.carryon/conflicts/ for you to merge")
 
 
 def _index_veto(entry, canon: bytes):
@@ -145,10 +143,8 @@ def _index_veto(entry, canon: bytes):
     if not usable:
         return None
     if len(canon) < size:
-        return ("this machine's copy is behind the Archive's, or has diverged "
-                "from it - its main Transcript is shorter than the one the "
-                "Index records, so replacing could overwrite a longer "
-                "Transcript with a shorter one; pull first (ADR-0002)")
+        return ("this machine's copy is behind the Archive's or has diverged "
+                "- run `carryon pull` first")
     if hashlib.sha256(canon[:size]).hexdigest() != sha:
         return _DIVERGED_SKIP
     return None
@@ -180,11 +176,10 @@ def _tree_behind_reason(stored: dict, local: dict, bases=None):
     """
     missing = sorted(rel for rel in stored if rel not in local)
     if missing:
-        return ("the Archive holds files this machine does not - "
+        return ("the Archive's copy has files this machine doesn't ("
                 + ", ".join(printable(rel) for rel in missing[:3])
                 + (f" and {len(missing) - 3} more" if len(missing) > 3 else "")
-                + ". Replacing the stored Session would delete them, and a "
-                "Session is replaced whole; pull first (ADR-0002)")
+                + ") - run `carryon pull` first")
     for rel in sorted(stored):
         if local[rel] == stored[rel]:
             continue
@@ -193,14 +188,12 @@ def _tree_behind_reason(stored: dict, local: dict, bases=None):
         if moved == bases_mod.LOCAL:
             continue
         if moved == bases_mod.ARCHIVE:
-            return (f"the Archive's {printable(rel)} has changed since this "
-                    "machine last agreed with it - another machine's edit, "
-                    "which replacing the stored tree would undo; pull first "
-                    "(ADR-0002)")
+            return (f"another machine changed {printable(rel)} - run "
+                    "`carryon pull` first")
         if local[rel].startswith(stored[rel]):
             continue
-        return (f"this machine's {printable(rel)} is not an extension of the "
-                "Archive's - behind, or diverged; pull first (ADR-0002)")
+        return (f"this machine's {printable(rel)} is behind the Archive's or "
+                "has diverged - run `carryon pull` first")
     return None
 
 
@@ -232,16 +225,14 @@ def _push_skip_reason(dest, master, session, entry, members: dict):
             archive.get_session(dest, master, session.uuid,
                                 entry.get("object")), entry.get("object"))
     except archive.ObjectRefused as exc:
-        return (f"could not fetch the Archive's copy to compare against "
-                f"({exc}) - nothing was overwritten; sort the Destination "
-                "out and push again")
+        return (f"couldn't fetch the Archive's copy to compare ({exc}) - "
+                "nothing was overwritten")
     why = _main_mismatch(stored, entry)
     if why is not None:
-        return (f"{why} - nothing was overwritten; investigate the "
-                "Destination")
+        return f"{why} - nothing was overwritten; check the Destination"
     if (entry.get("main_path") or session.main_path) not in stored:
-        return ("the Archive's stored tree holds no main Transcript to "
-                "compare against - nothing was overwritten; pull first")
+        return ("the Archive's copy has no main Transcript to compare "
+                "against - run `carryon pull` first")
     return _tree_behind_reason(stored, members)
 
 
@@ -260,12 +251,11 @@ def _residue_skip_reason(dest, master, cwd, entry, members: dict,
             archive.get_project(dest, master, cwd, entry.get("object")),
             entry.get("object"))
     except archive.ObjectRefused as exc:
-        return (f"could not fetch the Archive's copy to compare against "
-                f"({exc}) - nothing was overwritten; sort the Destination "
-                "out and push again")
+        return (f"couldn't fetch the Archive's copy to compare ({exc}) - "
+                "nothing was overwritten")
     why = _residue_mismatch(stored, entry)
     if why is not None:
-        return f"{why} - nothing was overwritten; investigate the Destination"
+        return f"{why} - nothing was overwritten; check the Destination"
     return _tree_behind_reason(stored, members, bases)
 
 

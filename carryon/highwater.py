@@ -154,11 +154,9 @@ def _record_revision(home, spec: str, revision: int) -> None:
         # SystemExit as well as OSError, and it stays a warning either way:
         # the mark is never a gate. A refusal here costs one check on the next
         # run, where a raise would cost the Snapshot this run is pushing.
-        print(f"warning: could not record the Archive's revision at {path} "
-              f"({getattr(exc, 'strerror', None) or exc}). carryon notices a "
-              "deleted or rolled-back Index by comparing against that number, "
-              "so until it can be written this machine has less to check the "
-              "Destination against.")
+        print(f"warning: couldn't record the Archive's revision at {path} "
+              f"({getattr(exc, 'strerror', None) or exc}). Until it can, "
+              "carryon can't tell if the Archive was rolled back or deleted.")
 
 
 def _rollback_note(home, spec: str, index: dict):
@@ -168,10 +166,8 @@ def _rollback_note(home, spec: str, index: dict):
     if not seen or now >= seen:
         return None
     return (f"the Archive's Index is at revision {now}, but this machine has "
-            f"already seen revision {seen}. An Index only moves forward, so "
-            "this one has been rolled back - an old copy restored, a revert, "
-            "or a Destination serving what it likes. Anything pushed after "
-            f"revision {now} is missing from it.")
+            f"already seen revision {seen}, so it has been rolled back. "
+            f"Anything pushed after revision {now} is missing from it.")
 
 
 def _index_removed_note(home, spec: str, index: dict):
@@ -196,17 +192,14 @@ def _index_removed_note(home, spec: str, index: dict):
     seen = _seen_revision(home, spec)
     if not seen:
         return None
+    # Only a master key holder can write that object, so it was deleted at
+    # the Destination - and with it the only record of which Setup is the
+    # current one. A Setup is sealed (ADR-0014), so the deletion cannot make
+    # one open that should not; every Setup is refused instead.
     return (
-        f"the Archive serves no Index at {archive.INDEX_KEY}, and this "
-        f"machine has already read one there at revision {seen}. Only a "
-        "master key holder can write that object, so it has been deleted at "
-        "the Destination - and with it the record of which machines pushed a "
-        "Setup here and which tree is the current one. A Setup is sealed "
-        "(ADR-0014), so deleting the Index cannot make one open that should "
-        "not; what it does is take away the only thing that says which of the "
-        "Setups that DO open is the one meant for you now. Every Setup in the "
-        "Archive is therefore refused, which is exactly what deleting it "
-        "buys.")
+        f"the Archive has no Index at {archive.INDEX_KEY}, but this machine "
+        f"read one there at revision {seen}, so it has been deleted at the "
+        "Destination.")
 
 
 def _refuse_on_index_removal(home, spec: str, index: dict, verb: str) -> None:
@@ -225,15 +218,14 @@ def _refuse_on_index_removal(home, spec: str, index: dict, verb: str) -> None:
     note = _index_removed_note(home, spec, index)
     if note is None:
         return
+    # Pushing from another machine does not rebuild it: the objects under
+    # carryon/sessions/ are named by an HMAC, and the Index was the only
+    # record of which Session each one is.
     raise SystemExit(
         f"refusing to {verb}: {note}\nRestore an earlier copy of the Archive "
-        "(a git Destination keeps one in its history) and this machine "
-        "carries on where it left off. Pushing from another machine will not "
-        "rebuild it: the objects under carryon/sessions/ are named by an "
-        "HMAC, and the Index was the only record of which Session each one "
-        "is. So if the Archive really was emptied on purpose, accept the "
-        f"loss deliberately - drop this Destination's entry from "
-        f"{_state_path(home)}, and push afresh.")
+        "(a git Destination keeps one in its history). If it was emptied on "
+        f"purpose, remove this Destination's entry from {_state_path(home)} "
+        "and push again.")
 
 
 def _warn_on_rollback(home, spec: str, index: dict) -> None:
@@ -248,8 +240,7 @@ def _warn_on_rollback(home, spec: str, index: dict) -> None:
     """
     note = _rollback_note(home, spec, index)
     if note:
-        print(f"warning: {note} Anything pushed after it will look absent "
-              "here.\n")
+        print(f"warning: {note}\n")
 
 
 def _refuse_on_rollback(home, spec: str, index: dict) -> None:
@@ -266,8 +257,6 @@ def _refuse_on_rollback(home, spec: str, index: dict) -> None:
     note = _rollback_note(home, spec, index)
     if note:
         raise SystemExit(
-            f"refusing to push: {note}\nPushing now would re-seal that "
-            "catalogue as the current one and unlink every Session pushed "
-            "since. Sort the Destination out first - restore the newer "
-            f"Index, or if the rollback was deliberate, drop this "
-            f"Destination's entry from {_state_path(home)} to accept it.")
+            f"refusing to push: {note}\nRestore the newer Index, or, if the "
+            "rollback was deliberate, remove this Destination's entry from "
+            f"{_state_path(home)}.")

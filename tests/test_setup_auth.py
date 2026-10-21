@@ -275,7 +275,8 @@ def test_a_push_removes_a_plaintext_setup_left_from_before_sealing(paired,
     out = capsys.readouterr().out
 
     assert not mine.exists(), "the plaintext Setup is still at the Destination"
-    assert "plaintext" in out, "the push removed files without saying so"
+    assert "unencrypted Setup file(s) an older carryon left under " in out, \
+        "the push removed files without saying so"
     assert other.exists(), "a push removed another machine's files"
     assert stored_object(paired.dest_root).exists()
 

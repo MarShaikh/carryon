@@ -384,7 +384,8 @@ def test_an_index_main_path_that_is_not_a_string_is_refused_on_the_push_leg(
     assert sync.push(ns(apply=True), archived.home_a) == 0
     out = capsys.readouterr().out
 
-    assert f"skip     {U2}" in out, "the Session was not named as skipped"
+    assert f"\n  {U2} (claude-code): " in out, \
+        "the Session was not named as skipped"
     assert "main_path" in out, "the report does not name the field"
     assert dest.read(archive.session_key(master, U2)) == stored_before, \
         "a record this machine could not read was taken for no record, and " \
@@ -981,7 +982,7 @@ def test_a_transcript_this_machine_cannot_read_is_reported_not_raised(
     finally:
         main.chmod(0o644)
 
-    assert "Sessions:" in out, "the push ended before its report"
+    assert "History: " in out, "the push ended before its report"
     assert U2 in out, "the Transcript it could not read went unnamed"
     assert U1 in restored_sessions(home), "the readable Session was lost"
 
@@ -1005,7 +1006,7 @@ def test_a_project_directory_this_machine_cannot_list_is_reported(
     finally:
         project.chmod(0o755)
 
-    assert "Sessions:" in out, "the push ended before its report"
+    assert "History: " in out, "the push ended before its report"
     assert project.name in out, "the directory it could not list went unnamed"
 
 
@@ -1025,7 +1026,8 @@ def test_a_projects_root_this_machine_cannot_list_is_reported(
     finally:
         root.chmod(0o755)
 
-    assert "Sessions: 0 pushed" in out, "the push ended before its report"
+    assert "History: 0 Sessions pushed" in out, \
+        "the push ended before its report"
     assert ".claude/projects" in out, "the root it could not list went unnamed"
 
 

@@ -208,14 +208,14 @@ def _require_master(home, for_push: bool = False) -> bytes:
 def _print_rekey_notes(near: int, bare: int, non_utf8: int) -> None:
     """The Re-keying counts the design says are reported, never acted on."""
     if near:
-        print(f"Re-keying: {near} near-miss(es) - a path matched the home "
-              "case-insensitively only; left alone, never rewritten (ADR-0006)")
+        print(f"Re-keying: {_n(near, 'path')} matched this home folder only "
+              "when ignoring case, left as written")
     if non_utf8:
-        print(f"Re-keying: {non_utf8} member(s) not UTF-8 - carried "
-              "unchanged, paths inside them untouched")
+        print(f"Re-keying: {_n(non_utf8, 'file')} not UTF-8, carried "
+              "unchanged")
     if bare:
-        print(f"Re-keying: {bare} bare '~' token(s) - a home occurrence with "
-              "nothing after it; expansion leaves these standing")
+        print(f"Re-keying: {bare} bare '~' with nothing after it, left as "
+              "written")
 
 
 # --- init --------------------------------------------------------------------
@@ -656,10 +656,22 @@ def _captured_state_reads(effective: dict, want_agents, categories,
         return capture.state_reads(want_agents, categories, home)
 
 
+# Why push left a Session or project alone, where no comparison said so.
+VANISHED = "a file in it disappeared while it was being read"
+UNREADABLE_RECORD = ("this machine can't read the Archive's record for it, "
+                     "so there is nothing to compare against")
+
+
+def _n(count: int, noun: str, plural: str = None) -> str:
+    """'1 Session', '2 Sessions'."""
+    return f"{count} {noun if count == 1 else (plural or noun + 's')}"
+
+
 def push(args, home) -> int:
     home = pathlib.Path(home)
     _begin_command()
     apply = bool(getattr(args, "apply", False))
+    verbose = bool(getattr(args, "verbose", False))
     cfg, dest = _open_destination(home)
     machine = cfg["machine"]
     now = _utc_now()
@@ -677,8 +689,8 @@ def push(args, home) -> int:
     # keychain entry is gone pairs again rather than publishing in the clear.
     master = _require_master(home, for_push=True)
 
-    print(f"{'PUSH PLAN (dry run)' if not apply else 'PUSHING'} -> "
-          f"{dest.describe()}\n")
+    print(f"Pushing to {dest.describe()}\n" if apply
+          else f"Dry run: would push to {dest.describe()}\n")
 
     # Before a byte is written anywhere, Setup half included: a push onto an
     # Index this machine has already seen past destroys catalogue entries
@@ -716,8 +728,7 @@ def push(args, home) -> int:
         note = (_index_removed_note(home, cfg["destination"], index)
                 or _rollback_note(home, cfg["destination"], index))
         if note:
-            print(f"warning: {note}\nA push would seal a catalogue over that "
-                  "as the current one, so --apply will refuse until it is "
+            print(f"warning: {note}\n--apply will refuse until that is "
                   "sorted out.\n")
 
     # Setup half: the fail-closed capture engine, verbatim (ADR-0001), behind
@@ -732,6 +743,7 @@ def push(args, home) -> int:
     setup_seen = {}
     setup_withheld = setup_near = 0
     setup_undecodable = []
+    setup_capture = None
     # One value this push writes into the Setup's tag and into the encrypted
     # Index entry beside it, so a pull can tell the tree this push meant from
     # every earlier tree whose tag also verifies (crypto.new_stamp).
@@ -741,21 +753,11 @@ def push(args, home) -> int:
                    if setup_categories else [])
     if state_reads:
         # Before the capture engine runs, so nothing is copied even locally.
+        # ADR-0008's rule is about what a capture may READ, so sealing the
+        # Setup (ADR-0014) does not answer it: a key carried into the Archive
+        # is sealed under ITSELF, which every machine paired here can open.
+        # Named in the report below.
         setup_code = 2 if apply else 1
-        print("SETUP REFUSED: a path in the capture set reads what a Setup "
-              "may not carry\n")
-        for src, rel, why in state_reads:
-            print(f"  !! ~/{printable(src)}")
-            print(f"     ~/{printable(rel)} - {why}")
-        print("\nThe fallback master key under ~/.carryon is bare hex that no")
-        print("credential pattern matches, and the config beside it names the")
-        print("Destination. ADR-0008's rule is about what a capture may READ,")
-        print("so sealing the Setup (ADR-0014) does not answer it: a key")
-        print("carried into the Archive is sealed under ITSELF, which every")
-        print("machine paired here can open, and `carryon capture` writes the")
-        print("same tree in the clear. A file from outside $HOME is one this")
-        print("machine never agreed to publish. Remove the link, or drop the")
-        print("path from `carry` (ADR-0008). Nothing was captured.\n")
     staging_root = why_staging = None
     if setup_categories and not state_reads:
         # The one place a Setup is materialised in the clear, and the
@@ -767,24 +769,22 @@ def push(args, home) -> int:
         staging_root, why_staging = config.state_write_path(
             home, "staging", directory=True)
     if why_staging is not None:
+        # A Setup is captured in the clear before it is published, so the
+        # directory it is staged in has to be carryon's own. Named in the
+        # report below; the History half is unaffected.
         setup_code = 2 if apply else 1
-        print("SETUP REFUSED: carryon will not stage a Setup here\n")
-        print(f"  !! {printable(why_staging)}\n")
-        print("A Setup is captured in the clear before it is published, so")
-        print("the directory it is staged in has to be carryon's own. The")
-        print("History half below is unaffected - it is encrypted and never")
-        print("staged on disk.\n")
     elif staging_root is not None:
         staging = pathlib.Path(tempfile.mkdtemp(prefix="setup-",
                                                 dir=str(staging_root)))
-        keep_staging = False
         try:
+            # The silent half of the capture engine: the state check it would
+            # make is the one asked just above, and its report is capture's
+            # own, worded for a Setup in the clear (ADR-0016).
             with _swapped_registry(effective):
-                setup_code, manifest = capture.run(
-                    out=staging, dry=not apply, want_agents=want_agents,
-                    want_categories=setup_categories, home=home,
+                setup_capture, manifest = capture.collect(
+                    staging, not apply, want_agents, setup_categories, home,
                     digest_into=setup_seen)
-            if setup_code == 0 and apply:
+            if apply:
                 manifest, setup_withheld, setup_near, setup_undecodable = \
                     _neutralise_staged_setup(staging, manifest, home)
                 if (setup_categories == set(SETUP_CATEGORIES)
@@ -808,12 +808,8 @@ def push(args, home) -> int:
                         _index_setup_entry(index, machine), now,
                         setup_stamp)
                 setup_pushed = True
-            elif setup_code != 0 and apply:
-                keep_staging = True
-                print(f"\nRefused Setup staging kept at {staging}")
         finally:
-            if not keep_staging:
-                shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(staging, ignore_errors=True)
 
     # History half: incremental per Session against the Index (ADR-0003).
     sessions_pushed = sessions_unchanged = sessions_skipped = 0
@@ -826,6 +822,9 @@ def push(args, home) -> int:
     unnamable_history = ()
     rk_near = rk_bare = rk_non_utf8 = 0
     index_changed = False
+    # (label, why) for each Session and project left alone, named together
+    # in the report rather than as they are met.
+    session_skips, residue_skips = [], []
 
     if do_history:
         adapters_list = [a for key, a in effective.items()
@@ -838,23 +837,19 @@ def push(args, home) -> int:
 
         for session in found.sessions:
             members = _canonical_members(session, home)
+            label = f"{session.uuid} ({session.agent})"
             if members is None:
                 sessions_skipped += 1
-                print(f"  skip     {session.uuid} ({session.agent}) - a file "
-                      "in it was there when the tree was walked and gone by "
-                      "the time it was read; nothing was pushed for it")
+                session_skips.append((label, VANISHED))
                 continue
             th = _members_hash(members)
             if not archive.needs_push(index, session.uuid, th):
                 sessions_unchanged += 1
                 continue
             if session.uuid in unreadable_records["sessions"]:
+                # Its stored copy has nothing to be compared against.
                 sessions_skipped += 1
-                print(f"  skip     {session.uuid} ({session.agent}) - the "
-                      "Archive's Index holds a record for this Session that "
-                      "this machine could not read (named below), so there "
-                      "is nothing to compare its stored copy against; "
-                      "nothing was overwritten")
+                session_skips.append((label, UNREADABLE_RECORD))
                 continue
             main_bytes = members.get(session.main_path, b"")
             entry = index.get("sessions", {}).get(session.uuid)
@@ -865,14 +860,13 @@ def push(args, home) -> int:
                 why = _push_skip_reason(dest, master, session, entry, members)
                 if why is not None:
                     sessions_skipped += 1
-                    print(f"  skip     {session.uuid} ({session.agent}) - "
-                          f"{why}")
+                    session_skips.append((label, why))
                     continue
             try:
                 tar_bytes, report = history.pack_session(session, home)
             except history.MemberUnreadable as exc:
                 sessions_skipped += 1
-                print(f"  skip     {session.uuid} ({session.agent}) - {exc}")
+                session_skips.append((label, str(exc)))
                 continue
             credential_files += [f"{session.uuid}: {rel}"
                                  for rel in report.credential_members]
@@ -903,9 +897,7 @@ def push(args, home) -> int:
             members = _canonical_members(residue, home)
             if members is None:
                 residues_skipped += 1
-                print(f"  skip     {printable(cwd)} - a memory file in it "
-                      "was there when the tree was walked and gone by "
-                      "the time it was read")
+                residue_skips.append((printable(cwd), VANISHED))
                 continue
             th = _members_hash(members)
             if cwd in unreadable_records["projects"]:
@@ -914,11 +906,7 @@ def push(args, home) -> int:
                 # push would write over is the only one that holds what the
                 # other machines wrote.
                 residues_skipped += 1
-                print(f"  skip     {printable(cwd)} - the Archive's Index "
-                      "holds a record for this project that this machine "
-                      "could not read (named below), so there is nothing to "
-                      "compare its stored copy against; nothing was "
-                      "overwritten")
+                residue_skips.append((printable(cwd), UNREADABLE_RECORD))
                 continue
             entry = index["projects"].get(cwd)
             if entry is not None and entry.get("tree_hash") == th:
@@ -942,13 +930,13 @@ def push(args, home) -> int:
                                            known_bases.get(cwd))
                 if why is not None:
                     residues_skipped += 1
-                    print(f"  skip     {printable(cwd)} - {why}")
+                    residue_skips.append((printable(cwd), why))
                     continue
             try:
                 tar_bytes, report = history.pack_session(residue, home)
             except history.MemberUnreadable as exc:
                 residues_skipped += 1
-                print(f"  skip     {printable(cwd)} - {exc}")
+                residue_skips.append((printable(cwd), str(exc)))
                 continue
             credential_files += [f"{printable(cwd)}: {rel}"
                                  for rel in report.credential_members]
@@ -999,127 +987,159 @@ def push(args, home) -> int:
                       for cwd, members in agreed_bases.items()},
                      replace=True)
 
-    # The report, in one place, so the two halves stay side by side. Both are
-    # encrypted (ADR-0014); they differ in the unit they are refused in,
-    # which is what a user has to read
-    # off this report: a Setup is a replacement and lands whole or not at all,
-    # while a History accumulates, so it reports per Session and carries the
-    # rest (ADR-0001, ADR-0002).
-    print()
-    print("-" * 74)
+    # The report, in one place, so the two halves stay side by side. A
+    # summary of what a user acts on, with the detail behind --verbose
+    # (ADR-0016).
     verb = "pushed" if apply else "to push"
-    if index_refused:
-        # Said on this leg too, and not only on the pull's. A push seals the
-        # catalogue again, so these are the entries it carried through
-        # untouched rather than deleted (archive.save_index) - and the machine
-        # reading this line is often the one that still holds the Session and
-        # can write a fresh entry for it, which is the whole cure.
-        count = len(index_refused)
-        print(f"{count} entr{'y' if count == 1 else 'ies'} in the Archive's "
-              "Index this machine could not read - carried through exactly as "
-              "they came, since carryon does not delete a record it cannot "
-              "read. Nothing was pushed or replaced for them:")
-        for refusal in index_refused:
-            print(f"  ?? {printable(str(refusal.key))} - {refusal.why}")
+    if not setup_categories:
+        # The same line pull prints for the same skip: a leg that merely
+        # vanishes reads as a push that quietly carried the Setup.
+        print(SETUP_NOT_CHOSEN)
+    elif state_reads:
+        print("Setup: not pushed - carryon won't carry these paths:")
+        for _src, rel, why in state_reads:
+            print(f"  ~/{printable(rel)}: {why}")
+        print("  Remove the link, or drop the path from `carry`.")
+    elif why_staging is not None:
+        print(f"Setup: not pushed - carryon can't stage it: "
+              f"{printable(why_staging)}")
+    elif setup_capture is not None:
+        _print_setup_summary(verb, setup_capture, manifest, setup_undecodable,
+                             setup_withheld, setup_near, verbose)
     if do_history:
-        session_line = (f"Sessions: {sessions_pushed} {verb}, "
-                        f"{sessions_unchanged} unchanged")
-        if sessions_skipped:
-            session_line += (f", {sessions_skipped} skipped rather than "
-                             "overwrite the Archive's copy (named above)")
-        print(session_line)
-        residue_line = (f"Project residue: {residues_pushed} {verb}, "
-                        f"{residues_unchanged} unchanged")
-        if residues_skipped:
-            residue_line += (f", {residues_skipped} skipped rather than "
-                             "overwrite the Archive's copy (named above)")
-        print(residue_line)
-        if withheld_history:
-            print(f"{len(withheld_history)} History path(s) WITHHELD - they "
-                  "read carryon's own state through a link, and the master "
-                  "key is bare hex no credential pattern matches (ADR-0008). "
-                  "They were not packed and will not be laid down anywhere:")
-            for rel in withheld_history:
-                print(f"  -- ~/{printable(rel)}")
-        if unreadable_history:
-            # Named for the same reason the withheld paths above are: this
-            # push covers less than the adapters declare, and a user who is
-            # not told reads it as covering more.
-            print(f"{len(unreadable_history)} History path(s) this machine "
-                  "would not read - nothing under them was carried, and "
-                  "nothing here was overwritten:")
-            for rel, why in unreadable_history:
-                print(f"  !! ~/{printable(rel)} - {printable(why)}")
-        if unnamable_history:
-            # The Archive is what cannot hold these, not this machine: the
-            # files are here and stay here, readable and untouched. Said in
-            # the same shape as the two above because it is the same fact -
-            # this push covers less than the adapters declare - and said at
-            # all because the alternative was sealing a catalogue keyed by a
-            # name no machine could open the Index past.
-            print(f"{len(unnamable_history)} History path(s) carryon cannot "
-                  "name in an Archive - they stay on this machine, and "
-                  "nothing else was affected:")
-            for rel, why in unnamable_history:
-                print(f"  -- ~/{printable(rel)} - {printable(why)}")
-        if missing_cwd:
-            print(f"{len(missing_cwd)} path(s) recorded no cwd - carried "
-                  "without one; they cannot be laid down elsewhere until a "
-                  "cwd is known:")
-            for rel in missing_cwd:
-                print(f"  ?? {rel}")
+        def part(count, noun, plural, unchanged, skipped):
+            extra = f"{unchanged} unchanged" + (f", {skipped} skipped"
+                                                if skipped else "")
+            return f"{_n(count, noun, plural)} {verb} ({extra})"
+        print("History: "
+              + part(sessions_pushed, "Session", None, sessions_unchanged,
+                     sessions_skipped) + ", "
+              + part(residues_pushed, "project memory", "project memories",
+                     residues_unchanged, residues_skipped))
         if credential_files:
-            print(f"Credentials REPORTED in {len(credential_files)} "
-                  "transcript file(s) - carried and encrypted, never "
-                  "redacted (ADR-0001):")
-            for label in credential_files:
-                print(f"  !! {label}")
-        else:
-            print("Credentials: none reported in the History")
+            # Counted, not named: a Transcript is not something a user edits.
+            print(f"  possible secrets in "
+                  f"{_n(len(credential_files), 'History file')}, carried "
+                  "encrypted" + (":" if verbose else " (--verbose names them)"))
+            if verbose:
+                for label in credential_files:
+                    print(f"    {label}")
+        for skips, noun, plural in ((session_skips, "Session", None),
+                                    (residue_skips, "project memory",
+                                     "project memories")):
+            if skips:
+                print(f"Skipped {_n(len(skips), noun, plural)} rather than "
+                      "overwrite the Archive's copy:")
+                for label, why in skips:
+                    print(f"  {label}: {why}")
+        if withheld_history:
+            print(f"{_n(len(withheld_history), 'History path')} not carried - "
+                  "they lead to carryon's own key or config:")
+            for rel in withheld_history:
+                print(f"  ~/{printable(rel)}")
+        if unreadable_history:
+            print(f"{_n(len(unreadable_history), 'History path')} couldn't be "
+                  "read, so nothing under them was carried:")
+            for rel, why in unreadable_history:
+                print(f"  ~/{printable(rel)}: {printable(why)}")
+        if unnamable_history:
+            # The Archive is what cannot hold these, not this machine.
+            print(f"{_n(len(unnamable_history), 'History path')} can't be "
+                  "stored in an Archive, so they stay on this machine:")
+            for rel, why in unnamable_history:
+                print(f"  ~/{printable(rel)}: {printable(why)}")
+    if index_refused:
+        # A push seals the catalogue again, so these are the entries it
+        # carried through untouched rather than deleted (archive.save_index).
+        count = len(index_refused)
+        print(f"{_n(count, 'entry', 'entries')} in the Archive's Index "
+              "couldn't be read and were left as they were:")
+        for refusal in index_refused:
+            print(f"  {printable(str(refusal.key))}: {refusal.why}")
+    if do_history and missing_cwd:
+        print(_no_cwd_line(len(missing_cwd), verbose))
+        if verbose:
+            for rel in missing_cwd:
+                print(f"  ~/{printable(rel)}")
+    if do_history and verbose:
         _print_rekey_notes(rk_near, rk_bare, rk_non_utf8)
-    if setup_categories:
-        if state_reads:
-            print("Setup: REFUSED - a captured path reads carryon's own "
-                  "state or a file outside $HOME (named above); nothing was "
-                  "captured and nothing was written to the Archive's Setup")
-        elif setup_code != 0:
-            # Not a credential: since ADR-0014 a credential is named and
-            # carried, never refused. What gets here is a staging directory
-            # carryon will not write into, or capture's own refusal.
-            print("Setup: REFUSED - the Setup could not be staged (named "
-                  "above); nothing was written to the Archive's Setup")
-        else:
-            print(f"Setup: {verb} to {archive.setup_key(machine)} "
-                  "(encrypted)")
-            if setup_withheld:
-                print(f"  {setup_withheld} path(s) withheld from the MANIFEST "
-                      "- they name a directory on this machine and an Archive "
-                      "names none (ADR-0006); RESTORE.md says so where they "
-                      "were")
-            if setup_near:
-                print(f"  {setup_near} near-miss(es) - a captured file names a "
-                      "path matching this home case-insensitively only; "
-                      "carried as written, never rewritten (ADR-0006)")
-            if setup_undecodable:
-                print(f"  {len(setup_undecodable)} file(s) WITHHELD - not "
-                      "UTF-8, so carryon cannot read one to tell whether it "
-                      "spells this machine's home out, and an Archive names "
-                      "no machine's directories (ADR-0006). They stayed here "
-                      "and a pull elsewhere will be without them; the rest "
-                      "of the Setup went:")
-                for rel in setup_undecodable:
-                    print(f"  -- {rel}")
-    else:
-        # The same line pull prints for the same skip, because the reasoning
-        # cuts both ways: a leg that merely vanishes reads as a push that
-        # quietly carried the Setup, and a default `sync --apply` would
-        # otherwise explain the skip in its pull half and say nothing in the
-        # half that publishes.
-        print("Setup: skipped - the chosen categories name no part of a "
-              "Setup, so nothing here was captured or published")
     if not apply:
-        print("\nDry run. Re-run with --apply to push.")
+        print("\nDry run - add --apply to push")
     return setup_code
+
+
+SETUP_NOT_CHOSEN = "Setup: skipped - no Setup category was chosen"
+
+
+def _no_cwd_line(count: int, verbose: bool) -> str:
+    """Transcripts, and project folders holding only memory, with nothing to
+    say where the project lives, so a pull elsewhere has nowhere to put
+    them."""
+    if count == 1:
+        return ("1 History path has no recorded working directory, so it "
+                "can't be restored on another machine"
+                + (":" if verbose else " (--verbose lists it)"))
+    return (f"{count} History paths have no recorded working directory, so "
+            "they can't be restored on another machine"
+            + (":" if verbose else " (--verbose lists them)"))
+
+
+def _home_path_of(staged: str, manifest: dict) -> str:
+    """A file's path under $HOME, from its path in the staged Setup: the
+    item whose landing path holds it says where it came from."""
+    for entry in manifest["agents"].values():
+        for item in entry.get("items", ()):
+            dst, src = item.get("dst"), item.get("src")
+            if not (isinstance(dst, str) and isinstance(src, str)):
+                continue
+            if staged == dst:
+                return src
+            if staged.startswith(dst.rstrip("/") + "/"):
+                return src.rstrip("/") + staged[len(dst.rstrip("/")):]
+    return staged
+
+
+def _print_setup_summary(verb, cap, manifest, undecodable, withheld, near,
+                         verbose) -> None:
+    """The Setup half of push's report: what went, and anything that did not
+    go the way it was declared."""
+    names = ", ".join(entry["name"] for entry in manifest["agents"].values())
+    print(f"Setup: {verb}, encrypted ({names or 'nothing set up here'})")
+    if verbose:
+        for line in cap.log:
+            if line:
+                print(line)
+    undecodable = [_home_path_of(rel, manifest) for rel in undecodable]
+    for rel, why in cap.skipped:
+        print(f"  not carried: {printable(rel)} - {why}")
+    if len(undecodable) == 1:
+        print(f"  not carried: 1 binary file ({printable(undecodable[0])}) - "
+              "a Setup carries text files only")
+    elif undecodable:
+        print(f"  not carried: {len(undecodable)} binary files - a Setup "
+              "carries text files only:")
+        for rel in undecodable:
+            print(f"    {printable(rel)}")
+    for rel in cap.declined:
+        print(f"  left out: {printable(rel)} (development files)")
+    for entry in manifest["agents"].values():
+        if entry["layout_drift"]:
+            print(f"  {entry['name']}: "
+                  f"{_n(len(entry['layout_drift']), 'expected path')} "
+                  "missing - run `carryon doctor`")
+    if cap.findings:
+        print(f"  possible secrets in {_n(len(cap.findings), 'file')}, "
+              "carried encrypted:")
+        for label, hits in cap.findings:
+            print(f"    {printable(label)} ({', '.join(hits)})")
+    if verbose and withheld:
+        # A MANIFEST path that names a directory on this machine; RESTORE.md
+        # says so where it was (ADR-0006).
+        print(f"  {_n(withheld, 'manifest path')} left out - "
+              "they name a folder on this machine")
+    if verbose and near:
+        print(f"  {_n(near, 'path')} matched this home folder only when "
+              "ignoring case, left as written")
 
 
 # --- pull --------------------------------------------------------------------
@@ -1685,9 +1705,7 @@ def pull(args, home) -> int:
         # merely vanishes reads as a restore quietly short its Setup. The
         # else below IS the leg, whole: nothing of it leaks past this if,
         # so no name bound in there can be reached for on the skip path.
-        print("\nSetup: skipped - the chosen categories name no part of a "
-              "Setup, so the Archive's stored Setups were not read and "
-              "nothing here was backed up or replaced")
+        print("\n" + SETUP_NOT_CHOSEN)
     else:
         setups, unusable, setups_unreachable = {}, [], None
         try:

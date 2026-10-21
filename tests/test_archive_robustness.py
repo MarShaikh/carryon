@@ -937,8 +937,9 @@ def test_a_stored_member_that_escapes_is_refused_on_the_push_leg_too(
         "a stored object carryon will not read ended the push"
     out = capsys.readouterr().out
 
-    assert U2 in out and "skip" in out, "the skipped Session went unnamed"
-    assert "could not fetch the Archive's copy" in out, \
+    assert U2 in out and "Skipped 1 Session" in out, \
+        "the skipped Session went unnamed"
+    assert "couldn't fetch the Archive's copy to compare" in out, \
         "the skip was decided by comparing against a member carryon refuses"
     dest, master, index = open_archive(archived)
     assert archive.get_session(dest, master, U2,

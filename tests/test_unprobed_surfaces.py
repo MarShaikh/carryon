@@ -716,7 +716,7 @@ def test_a_codex_rollout_makes_the_whole_round_trip(tmp_path, capsys):
     capsys.readouterr()
     assert sync.push(ns(apply=True), home_a) == 0
     push_out = capsys.readouterr().out
-    assert "Sessions: 2 pushed" in push_out, push_out
+    assert "History: 2 Sessions pushed" in push_out, push_out
 
     assert sync.pair(ns(), home_a) == 0
     code = re.search(PAIR_CODE, capsys.readouterr().out).group(1)
@@ -842,7 +842,9 @@ def test_a_cwdless_rollout_is_named_on_every_leg_and_never_raises(tmp_path,
     assert sync.init(ns(dest=dest_spec, machine="mac-a"), home_a) == 0
     assert sync.push(ns(apply=True), home_a) == 0
     push_out = capsys.readouterr().out
-    assert "recorded no cwd" in push_out, push_out
+    assert ("1 History path has no recorded working directory, so it "
+            "can't be restored on another machine (--verbose lists it)"
+            in push_out), push_out
     assert sync.pair(ns(), home_a) == 0
     code = re.search(PAIR_CODE, capsys.readouterr().out).group(1)
     assert sync.init(ns(dest=dest_spec, join=code, machine="box-b"),

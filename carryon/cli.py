@@ -610,6 +610,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"subset of: {', '.join(ADAPTERS)}")
     pus.add_argument("--category", metavar="A,B",
                      help=f"subset of: {', '.join(CATEGORIES)}")
+    pus.add_argument("--verbose", action="store_true",
+                     help="list each file and folder behind the summary")
     pus.set_defaults(func=cmd_push)
 
     pul = sub.add_parser(
@@ -652,6 +654,8 @@ def build_parser() -> argparse.ArgumentParser:
     syn.add_argument("--category", metavar="A,B",
                      help=f"subset of: {', '.join(CATEGORIES)}, or all "
                           "(default: history)")
+    syn.add_argument("--verbose", action="store_true",
+                     help="list each file and folder behind the summary")
     syn.set_defaults(func=cmd_sync)
 
     sta = sub.add_parser(

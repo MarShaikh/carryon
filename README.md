@@ -102,6 +102,17 @@ The Setup goes up as one sealed object. The History goes up as one sealed
 object per Session, and only the Sessions that changed since the last push. If
 the scan recognises a credential, push names the file and carries on.
 
+```
+Pushing to rclone remote carryon:carryon-archive
+
+Setup: pushed, encrypted (Claude Code, OpenAI Codex CLI)
+  possible secrets in 1 file, carried encrypted:
+    .claude/settings.json (anthropic-key)
+History: 1 Session pushed (23 unchanged), 1 project memory pushed (8 unchanged)
+```
+
+`--verbose` lists each file and folder behind the summary.
+
 ### 4. Add a second machine
 
 On the machine that is already set up:
@@ -262,7 +273,7 @@ not a setting that is silently ignored.
 
 `push`, `pull`, `sync`, `resolve` and `capture` print a plan and change nothing
 without `--apply`. `--help` on a subcommand lists its own flags (`--agent`,
-`--category`, `--map`, `--force`).
+`--category`, `--map`, `--force`, `--verbose`).
 
 `pull --map OLD=NEW` rewrites an absolute path outside `$HOME` on the way in,
 for a project that lives at `/Volumes/work/...` on one machine and somewhere
@@ -378,7 +389,7 @@ these are the ones a new user meets most.
 | the stored master key ... is not the hex carryon wrote there | put the file back from a backup, pair again, or remove it and run `carryon init --recover` |
 | wrong or expired code | the code was mistyped or is past its 24 hours; run `carryon pair` again |
 | refusing to push: the Archive's Index is at revision ... | the Archive has gone backwards since this machine last saw it; restore the newer copy, or follow the message to accept it deliberately |
-| a project skipped rather than overwrite the Archive's copy | `carryon pull --apply` first, then merge anything filed under `~/.carryon/conflicts/` and `carryon resolve` it |
+| Skipped ... rather than overwrite the Archive's copy | `carryon pull --apply` first, then merge anything filed under `~/.carryon/conflicts/` and `carryon resolve` it |
 
 ## Adding an agent
 

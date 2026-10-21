@@ -612,7 +612,7 @@ def test_pulling_first_makes_the_push_that_was_skipped_go_through(
     capsys.readouterr()
     assert sync.push(ns(apply=True, category="history"), level) == 0
     first = capsys.readouterr().out
-    assert "pull first" in first, \
+    assert "`carryon pull` first" in first, \
         "this machine was not behind, so nothing here is being tested"
 
     assert sync.pull(ns(apply=True), level) == 0
@@ -620,9 +620,9 @@ def test_pulling_first_makes_the_push_that_was_skipped_go_through(
 
     assert sync.push(ns(apply=True, category="history"), level) == 0
     second = capsys.readouterr().out
-    assert "pull first" not in second, \
+    assert "`carryon pull` first" not in second, \
         f"pulling first did not make the push it named possible:\n{second}"
-    assert "Sessions: 1 pushed" in second
+    assert "History: 1 Session pushed" in second
 
 
 def test_a_dry_run_of_the_union_says_what_it_would_write(level, capsys):

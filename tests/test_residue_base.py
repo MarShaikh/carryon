@@ -37,7 +37,7 @@ UUID_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 PROJ = "code/app"
 NOTES = "alpha\nbeta\ngamma\n"
 TODO = "one\ntwo\nthree\n"
-SKIP = "\n  skip     "  # a skip line, not "not set up here, skipped"
+SKIP = "\nSkipped 1 project memory rather than overwrite the Archive's copy:"
 
 
 @pytest.fixture(autouse=True)
@@ -212,7 +212,9 @@ def test_a_state_file_that_will_not_read_means_no_bases_and_one_warning(
     out = capsys.readouterr().out
     assert SKIP in out, "an edit with no readable Base was pushed anyway"
     assert stored_memory(pair)["memory/notes.md"] == NOTES
-    assert out.count("Bases") == 1, "the lost Bases were not said exactly once"
+    assert out.count("so for this run an edited memory file only travels if "
+                     "it adds to the end of the other copy.") == 1, \
+        "the lost Bases were not said exactly once"
 
 
 # --- push ------------------------------------------------------------------------
@@ -243,7 +245,7 @@ def test_push_skips_when_the_archive_moved_and_pull_first_cures_it(
 
     assert sync.push(ns(apply=True), pair.home_b) == 0
     out = capsys.readouterr().out
-    assert SKIP in out and "pull first" in out
+    assert SKIP in out and "run `carryon pull` first" in out
     assert "memory/notes.md" in out, "the skip does not name the file"
     assert stored_memory(pair)["memory/todo.md"] == TODO
 

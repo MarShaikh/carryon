@@ -190,7 +190,7 @@ def test_sync_pulls_first_then_pushes_in_one_pass(partner, tmp_path, capsys):
     # so the Archive is untouched and UUID_D is not published early.
     assert sync.push(ns(apply=False, category="history"), partner) == 0
     control = capsys.readouterr().out
-    assert "pull first" in control, \
+    assert "`carryon pull` first" in control, \
         "machine-b was not behind, so this test would prove nothing"
 
     code = sync.sync(ns(apply=True), partner)
@@ -536,7 +536,7 @@ def test_sync_publishes_past_a_pull_that_finished_short(partner, tmp_path,
     out = capsys.readouterr().out
 
     assert "pull finished with 1 object(s) the Archive would not open" in out
-    assert "PUSHING" in out, \
+    assert "Pushing to " in out, \
         "the push half never ran past the finished-short pull"
     index = archive.load_index(dest, keyring.fetch_master(home=partner))
     assert UUID_D in index["sessions"], \
@@ -626,8 +626,7 @@ def test_a_default_sync_names_the_skipped_setup_leg_in_both_halves(
     assert sync.sync(ns(apply=True), partner) == 0
     out = capsys.readouterr().out
 
-    assert out.count("Setup: skipped - the chosen categories name no part "
-                     "of a Setup") == 2, \
+    assert out.count("Setup: skipped - no Setup category was chosen") == 2, \
         "one of the two halves skipped its Setup leg without a word"
 
 
