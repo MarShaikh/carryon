@@ -58,3 +58,44 @@ jobs:
           path: |
             pytest.xml
             run_tests.log
+
+  # An Archive sealed under one openssl has to open under the other: macOS
+  # ships LibreSSL as `openssl`, Linux ships OpenSSL 3, and the suite above
+  # only ever opens what the same machine sealed. See .github/interop.py.
+  seal:
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, openssl: LibreSSL }
+          - { os: ubuntu-latest, openssl: OpenSSL 3 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # /usr/bin first: the macOS image also carries Homebrew's OpenSSL 3,
+      # and a user's Mac has only LibreSSL. interop.py checks which it got.
+      - run: PATH=/usr/bin:$PATH python3 .github/interop.py seal sealed "${{ matrix.openssl }}"
+      # a tarball keeps the Archive's modes; the artifact zip would not
+      - run: tar -cf sealed.tar sealed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sealed-${{ matrix.os }}
+          path: sealed.tar
+
+  open:
+    needs: seal
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, openssl: OpenSSL 3, from: macos-latest }
+          - { os: macos-latest, openssl: LibreSSL, from: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sealed-${{ matrix.from }}
+      - run: tar -xf sealed.tar
+      - run: PATH=/usr/bin:$PATH python3 .github/interop.py open sealed "${{ matrix.openssl }}"
