@@ -48,3 +48,13 @@ jobs:
       - name: Both runners ran the same tests
         if: ${{ !cancelled() }}
         run: python .github/compare_runners.py pytest.xml run_tests.log
+
+      # pytest's own report can be cut short when a test misbehaves with the
+      # terminal; the files are the record of what each runner saw.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: reports-${{ matrix.os }}
+          path: |
+            pytest.xml
+            run_tests.log
