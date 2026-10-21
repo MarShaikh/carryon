@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    # Neither runner has a timeout of its own (see tests/test_harness.py),
+    # so a wedged fifo test would otherwise hold the job for six hours.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # run_tests.py exists for a bare macOS: the system python3, no pytest,
+      # so its pytest stub is what runs. Prove the stub is what ran.
+      - name: run_tests.py (system python, no pytest)
+        run: |
+          if /usr/bin/python3 -c "import pytest" 2>/dev/null; then
+            echo "system python3 has pytest; run_tests.py would not use its stub"
+            exit 1
+          fi
+          set -o pipefail
+          /usr/bin/python3 run_tests.py | tee run_tests.log
+
+      - uses: actions/setup-python@v5
+        if: ${{ !cancelled() }}
+        with:
+          python-version: "3.13"
+
+      - name: pytest
+        if: ${{ !cancelled() }}
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest tests/ -q --junitxml=pytest.xml
+
+      - name: Both runners ran the same tests
+        if: ${{ !cancelled() }}
+        run: python .github/compare_runners.py pytest.xml run_tests.log
