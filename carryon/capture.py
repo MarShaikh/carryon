@@ -227,6 +227,11 @@ def _write_owned(target: pathlib.Path, data: bytes, root: pathlib.Path,
     return external.write_owned(target, data, root, mode_from=mode_from)
 
 
+# The secret scan's label for a json-strip item: its landing path, scanned
+# after the keys are removed.
+STRIPPED = " (after strip)"
+
+
 def copy_tree(src: pathlib.Path, dst: pathlib.Path, members, root) -> tuple:
     """Write exactly `members` - (path, bytes) pairs - into `dst` under their
     path relative to `src`.
@@ -478,7 +483,7 @@ class Capture:
                           indent=2).encode()
         suffix = f" [stripped: {', '.join(removed)}]" if removed else ""
         self.say(f"      {item.src:<46} {len(body)/1024:>7.1f}K  {item.note}{suffix}")
-        self._check(item.dst + " (after strip)", body)
+        self._check(item.dst + STRIPPED, body)
         if not self._write(dst, body, item.src):
             return None
         return {"stripped_keys": removed}

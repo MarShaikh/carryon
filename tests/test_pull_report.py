@@ -51,7 +51,7 @@ def test_pull_prints_a_summary_and_no_per_item_lines(home_b, capsys):
     assert lines[0].startswith("Pulling from directory "), out
     assert out.index("Setup: ") < out.index("History: "), \
         "the Setup line comes first, as on push"
-    assert ("History: 2 Sessions pulled (1 unchanged), "
+    assert ("History: 2 Sessions pulled (0 unchanged, 1 ahead here), "
             "1 project memory pulled (0 unchanged)") in out, out
     assert ("  diverged: 1 Session - this machine's copy is kept and the "
             "Archive's is under ~/.carryon/conflicts/:") in out, out
@@ -73,7 +73,8 @@ def test_dry_run_prints_the_same_summary_with_its_own_verbs(home_b, capsys):
     assert code == 1, out
     lines = out.splitlines()
     assert lines[0].startswith("Dry run: would pull from directory "), out
-    assert "History: 2 Sessions to pull (1 unchanged), " in out, out
+    assert "History: 2 Sessions to pull (0 unchanged, 1 ahead here), " \
+        in out, out
     assert "Setup: to restore from machine 'machine-a' (pushed " in out, out
     assert "): 2 files to write" in out, out
     assert lines[-1] == "Dry run - add --apply to pull", out
@@ -127,7 +128,8 @@ def test_a_session_that_only_gained_a_file_counts_as_pulled(home_b, capsys):
     capsys.readouterr()
 
     _, out = pull(home_b, capsys, apply=True)
-    assert "History: 1 Session pulled (2 unchanged), " in out, out
+    assert "History: 1 Session pulled (1 unchanged, 1 ahead here), " \
+        in out, out
 
 
 def test_every_moving_command_takes_verbose_at_the_cli(home_b, capsys,
@@ -140,3 +142,44 @@ def test_every_moving_command_takes_verbose_at_the_cli(home_b, capsys,
     for command in ("push", "sync"):
         assert cli.main([command, "--verbose"]) in (0, 1, 2)
         capsys.readouterr()
+
+
+def memory_file(home):
+    return (home / ".claude" / "projects"
+            / rekey.encode_project_dir(str(home / PROJ_REL)) / "memory"
+            / "MEMORY.md")
+
+
+def test_project_memory_this_machine_is_ahead_on_is_counted_so(
+        home_b, capsys):
+    """A dry run cannot tell without downloading, so it says what it will
+    check; the real pull says this machine is ahead rather than dropping the
+    project from the counts."""
+    pull(home_b, capsys, apply=True)
+    memory = memory_file(home_b)
+    memory.write_text(memory.read_text() + "A line only B wrote.\n")
+
+    _, plan = pull(home_b, capsys)
+    assert "1 project memory to check (0 unchanged)" in plan, plan
+    _, out = pull(home_b, capsys, apply=True)
+    assert "0 project memories pulled (0 unchanged, 1 ahead here)" in out, out
+
+
+def test_the_setup_backup_note_is_only_for_setup_backups(tmp_path, capsys):
+    """A pull whose Setup only lays down new files, while the memory leg
+    backs up a file another machine edited: the note belongs to the memory
+    line, not the Setup's."""
+    home_a = build_home_a(tmp_path)
+    dest_spec = str(tmp_path / "archive")
+    sync.init(ns(dest=dest_spec, machine="machine-a"), home_a)
+    assert sync.push(ns(apply=True), home_a) == 0
+    home_b = build_home_b(tmp_path)
+    link_home(home_b, dest_spec, "machine-b", master_from=home_a)
+    sync.pull(ns(apply=True, category="history"), home_b)
+    memory_file(home_a).write_text("Rewritten on A.\n")
+    assert sync.push(ns(apply=True), home_a) == 0
+    capsys.readouterr()
+
+    _, out = pull(home_b, capsys, apply=True)
+    assert "  1 memory file replaced by another machine's edit" in out, out
+    assert "files it replaced are backed up" not in out, out

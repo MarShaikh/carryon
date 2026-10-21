@@ -162,3 +162,27 @@ def test_a_setup_refused_says_what_to_do(home, capsys):
     assert "  Remove the link, or drop the path from `carry`." in out, out
     assert "History: 4 Sessions pushed" in out, out
     assert "ADR-" not in out
+
+
+def test_a_stripped_json_file_is_named_by_its_home_path(home, capsys):
+    """Cursor's config is captured with keys stripped, and the scan runs on
+    the stripped copy; the report still names the file the user edits."""
+    cursor = home / ".cursor"
+    cursor.mkdir()
+    (cursor / "cli-config.json").write_text(
+        '{"authInfo": {}, "apiKey": "%s"}' % API_KEY)
+    _, out = push(home, capsys, apply=True)
+    assert "    .cursor/cli-config.json (" in out, out
+    assert "after strip" not in out, out
+
+
+def test_a_reason_is_escaped_like_the_path_beside_it(capsys):
+    """A reason can quote a name a filesystem allowed; it may not write its
+    own lines into the report."""
+    class Cap:
+        log, declined, findings = [], [], []
+        skipped = [("skill/x.md", "read failed: x\x1b[2Jy\rforged line")]
+    sync._print_setup_summary("pushed", Cap(), {"agents": {}}, [], 0, 0,
+                              False)
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\r" not in out, repr(out)

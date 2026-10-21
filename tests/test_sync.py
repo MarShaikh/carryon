@@ -633,7 +633,7 @@ def test_pull_unions_restores_new_and_never_deletes_local(
     memory = project / "memory" / "MEMORY.md"
     assert memory.read_text() == f"Notes live in {cwd_b}/notes.\n"
 
-    assert ("History: 2 Sessions pulled (1 unchanged), "
+    assert ("History: 2 Sessions pulled (0 unchanged, 1 ahead here), "
             "1 project memory pulled (0 unchanged)") in out
     assert "  diverged: 1 Session - " in out
     assert UUID_C in out

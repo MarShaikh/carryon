@@ -573,7 +573,7 @@ class Notes:
             print(line)
 
 
-def _report_deferred(deferred, home, notes: Notes) -> int:
+def _report_deferred(deferred, home, notes: Notes) -> None:
     """Name every restored path a link already claims, and count them.
 
     The Setup leg's skip line in the History leg's words, and for the same
@@ -585,10 +585,9 @@ def _report_deferred(deferred, home, notes: Notes) -> int:
     """
     for target, owner in deferred:
         notes.owned.append((_rel_to_home(target, home), str(owner)))
-    return len(deferred)
 
 
-def _report_refused(refused, home, notes: Notes) -> int:
+def _report_refused(refused, home, notes: Notes) -> None:
     """Name every restored path this machine's syscalls would not take.
 
     A directory standing where a member lands, most often - one `mkdir` in a
@@ -598,7 +597,6 @@ def _report_refused(refused, home, notes: Notes) -> int:
     """
     for target, why in refused:
         notes.refused.append((_rel_to_home(target, home), str(why)))
-    return len(refused)
 
 
 def _identity(path):
@@ -741,8 +739,6 @@ class _Landed(NamedTuple):
     """What laying one incoming Session tree down did, for pull's summary."""
     kept: int = 0          # members whose local copy won the union rule
     conflicted: int = 0    # members where neither copy extends the other
-    deferred: int = 0
-    refused: int = 0
     near: int = 0
     bare: int = 0
     non_utf8: int = 0
@@ -770,8 +766,8 @@ def _land_session(tar_bytes, meta, uuid, home, maps, effective,
     """
     root, unrep = history.unpack_session(tar_bytes, meta, home, maps,
                                          adapters=effective, apply=apply)
-    deferred = _report_deferred(unrep.deferred, home, notes)
-    refused = _report_refused(unrep.refused, home, notes)
+    _report_deferred(unrep.deferred, home, notes)
+    _report_refused(unrep.refused, home, notes)
     for target in unrep.kept:
         notes.say(f"  keep     ~/{printable(_rel_to_home(target, home))} - "
                   "this machine's copy is ahead")
@@ -788,10 +784,9 @@ def _land_session(tar_bytes, meta, uuid, home, maps, effective,
             tar_bytes, conflict_dir, home, maps, into_state=True,
             only=frozenset(name for _t, name in unrep.conflicted),
             deferred=c_deferred, refused=c_refused)
-        deferred += _report_deferred(c_deferred, home, notes)
-        refused += _report_refused(c_refused, home, notes)
+        _report_deferred(c_deferred, home, notes)
+        _report_refused(c_refused, home, notes)
     return root, unrep, _Landed(len(unrep.kept), len(unrep.conflicted),
-                                deferred, refused,
                                 unrep.near_misses + near,
                                 unrep.bare_tokens + bare,
                                 unrep.non_utf8 + non_utf8)

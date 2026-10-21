@@ -55,7 +55,8 @@ def run(args, home) -> int:
         print(f"{len(refused)} entr{'y' if len(refused) == 1 else 'ies'} in "
               "the Archive's Index couldn't be read - left out below:")
         for refusal in refused:
-            print(f"  {printable(str(refusal.key))}: {refusal.why}")
+            print(f"  {printable(str(refusal.key))}: "
+                  f"{printable(refusal.why)}")
         print()
     # Per catalogue, as push keeps them: a cwd and a UUID are different
     # namespaces, and a refusal in one must not hide a key in the other.

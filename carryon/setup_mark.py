@@ -16,8 +16,6 @@ write is a warning, as the High-water mark is.
 
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import pathlib
 
@@ -55,18 +53,19 @@ def whole(setup_categories, want_agents=None) -> bool:
 
 def capture_here(home, effective) -> tuple:
     """(digest, landing paths) for this machine's whole Setup as it stands,
-    or (None, ()) when a capture of it would refuse. A dry capture, so
-    nothing is written, and its plan is swallowed: the caller is a pull that
-    has already reported, or a `status` whose output is its own."""
+    or (None, ()) when a capture of it would refuse. A dry, silent
+    capture: the caller is a pull that has already reported, or a `status`
+    whose output is its own."""
     # Imported here, as resolve does: sync imports this module.
     from .sync import _swapped_registry
     seen = {}
-    with contextlib.redirect_stdout(io.StringIO()), \
-            _swapped_registry(effective):
-        code, _manifest = capture.run(
-            out=pathlib.Path(home) / ".carryon" / "staging" / "status",
-            dry=True, home=pathlib.Path(home), digest_into=seen)
-    if code != 0 or "digest" not in seen:
+    home = pathlib.Path(home)
+    with _swapped_registry(effective):
+        if capture.state_reads(None, set(SETUP_CATEGORIES), home):
+            return None, ()
+        capture.collect(home / ".carryon" / "staging" / "status", True,
+                        None, None, home, digest_into=seen)
+    if "digest" not in seen:
         return None, ()
     return seen["digest"], frozenset(seen["paths"])
 
