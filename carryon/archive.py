@@ -746,10 +746,9 @@ def _get_object(dest, master_key: bytes, object_key: str,
         # the Index with it, under a label of its own (ADR-0009). A user told
         # "wrong key" would go looking for the wrong thing entirely.
         raise ObjectRefused(
-            f"{object_key} failed its integrity check: {exc} The recovery key "
-            "in use already opened this Archive's Index, so this is tampering "
-            "or corruption at the Destination rather than a wrong key; "
-            "nothing was restored from it.")
+            f"{object_key} failed its integrity check ({exc}). The key is "
+            "right, so it was changed or damaged at the Destination; nothing "
+            "was restored from it.")
 
 
 def member_refusal(name: str):
@@ -1032,9 +1031,8 @@ def get_setup(dest, master_key: bytes, machine: str, local_dir) -> None:
         # Index with this key already, under a label of its own (ADR-0009).
         raise ObjectRefused(
             f"the stored Setup for machine '{printable(machine)}' failed its "
-            f"integrity check: {exc} The key in use already opened this "
-            "Archive's Index, so this is tampering or corruption at the "
-            "Destination rather than a wrong key - nothing was read from it.")
+            f"integrity check ({exc}). The key is right, so it was changed or "
+            "damaged at the Destination; nothing was restored from it.")
     try:
         unpack_into(tar_bytes, local_dir, what=key)
     except ObjectRefused:

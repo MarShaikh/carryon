@@ -267,7 +267,7 @@ def test_restore_refuses_a_case_variant_of_carryon_state(paired, capsys):
 
     assert (paired.home_b / ".carryon" / "master.key").read_bytes() == before
     assert ".Carryon/master.key" in out
-    assert "refuse" in out
+    assert "  not restored: " in out
 
 
 def test_restore_refuses_a_declared_src_that_resolves_into_carryon_state(
@@ -324,7 +324,7 @@ def test_pull_force_never_writes_into_carryon_state(paired, capsys):
     assert not (paired.home_b / ".carryon" / "ship.md").exists(), \
         "--force wrote a Setup file into ~/.carryon through a link"
     assert (paired.home_b / ".carryon" / "master.key").read_bytes() == before
-    assert "commands" in out and "refuse" in out
+    assert "commands" in out and "  not restored: " in out
 
 
 # --- the restore leg, one component below the item root ----------------------
@@ -357,7 +357,7 @@ def test_force_never_writes_through_a_link_below_the_item_root(paired, capsys,
 
     assert (paired.home_b / ".carryon" / member).read_bytes() == before, \
         "--force wrote a stored member into ~/.carryon through a link"
-    assert "refuse" in out and member in out
+    assert "  not restored: " in out and member in out
 
 
 def test_force_never_writes_through_a_leaf_link(paired, capsys):
@@ -376,7 +376,7 @@ def test_force_never_writes_through_a_leaf_link(paired, capsys):
     out = capsys.readouterr().out
 
     assert (paired.home_b / ".carryon" / "master.key").read_bytes() == before
-    assert "refuse" in out and "notes.md" in out
+    assert "  not restored: " in out and "notes.md" in out
 
 
 def test_force_still_writes_an_ordinary_member_through_a_dotfiles_link(

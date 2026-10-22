@@ -71,7 +71,7 @@ def test_tampered_ciphertext_is_refused_whole_on_pull(paired, capsys):
 
     assert restored_nothing(paired.home_b), \
         "a tampered Setup was restored - code execution on pull"
-    assert "refuse" in out
+    assert "Setup: not restored - " in out
     assert "machine-a" in out
 
 
@@ -87,7 +87,7 @@ def test_an_attacker_authored_setup_does_not_open(paired, capsys):
 
     assert restored_nothing(paired.home_b), \
         "an unsealed tar was restored as a Setup"
-    assert "refuse" in out
+    assert "Setup: not restored - " in out
 
 
 def test_a_setup_sealed_under_the_attackers_own_key_does_not_open(
@@ -102,7 +102,7 @@ def test_a_setup_sealed_under_the_attackers_own_key_does_not_open(
     out = pull_report(paired.home_b, capsys, code=2)
 
     assert restored_nothing(paired.home_b)
-    assert "refuse" in out
+    assert "Setup: not restored - " in out
 
 
 def test_a_setup_sealed_for_another_machine_is_refused_at_this_key(
@@ -126,7 +126,7 @@ def test_a_setup_sealed_for_another_machine_is_refused_at_this_key(
     out = pull_report(paired.home_b, capsys, code=2)
 
     assert restored_nothing(paired.home_b)
-    assert "refuse" in out
+    assert "Setup: not restored - " in out
 
 
 # --- the one sealing does NOT answer ------------------------------------------
@@ -155,8 +155,8 @@ def test_a_replayed_sealed_setup_is_refused_on_pull(paired, capsys):
 
     assert restored_nothing(paired.home_b), \
         "a superseded Setup was restored over a tightened one"
-    assert "refuse" in out
-    assert "earlier" in out, "the report does not say it is a replay"
+    assert "Setup: not restored - " in out
+    assert "is an older one" in out, "the report does not say it is a replay"
 
 
 def test_a_partial_push_refuses_to_launder_a_replayed_setup(paired, capsys):
@@ -275,7 +275,8 @@ def test_a_push_removes_a_plaintext_setup_left_from_before_sealing(paired,
     out = capsys.readouterr().out
 
     assert not mine.exists(), "the plaintext Setup is still at the Destination"
-    assert "plaintext" in out, "the push removed files without saying so"
+    assert "unencrypted Setup file(s) an older carryon left under " in out, \
+        "the push removed files without saying so"
     assert other.exists(), "a push removed another machine's files"
     assert stored_object(paired.dest_root).exists()
 
@@ -291,4 +292,4 @@ def test_an_honest_sealed_setup_round_trips(paired, capsys):
     claude = paired.home_b / ".claude"
     assert (claude / "settings.json").read_text() == GOOD_SETTINGS
     assert (claude / "CLAUDE.md").read_text() == GOOD_CLAUDE_MD
-    assert "refuse" not in out
+    assert "not restored" not in out

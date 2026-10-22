@@ -209,8 +209,7 @@ def unseal(blob: bytes, master_key: bytes, label: str) -> bytes:
     if not hmac_mod.compare_digest(tag, _tag(master_key, label, ciphertext)):
         raise CryptoError(
             f"the stored object for {label!r} does not authenticate: it was "
-            "modified, or served in place of another object. A Destination "
-            "is untrusted storage - this is the check that says so.")
+            "modified, or served in place of another object")
     return _run_bytes("decrypt", ciphertext, _master_pass(master_key),
                       BLOB_ITERATIONS)
 

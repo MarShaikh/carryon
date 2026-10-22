@@ -120,6 +120,9 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("sync", "apply"): "a flag",
     ("resolve", "apply"): "a flag",
     ("status", "verbose"): "a flag",
+    ("push", "verbose"): "a flag",
+    ("pull", "verbose"): "a flag",
+    ("sync", "verbose"): "a flag",
     ("sync", "category"): "a subset of a known set - sync._subset, the one parser",
     ("init", "join"): "a pairing code - sync.parse_pairing_code, which admits "
                       "16 characters from one alphabet and is a stricter door "
@@ -872,7 +875,8 @@ def test_the_refusal_sentence_is_one_sentence(tmp_path):
     writer does. Two spellings of one rule is what ADR-0010 is about, and a
     sentence is easier to copy than a check.
     """
-    assert "ADR-0007" in external.refusal(tmp_path / "somewhere")
+    assert ("holds that name, and carryon doesn't write through a link "
+            "it doesn't own") in external.refusal(tmp_path / "somewhere")
     assert str(tmp_path) in external.refusal(tmp_path / "somewhere")
 
 

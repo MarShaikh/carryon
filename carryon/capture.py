@@ -227,6 +227,11 @@ def _write_owned(target: pathlib.Path, data: bytes, root: pathlib.Path,
     return external.write_owned(target, data, root, mode_from=mode_from)
 
 
+# The secret scan's label for a json-strip item: its landing path, scanned
+# after the keys are removed.
+STRIPPED = " (after strip)"
+
+
 def copy_tree(src: pathlib.Path, dst: pathlib.Path, members, root) -> tuple:
     """Write exactly `members` - (path, bytes) pairs - into `dst` under their
     path relative to `src`.
@@ -260,10 +265,16 @@ def copy_tree(src: pathlib.Path, dst: pathlib.Path, members, root) -> tuple:
 class Capture:
     """Copies what an adapter declares, and records any credential it meets."""
 
-    def __init__(self, out: pathlib.Path, dry: bool, home: pathlib.Path = HOME):
+    def __init__(self, out: pathlib.Path, dry: bool, home: pathlib.Path = HOME,
+                 loud: bool = True):
         self.out = out
         self.dry = dry
         self.home = home
+        # Every per-item line, kept whether or not it was printed: `capture`
+        # prints them as it goes, and `push` keeps them for --verbose and
+        # words the findings in its own report (ADR-0016).
+        self.loud = loud
+        self.log = []
         # carryon's own state inodes, collected once for the whole capture and
         # handed to every read (config.carry_refusal). Same collection
         # state_reads makes for the walk that runs before this one, for the
@@ -293,6 +304,11 @@ class Capture:
         # without writing anything.
         self.seen = {}
 
+    def say(self, line: str) -> None:
+        self.log.append(line)
+        if self.loud:
+            print(line)
+
     def _see(self, dst: pathlib.Path, data: bytes) -> None:
         try:
             rel = dst.relative_to(self.out).as_posix()
@@ -320,9 +336,9 @@ class Capture:
             return True
         why = _write_owned(dst, data, self.out)
         if why is not None:
-            print(f"        -- {printable(label or str(dst))}  not written: "
+            self.say(f"        -- {printable(label or str(dst))}  not written: "
                   f"{why}")
-            self.skipped.append(label or str(dst))
+            self.skipped.append((label or str(dst), why))
             return False
         self.files += 1
         self.bytes += len(data)
@@ -342,8 +358,8 @@ class Capture:
         report exists to prevent."""
         for path, why in skipped:
             rel = self._named(path)
-            print(f"        -- {printable(rel)}  skipped: {why}")
-            self.skipped.append(rel)
+            self.say(f"        -- {printable(rel)}  skipped: {why}")
+            self.skipped.append((rel, why))
 
     def _decline(self, root: pathlib.Path, files, vouched: bool) -> tuple:
         """(carried, declined): a vouched tree's files minus its Development
@@ -376,7 +392,7 @@ class Capture:
         for it.
         """
         for rel in declined:
-            print(f"        ..  {printable(rel)}  left behind: "
+            self.say(f"        ..  {printable(rel)}  left behind: "
                   f"{development.WHAT}")
             self.declined.append(rel)
 
@@ -408,10 +424,10 @@ class Capture:
         """
         data, why = self._read(src)
         if data is None:
-            print(f"      !!  {item.src:<46} skipped: {why}")
-            self.skipped.append(item.src)
+            self.say(f"      !!  {item.src:<46} skipped: {why}")
+            self.skipped.append((item.src, why))
             return None
-        print(f"      {item.src:<46} {len(data)/1024:>7.1f}K  {item.note}")
+        self.say(f"      {item.src:<46} {len(data)/1024:>7.1f}K  {item.note}")
         self._check(item.src, data)
         if not self._write(dst, data, item.src):
             return None
@@ -421,7 +437,7 @@ class Capture:
         files, skipped = tree_files(src)
         files, declined = self._decline(src, files, vouched)
         size = sum(_size(p) for p in files)
-        print(f"      {item.src:<46} {len(files):>3} files {size/1024:>6.1f}K  {item.note}")
+        self.say(f"      {item.src:<46} {len(files):>3} files {size/1024:>6.1f}K  {item.note}")
         readable = []
         for path in files:
             data, why = self._read(path)
@@ -444,29 +460,30 @@ class Capture:
     def do_json_strip(self, src, dst, item, vouched: bool = False):
         data, why = self._read(src)
         if data is None:
-            print(f"      !!  {item.src:<46} skipped: {why}")
-            self.skipped.append(item.src)
+            self.say(f"      !!  {item.src:<46} skipped: {why}")
+            self.skipped.append((item.src, why))
             return None
         try:
             raw = json.loads(data.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
             # A config file half-written by a crashed editor is ordinary, and
             # a capture that dies on one has said nothing about the rest.
-            print(f"      !!  {item.src:<46} skipped: it is not the JSON this "
-                  f"item strips keys from ({exc})")
-            self.skipped.append(item.src)
+            why = f"it is not the JSON this item strips keys from ({exc})"
+            self.say(f"      !!  {item.src:<46} skipped: {why}")
+            self.skipped.append((item.src, why))
             return None
         if not isinstance(raw, dict):
-            print(f"      !!  {item.src:<46} skipped: it holds no JSON object")
-            self.skipped.append(item.src)
+            why = "it holds no JSON object"
+            self.say(f"      !!  {item.src:<46} skipped: {why}")
+            self.skipped.append((item.src, why))
             return None
         strip = set(item.strip)
         removed = sorted(k for k in raw if k in strip)
         body = json.dumps({k: v for k, v in raw.items() if k not in strip},
                           indent=2).encode()
         suffix = f" [stripped: {', '.join(removed)}]" if removed else ""
-        print(f"      {item.src:<46} {len(body)/1024:>7.1f}K  {item.note}{suffix}")
-        self._check(item.dst + " (after strip)", body)
+        self.say(f"      {item.src:<46} {len(body)/1024:>7.1f}K  {item.note}{suffix}")
+        self._check(item.dst + STRIPPED, body)
         if not self._write(dst, body, item.src):
             return None
         return {"stripped_keys": removed}
@@ -511,10 +528,10 @@ class Capture:
                 skipped.append((path, f"this machine would not look at it "
                                       f"({exc})"))
 
-        print(f"      {item.src:<46} {len(owned):>3} carried, "
+        self.say(f"      {item.src:<46} {len(owned):>3} carried, "
               f"{len(resolvable)} re-resolvable, {len(external)} external")
         for path in owned:
-            print(f"        + {path.name}  (no upstream - lost if not carried)")
+            self.say(f"        + {path.name}  (no upstream - lost if not carried)")
             files, bad = tree_files(path)
             skipped += bad
             # Per skill, not per skills directory: the name a user acts on is
@@ -538,7 +555,7 @@ class Capture:
                 self.bytes += written
                 skipped += failed
         for name, target in external.items():
-            print(f"        ~ {name}  managed elsewhere: {target}")
+            self.say(f"        ~ {name}  managed elsewhere: {target}")
         self._report_skipped(skipped)
         self._report_declined(declined)
 
@@ -628,9 +645,9 @@ def _capture_agent(cap: Capture, adapter, want_categories: set) -> dict:
         entry["items"].append(record)
 
     if not entry["items"]:
-        print("      (nothing in the selected categories)")
+        cap.say("      (nothing in the selected categories)")
     for missing in entry["layout_drift"]:
-        print(f"      !!  {missing} is missing - {adapter.name} may have moved it")
+        cap.say(f"      !!  {missing} is missing - {adapter.name} may have moved it")
     return entry
 
 
@@ -709,25 +726,14 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
     if want_categories and HISTORY in want_categories:
         raise SystemExit("history is pushed, not captured - use carryon push")
     want_categories = set(want_categories or SETUP_CATEGORIES)
-    cap = Capture(out, dry, home)
-
-    manifest = {
-        "tool": "carryon",
-        "version": __version__,
-        "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "source_home": str(home),
-        "categories": sorted(want_categories),
-        "scope": "A Setup: config + capability + knowledge. "
-                 "History travels separately, encrypted.",
-        "agents": {},
-    }
 
     print(f"{'PLAN (dry run)' if dry else 'CAPTURING'} -> {out}")
     print(f"categories: {', '.join(sorted(want_categories))}\n")
 
     found = state_reads(want_agents, want_categories, home)
     if found:
-        return _refuse_state_reads(found, dry), manifest
+        return _refuse_state_reads(found, dry), _new_manifest(want_categories,
+                                                             home)
 
     if not dry:
         # Naming a file where a directory belongs is the most ordinary
@@ -748,20 +754,67 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
                 "- it needs a directory it can make or write in, and "
                 "something else is standing at that name")
 
+    cap, manifest = collect(out, dry, want_agents, want_categories, home,
+                            digest_into, loud=True)
+    return _finish(cap, manifest, out, dry, archive)
+
+
+def _new_manifest(want_categories, home) -> dict:
+    return {
+        "tool": "carryon",
+        "version": __version__,
+        "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source_home": str(home),
+        "categories": sorted(want_categories),
+        "scope": "A Setup: config + capability + knowledge. "
+                 "History travels separately, encrypted.",
+        "agents": {},
+    }
+
+
+def collect(out: pathlib.Path, dry: bool, want_agents, want_categories,
+            home: pathlib.Path = HOME, digest_into: dict = None,
+            loud: bool = False) -> tuple:
+    """(Capture, manifest): every selected item captured into `out`, and
+    MANIFEST.json and RESTORE.md beside them unless `dry`. Prints nothing
+    unless `loud`; the per-item lines are on the Capture's `log` either way.
+
+    The caller has already asked `state_reads` and refused on a hit. `run`
+    adds capture's own report around this, and `push` words the findings in
+    its own (ADR-0016).
+
+    `digest_into`, when given, receives the Setup's digest under "digest"
+    once every item has been read and before MANIFEST.json is written, whose
+    `captured_at` would make two captures of one home disagree (ADR-0015).
+    """
+    want_categories = set(want_categories or SETUP_CATEGORIES)
+    cap = Capture(out, dry, home, loud=loud)
+    manifest = _new_manifest(want_categories, home)
+
     for key, adapter in ADAPTERS.items():
         if want_agents and key not in want_agents:
             continue
         if not is_installed(key, home):
-            print(f"  --  {adapter.name}: not set up here, skipped")
+            cap.say(f"  --  {adapter.name}: not set up here, skipped")
             continue
-        print(f"  {adapter.name}  ({key})")
+        cap.say(f"  {adapter.name}  ({key})")
         manifest["agents"][key] = _capture_agent(cap, adapter, want_categories)
-        print()
+        cap.say("")
 
     if digest_into is not None:
         digest_into["digest"] = setup_digest(cap.seen, manifest["agents"])
         digest_into["paths"] = sorted(cap.seen)
-    return _finish(cap, manifest, out, dry, archive)
+    if not dry:
+        # Through the same writer as every item, because these two say what
+        # the capture was: a MANIFEST written through a link edits the tree
+        # the link points at, and one that did not get written at all is a
+        # directory a restore cannot read. Counted apart from the items.
+        cap.items_written, cap.items_bytes = cap.files, cap.bytes
+        cap._write(out / "MANIFEST.json",
+                   json.dumps(manifest, indent=2).encode(), "MANIFEST.json")
+        cap._write(out / "RESTORE.md", build_restore(manifest).encode(),
+                   "RESTORE.md")
+    return cap, manifest
 
 
 def setup_digest(seen: dict, agents: dict) -> str:
@@ -896,17 +949,8 @@ def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
         print("\nDry run. Re-run with --apply to write.")
         return 0, manifest
 
-    # Through the same writer as every item, because these two say what the
-    # capture was: a MANIFEST written through a link edits the tree the link
-    # points at, and one that did not get written at all is a directory a
-    # restore cannot read. Counted apart from the items, which is what the
-    # line below has always meant and what the two lines under it explain.
-    items_written, items_bytes = cap.files, cap.bytes
-    cap._write(out / "MANIFEST.json", json.dumps(manifest, indent=2).encode(),
-               "MANIFEST.json")
-    cap._write(out / "RESTORE.md", build_restore(manifest).encode(),
-               "RESTORE.md")
-    print(f"\nWrote {items_written} files, {items_bytes/1024:.0f}K to {out}")
+    print(f"\nWrote {cap.items_written} files, {cap.items_bytes/1024:.0f}K "
+          f"to {out}")
     print("  MANIFEST.json   what was taken, and what was deliberately left")
     print("  RESTORE.md      the order to do things on the new machine")
 

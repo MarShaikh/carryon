@@ -104,20 +104,18 @@ def setup_freshness(staging, source, entry):
     calls `_stale_stamp` directly from setup_out, and may pass `{}`.
     """
     stamped = stamped_or_none(staging)
-    head = (f"the stored Setup for machine '{printable(source)}' is refused "
-            "whole: ")
-    tail = (" Nothing from it was restored; push the Setup again from a "
-            "machine that holds the master key, or investigate the "
-            "Destination.")
+    head = f"the stored Setup for machine '{printable(source)}' "
+    tail = " Push the Setup again from a machine with the master key."
     if stamped is None:
-        return [head + "the encrypted Index records a current Setup for it, "
-                "and the tree the Archive served carries no freshness stamp "
-                "at all - an Archive from before stamps existed, or a tree "
-                "assembled at the Destination." + tail]
+        # An Archive from before stamps existed, or a tree assembled at the
+        # Destination.
+        return [head + "has no freshness stamp, so nothing says it is the "
+                "current one." + tail]
     if _stale_stamp(stamped, entry):
-        return [head + "it opened under the master key, but it is the Setup "
-                f"pushed at {printable(stamped['pushed_at'] or 'no time')} "
-                "rather than the one the Index records as current "
-                f"({printable(entry.get('index_pushed_at') or 'no time')}) - "
-                "an earlier tree served back in place of it." + tail]
+        # An earlier tree served back in place of the current one.
+        return [head + "is an older one (pushed "
+                f"{printable(stamped['pushed_at'] or 'at no recorded time')}) "
+                "than the Index records as current ("
+                f"{printable(entry.get('index_pushed_at') or 'no time')})."
+                + tail]
     return None

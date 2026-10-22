@@ -322,8 +322,7 @@ def test_push_twice_uploads_zero_session_objects_the_second_time(
     # encryption is salted, so byte-identical objects prove nothing was
     # re-uploaded - this is ADR-0003's incrementality
     assert after == before
-    assert "0 pushed" in out
-    assert "4 unchanged" in out
+    assert "History: 0 Sessions pushed (4 unchanged)" in out
 
 
 def test_pull_then_push_from_the_other_machine_uploads_nothing(
@@ -350,15 +349,15 @@ def test_pull_then_push_from_the_other_machine_uploads_nothing(
     # encryption is salted, so byte-identical objects prove nothing was
     # re-uploaded
     assert {k: dest.read(k) for k in session_keys + project_keys} == before
-    assert "Sessions: 0 pushed, 4 unchanged" in out
-    assert "Project residue: 0 pushed, 1 unchanged" in out
+    assert ("History: 0 Sessions pushed (4 unchanged), "
+            "0 project memories pushed (1 unchanged)") in out
 
     # and the first machine still agrees: its next push is a no-op too
     capsys.readouterr()
     assert sync.push(ns(apply=True), home_a) == 0
     out = capsys.readouterr().out
-    assert "Sessions: 0 pushed, 4 unchanged" in out
-    assert "Project residue: 0 pushed, 1 unchanged" in out
+    assert ("History: 0 Sessions pushed (4 unchanged), "
+            "0 project memories pushed (1 unchanged)") in out
     assert {k: dest.read(k) for k in session_keys + project_keys} == before
 
     # pull is incremental across machines for the same reason: a second pull
@@ -432,16 +431,26 @@ def test_rekey_stats_are_reported_on_push_and_pull(tmp_path, capsys):
     capsys.readouterr()
 
     assert sync.push(ns(apply=True), home_a) == 0
+    assert "Re-keying" not in capsys.readouterr().out, "--verbose detail"
+    (project / (UUID_A + ".jsonl")).write_text(
+        main_a(cwd) + jline({"type": "note", "text": f"see {cwd.upper()}"})
+        + jline({"type": "note", "text": "again"}))
+    (project / "memory" / "MEMORY.md").write_text(
+        f"Notes live in {cwd}/notes.\nHome is {home_a}.\nMore.\n")
+    assert sync.push(ns(apply=True, verbose=True), home_a) == 0
     out = capsys.readouterr().out
-    assert "near-miss" in out
-    assert "not UTF-8" in out, "blob.bin is carried unchanged and reported"
-    assert "bare '~'" in out
+    assert ("Re-keying: 1 path matched this home folder only when ignoring "
+            "case, left as written") in out
+    assert "Re-keying: 1 file not UTF-8, carried unchanged" in out, \
+        "blob.bin is carried unchanged and reported"
+    assert "Re-keying: 1 bare '~' with nothing after it, left as written" \
+        in out
 
     home_b = tmp_path / "home_b_stats"
     home_b.mkdir()
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
     capsys.readouterr()
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True, verbose=True), home_b) == 0
     out = capsys.readouterr().out
     assert "not UTF-8" in out
     assert "bare '~'" in out
@@ -520,8 +529,9 @@ def test_push_reports_history_credentials_and_still_pushes(tmp_path, capsys):
     assert sync.push(ns(apply=True), home) == 0
     out = capsys.readouterr().out
 
-    assert "REPORTED in 1" in out
-    assert UUID_A in out
+    assert ("  possible secrets in 1 History file, carried encrypted "
+            "(--verbose names them)") in out
+    assert UUID_A not in out, "the History secret list is --verbose detail"
     dest = DirectoryDestination(tmp_path / "archive")
     assert len(dest.list("carryon/sessions/")) == 4, \
         "a History credential is reported and carried, never a refusal"
@@ -555,8 +565,9 @@ def test_push_reports_a_setup_credential_and_publishes_it_sealed(
     out = capsys.readouterr().out
 
     assert code == 0, "reported, not refused (ADR-0014)"
-    assert "settings.json" in out, "the credential was not named"
-    assert "anthropic-key" in out, "the report does not say what matched"
+    assert ("  possible secrets in 1 file, carried encrypted:\n"
+            "    .claude/settings.json (anthropic-key") in out, \
+        "the credential, and what it matched, were not named"
 
     dest = DirectoryDestination(tmp_path / "archive")
     assert dest.list("carryon/setups/") == \
@@ -622,9 +633,9 @@ def test_pull_unions_restores_new_and_never_deletes_local(
     memory = project / "memory" / "MEMORY.md"
     assert memory.read_text() == f"Notes live in {cwd_b}/notes.\n"
 
-    assert "1 new" in out
-    assert "1 replaced" in out
-    assert "1 divergent" in out
+    assert ("History: 2 Sessions pulled (0 unchanged, 1 ahead here), "
+            "1 project memory pulled (0 unchanged)") in out
+    assert "  diverged: 1 Session - " in out
     assert UUID_C in out
 
 
@@ -650,8 +661,8 @@ def test_pull_backs_up_the_setup_and_skips_externally_owned(
     # externally owned: skipped, named with its owner (ADR-0007)
     assert (home_b / ".claude" / "CLAUDE.md").is_symlink()
     assert (home_b / "dotfiles" / "CLAUDE.md").read_text() == "dotfiles owns this\n"
-    assert ".claude/CLAUDE.md" in out
-    assert "externally owned" in out
+    assert "  skipped: ~/.claude/CLAUDE.md - " in out
+    assert "(--force writes through)" in out
     assert "dotfiles" in out, "the report names the owner"
 
 
@@ -692,7 +703,7 @@ def test_pull_reports_rather_than_dies_when_chats_are_excluded(
                / rekey.encode_project_dir(str(home_b / PROJ_REL)))
     assert not (project / (UUID_F + ".jsonl")).exists()
     # the codex Session still went through the union: divergent, kept aside
-    assert "1 divergent" in out
+    assert "  diverged: 1 Session - " in out
     assert (home_b / ".carryon" / "conflicts" / UUID_C).is_dir()
 
 
@@ -712,9 +723,10 @@ def test_pull_dry_run_writes_nothing(tmp_path, pushed, capsys):
 
     assert tree_state(home_b) == home_before
     assert {k: dest.read(k) for k in dest.list("")} == dest_before
-    assert "1 new" in out
-    assert "1 divergent" in out
-    assert "externally owned" in out, "the dry run still shows the full plan"
+    assert "History: 2 Sessions to pull" in out
+    assert "  diverged: 1 Session - " in out
+    assert "  skipped: ~/.claude/CLAUDE.md - " in out, \
+        "the dry run still shows the full plan"
 
 
 # --- cli and restore notes ---------------------------------------------------

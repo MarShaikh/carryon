@@ -486,7 +486,7 @@ def test_a_tampered_session_costs_that_session_and_not_the_pull(tmp_path,
     assert UUID_ONE in out, "the skipped Session is not named in the report"
     assert "integrity" in out, \
         "the report must say the object failed its integrity check"
-    assert "Sessions:" in out, "the pull ended before it printed its report"
+    assert "History: " in out, "the pull ended before it printed its report"
     assert (home_b / ".claude" / "settings.json").is_file(), \
         "the Setup half never ran"
     assert UUID_ONE in out

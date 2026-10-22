@@ -112,10 +112,9 @@ def test_a_link_at_the_staging_root_is_not_written_through(tmp_path, capsys,
     assert not files_under(victim), (
         "a plaintext Setup was staged inside a tree carryon does not own:\n"
         + "\n".join(files_under(victim)))
-    assert "SETUP REFUSED" in report, report
     # The summary line used to blame a credential for every Setup refusal,
     # which since ADR-0014 is the one cause that can never produce one.
-    assert "Setup: REFUSED - the Setup could not be staged" in report, report
+    assert "Setup: not pushed - carryon can't stage it: " in report, report
     assert "credential is in the capture set" not in report, report
 
 

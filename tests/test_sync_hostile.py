@@ -59,7 +59,9 @@ def pull_report(home, capsys, code: int = 0) -> str:
     so in the status as well as in the report. Never a traceback either way -
     that is what these tests are about, and a status is not a raise.
     """
-    assert sync.pull(ns(apply=True), home) == code
+    # --verbose, so every per-item line - the ones a stored name could try
+    # to author - is in the report these tests read.
+    assert sync.pull(ns(apply=True, verbose=True), home) == code
     return capsys.readouterr().out
 
 
@@ -87,7 +89,7 @@ def test_a_dst_the_kernel_will_not_take_does_not_abort_the_pull(
 
     out = pull_report(paired.home_b, capsys)
 
-    assert "refuse" in out, "the impossible dst is not named in the report"
+    assert "  not restored: " in out, "the impossible dst is not named in the report"
     assert (paired.home_b / ".claude" / "CLAUDE.md").read_text() == \
         GOOD_CLAUDE_MD, "the honest item was lost with the refused one"
 
@@ -105,7 +107,7 @@ def test_a_src_the_kernel_will_not_take_does_not_abort_the_pull(paired,
 
     out = pull_report(paired.home_b, capsys)
 
-    assert "refuse" in out
+    assert "  not restored: " in out
     assert (paired.home_b / ".claude" / "CLAUDE.md").read_text() == \
         GOOD_CLAUDE_MD
 
@@ -134,7 +136,7 @@ def test_a_src_that_is_only_too_long_once_joined_to_home_is_refused(
 
     out = pull_report(paired.home_b, capsys)
 
-    assert "refuse" in out
+    assert "  not restored: " in out
     assert (paired.home_b / ".claude" / "CLAUDE.md").read_text() == \
         GOOD_CLAUDE_MD
 
@@ -158,7 +160,7 @@ def test_a_src_below_a_local_file_does_not_abort_the_pull(paired, capsys):
     out = pull_report(paired.home_b, capsys)
 
     assert (commands / "ship.md").read_text() == "mine\n"
-    assert "refuse" in out
+    assert "  not restored: " in out
     assert (paired.home_b / ".claude" / "CLAUDE.md").read_text() == \
         GOOD_CLAUDE_MD
 
@@ -182,7 +184,7 @@ def test_a_file_item_naming_a_local_directory_does_not_abort_the_pull(
     out = pull_report(paired.home_b, capsys)
 
     assert (commands / "ship.md").read_text() == "mine\n"
-    assert "refuse" in out
+    assert "  not restored: " in out
     assert (paired.home_b / ".claude" / "CLAUDE.md").read_text() == \
         GOOD_CLAUDE_MD
 
@@ -527,7 +529,7 @@ def test_a_manifest_agent_key_cannot_forge_a_line_of_the_pull_report(
 
     assert FORGERY not in out.splitlines(), \
         "a MANIFEST agent key authored a line of the pull report"
-    assert "refuse" in out, "the planted item is still refused by name"
+    assert "  not restored: " in out, "the planted item is still refused by name"
 
 
 def test_a_stored_tree_member_cannot_forge_a_line_of_the_pull_report(
@@ -557,5 +559,5 @@ def test_an_honest_pull_is_unchanged_by_all_of_the_above(paired, capsys):
     assert (claude / "settings.json").read_text() == GOOD_SETTINGS
     assert (claude / "CLAUDE.md").read_text() == GOOD_CLAUDE_MD
     assert (claude / "commands" / "ship.md").read_text() == GOOD_COMMAND
-    assert "Setup: 3 file(s) written" in out
+    assert "): 3 files written" in out
     assert "setups/machine-a/claude/settings.json" in out

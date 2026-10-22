@@ -508,7 +508,5 @@ def _note_plaintext_removed(machine: str, count: int) -> None:
     wondering where they went, and the fact they existed is worth knowing:
     the Setup was readable there until this push."""
     if count:
-        print(f"  removed  {count} plaintext file(s) under "
-              f"{printable(archive.setup_prefix(machine))}/ - a Setup "
-              "pushed before ADR-0014 sealed it, readable at the "
-              "Destination until now")
+        print(f"Removed {count} unencrypted Setup file(s) an older carryon "
+              f"left under {printable(archive.setup_prefix(machine))}/")

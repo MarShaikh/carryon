@@ -770,8 +770,7 @@ def _member_bytes(path, rel: str, home, identities) -> bytes:
     data, why = config.read_carryable(path, home, identities)
     if data is None:
         raise MemberUnreadable(
-            f"{rel}: {why} - it was there when the tree was walked and was "
-            "something else by the time it was read")
+            f"{rel} changed while it was being read: {why}")
     return data
 
 

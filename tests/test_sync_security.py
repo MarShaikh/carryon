@@ -207,11 +207,11 @@ def test_an_honest_setup_restores_and_the_report_names_both_sides(
     """The regression guard: none of the above may be bought by breaking the
     restore. The report shows source and target, so an exfiltration attempt
     is visible in the dry run instead of reading as a normal write."""
-    assert sync.pull(ns(apply=False), paired.home_b) == 0
+    assert sync.pull(ns(apply=False, verbose=True), paired.home_b) == 0
     dry = capsys.readouterr().out
     assert not (paired.home_b / ".claude" / "settings.json").exists()
 
-    assert sync.pull(ns(apply=True), paired.home_b) == 0
+    assert sync.pull(ns(apply=True, verbose=True), paired.home_b) == 0
     out = capsys.readouterr().out
 
     claude = paired.home_b / ".claude"
@@ -387,7 +387,7 @@ def test_a_case_variant_of_carryons_own_state_is_not_written(paired, capsys):
 
     assert (paired.home_b / ".carryon" / "master.key").read_bytes() == before
     assert ".Carryon/master.key" in out, "the refused item is named"
-    assert "refuse" in out
+    assert "  not restored: " in out
 
 
 def test_a_case_variant_of_carryons_config_is_not_written(paired, capsys):
@@ -498,7 +498,7 @@ def test_a_missing_packed_file_is_named_rather_than_silently_dropped(
     out = capsys.readouterr().out
 
     assert "claude/CLAUDE.md" in out
-    assert "refuse" in out, \
+    assert "  not restored: " in out, \
         "a stored file the Destination removed is not reported at all"
 
 
@@ -529,7 +529,8 @@ def test_a_pre_sealing_setup_tree_is_named_and_does_not_abort_the_pull(
     out = capsys.readouterr().out
 
     assert "machine-a" in out, "the pre-sealing tree is not named at all"
-    assert "sealed" in out, "the report does not say why it cannot be used"
+    assert "unencrypted, from an older carryon" in out, \
+        "the report does not say why it cannot be used"
     assert not (paired.home_b / ".claude" / "settings.json").exists(), \
         "a plaintext Setup tree was restored (ADR-0014)"
 

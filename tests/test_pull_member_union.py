@@ -162,7 +162,7 @@ def case_insensitive(path) -> bool:
 
 def kept_summary(out: str) -> str:
     lines = [line for line in out.splitlines()
-             if line.startswith("Sessions:") and "never deletes" in line]
+             if line.startswith("  kept: ")]
     return lines[0] if lines else ""
 
 
@@ -194,7 +194,7 @@ def test_a_divergent_member_is_kept_and_the_incoming_copy_goes_aside(
 
     # 2, not 0: this pull lands a divergence, which is ADR-0012's exit code
     # (`2 if apply else 1`, setup_denied's convention).
-    assert sync.pull(ns(apply=True), behind) == 2
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 2
     out = capsys.readouterr().out
 
     assert local.read_bytes() == before, \
@@ -219,7 +219,7 @@ def test_a_member_this_machine_is_ahead_on_is_not_truncated(behind, capsys):
     before = workflow.read_bytes()
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
     out = capsys.readouterr().out
 
     assert workflow.read_bytes() == before, \
@@ -241,7 +241,7 @@ def test_a_member_the_incoming_tree_extends_still_wins(behind):
     shared = project / UUID_A / SHARED
     write(shared, journal("machine-a", 1))  # the first of the two lines
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
 
     assert shared.read_text() == journal("machine-a", 2), \
         "the incoming member did not extend the local byte-prefix of it"
@@ -258,7 +258,7 @@ def test_a_member_both_machines_hold_identically_is_left_alone(behind):
     write(shared, journal("machine-a", 2))
     before = shared.stat().st_mtime_ns
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
 
     assert shared.read_text() == journal("machine-a", 2)
     assert shared.stat().st_mtime_ns == before, \
@@ -293,7 +293,7 @@ def test_a_local_member_spelled_in_another_case_is_not_overwritten(
     folded = case_insensitive(project)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == (2 if folded else 0)
+    assert sync.pull(ns(verbose=True, apply=True), behind) == (2 if folded else 0)
     out = capsys.readouterr().out
 
     assert variant.read_bytes() == before, \
@@ -338,7 +338,7 @@ def test_a_new_session_does_not_write_over_a_local_subtree(tmp_path, capsys):
 
     # 2: the divergent member lands in conflicts, and a landed divergence is
     # ADR-0012's exit code (`2 if apply else 1`).
-    assert sync.pull(ns(apply=True), home_b) == 2
+    assert sync.pull(ns(verbose=True, apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert orphan.read_bytes() == before, \
@@ -365,7 +365,7 @@ def test_the_keep_accounting_follows_the_directory_written_into(
     capsys.readouterr()
 
     # 2: the divergent journal lands in conflicts - ADR-0012's exit code.
-    assert sync.pull(ns(apply=True), behind) == 2
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 2
     out = capsys.readouterr().out
 
     assert "restored to another directory" not in out, \
@@ -391,7 +391,7 @@ def test_a_dry_run_says_which_local_members_it_would_keep(behind, capsys):
 
     # 1: the plan PLANS a divergence, which is ADR-0012's dry-run exit code
     # (`2 if apply else 1`).
-    assert sync.pull(ns(apply=False), behind) == 1
+    assert sync.pull(ns(verbose=True, apply=False), behind) == 1
     out = capsys.readouterr().out
 
     assert "keep" in out, "the plan says nothing about what it would keep"
@@ -423,7 +423,7 @@ def test_a_second_divergent_pull_keeps_the_first_copy_it_set_aside(
     link_home(home_b, dest_spec, "machine-b", master_from=home_a)
     write(project_root(home_b) / UUID_A / SHARED, journal("machine-b", 40))
     # 2 on both pulls: each lands the same divergence - ADR-0012's exit code.
-    assert sync.pull(ns(apply=True), home_b) == 2
+    assert sync.pull(ns(verbose=True, apply=True), home_b) == 2
     aside = conflicts_dir(home_b) / SHARED
     assert aside.read_text() == journal("machine-a", 2)
     aside.write_text(journal("merged-by-hand", 9))
@@ -436,7 +436,7 @@ def test_a_second_divergent_pull_keeps_the_first_copy_it_set_aside(
     assert sync.push(ns(apply=True, category="history"), home_a) == 0
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 2
+    assert sync.pull(ns(verbose=True, apply=True), home_b) == 2
     out = capsys.readouterr().out
 
     assert "replace" in out, "the second pull never reached the branch"
@@ -513,7 +513,7 @@ def test_a_member_this_machine_is_behind_on_is_caught_up(level, capsys):
     assert shared.read_text() == journal("machine-a", 1)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), level) == 0
+    assert sync.pull(ns(verbose=True, apply=True), level) == 0
     out = capsys.readouterr().out
 
     assert shared.read_text() == journal("machine-a", 2), \
@@ -529,7 +529,7 @@ def test_a_memory_file_this_machine_is_behind_on_is_caught_up(level):
     memory = project_root(level) / "memory" / "MEMORY.md"
     assert memory.read_text() == "one\n"
 
-    assert sync.pull(ns(apply=True), level) == 0
+    assert sync.pull(ns(verbose=True, apply=True), level) == 0
 
     assert memory.read_text() == "one\ntwo\n", \
         "a memory file this machine was behind on was never caught up"
@@ -546,7 +546,7 @@ def test_a_divergent_member_goes_aside_when_the_main_did_not_move(
     capsys.readouterr()
 
     # 2: a divergence landed - ADR-0012's exit code (`2 if apply else 1`).
-    assert sync.pull(ns(apply=True), level) == 2
+    assert sync.pull(ns(verbose=True, apply=True), level) == 2
     out = capsys.readouterr().out
 
     assert shared.read_bytes() == before, \
@@ -569,7 +569,7 @@ def test_a_divergent_memory_file_goes_aside_when_the_main_did_not_move(
     capsys.readouterr()
 
     # 2: a residue divergence is a divergence too - ADR-0012's exit code.
-    assert sync.pull(ns(apply=True), level) == 2
+    assert sync.pull(ns(verbose=True, apply=True), level) == 2
     out = capsys.readouterr().out
 
     assert memory.read_text() == "something else entirely\n", \
@@ -590,7 +590,7 @@ def test_a_member_this_machine_is_ahead_on_survives_the_union(level, capsys):
     before = workflow.read_bytes()
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), level) == 0
+    assert sync.pull(ns(verbose=True, apply=True), level) == 0
     out = capsys.readouterr().out
 
     assert workflow.read_bytes() == before, \
@@ -612,17 +612,17 @@ def test_pulling_first_makes_the_push_that_was_skipped_go_through(
     capsys.readouterr()
     assert sync.push(ns(apply=True, category="history"), level) == 0
     first = capsys.readouterr().out
-    assert "pull first" in first, \
+    assert "`carryon pull` first" in first, \
         "this machine was not behind, so nothing here is being tested"
 
-    assert sync.pull(ns(apply=True), level) == 0
+    assert sync.pull(ns(verbose=True, apply=True), level) == 0
     capsys.readouterr()
 
     assert sync.push(ns(apply=True, category="history"), level) == 0
     second = capsys.readouterr().out
-    assert "pull first" not in second, \
+    assert "`carryon pull` first" not in second, \
         f"pulling first did not make the push it named possible:\n{second}"
-    assert "Sessions: 1 pushed" in second
+    assert "History: 1 Session pushed" in second
 
 
 def test_a_dry_run_of_the_union_says_what_it_would_write(level, capsys):
@@ -634,7 +634,7 @@ def test_a_dry_run_of_the_union_says_what_it_would_write(level, capsys):
     before = shared.read_bytes()
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=False), level) == 0
+    assert sync.pull(ns(verbose=True, apply=False), level) == 0
     out = capsys.readouterr().out
 
     assert shared.read_bytes() == before, "a dry run wrote to the tree"
@@ -665,12 +665,12 @@ def test_a_divergence_is_an_exit_code(behind, capsys):
     write(divergent, journal("machine-b", 40))
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=False), behind) == 1, \
+    assert sync.pull(ns(verbose=True, apply=False), behind) == 1, \
         "a planned divergence did not reach the dry run's exit status"
     assert not (behind / ".carryon" / "conflicts").exists(), \
         "the dry run wrote the conflict it was only planning"
 
-    assert sync.pull(ns(apply=True), behind) == 2, \
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 2, \
         "a landed divergence did not reach the exit status"
     assert (conflicts_dir(behind) / SHARED).is_file(), \
         "the exit code fired without the divergence landing"
@@ -679,5 +679,5 @@ def test_a_divergence_is_an_exit_code(behind, capsys):
     # The control: remove the divergent local copy and pull again - the
     # incoming member now lands on nothing and the pull worked, so 0.
     divergent.unlink()
-    assert sync.pull(ns(apply=True), behind) == 0, \
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0, \
         "the non-zero status outlived the divergence it reports"

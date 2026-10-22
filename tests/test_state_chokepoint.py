@@ -374,7 +374,8 @@ def test_push_names_the_withheld_hard_link_and_still_pushes(tmp_path, capsys):
     report = capsys.readouterr().out
 
     assert code == 0, "one link in one project refused a whole History"
-    assert "WITHHELD" in report
+    assert ("1 History path not carried - they lead to carryon's own key or "
+            "config:") in report, report
     assert f"{UUID_A}/notes.md" in report
     assert not archive_plaintext_containing(tmp_path / "archive", secret), \
         "the master key reached the Archive"
@@ -1209,7 +1210,7 @@ def test_an_ordinary_setup_backup_still_works(tmp_path, capsys):
     saved = [p for p in backups_of(home_b) if p.name == "settings.json"]
     assert saved, "the Setup was replaced with no backup taken"
     assert saved[0].read_text() == LOCAL_SETTINGS
-    assert "backed up to" in report
+    assert "  files it replaced are backed up under " in report
 
 
 def test_a_link_above_the_backup_directory_is_not_written_through(tmp_path,

@@ -407,7 +407,8 @@ def test_pull_defers_to_a_link_in_the_project_tree_and_says_so(tmp_path,
 
     assert not stolen.exists(), \
         "pull wrote through a link into a dotfiles repo"
-    assert "externally owned" in out
+    assert "  not written: " in out and "a link already holds each path" \
+        in out
     assert UUID_F in out
     # the Session with no link in its way still landed
     assert (root / (UUID_A + ".jsonl")).is_file()
@@ -435,7 +436,7 @@ def test_pull_does_not_delete_through_a_link_it_defers_to(tmp_path, capsys):
 
     assert (external_tree / (UUID_A + ".jsonl")).read_text() == prefix, \
         "pull deleted a file through a link it then refused to write through"
-    assert "externally owned" in out
+    assert "a link already holds each path" in out
 
 
 def test_pull_reports_a_deferred_history_in_its_summary(tmp_path, capsys):
@@ -455,7 +456,7 @@ def test_pull_reports_a_deferred_history_in_its_summary(tmp_path, capsys):
 
     assert list(claimed.iterdir()) == [], \
         "pull wrote a whole History below a linked directory"
-    assert "externally owned" in out
+    assert "a link already holds each path" in out
     assert "--force" in out, \
         "the report has to say whether a flag writes through, either way"
 

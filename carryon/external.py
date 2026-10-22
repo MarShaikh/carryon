@@ -197,8 +197,8 @@ def refusal(owner) -> str:
     spellings of one rule is the shape ADR-0010 is about, and a sentence is
     even easier to copy than a check.
     """
-    return (f"{printable(str(owner))} holds that name, and writing through it "
-            "edits a tree carryon does not own (ADR-0007)")
+    return (f"{printable(str(owner))} holds that name, and carryon doesn't "
+            "write through a link it doesn't own")
 
 
 def _would_not_take(exc) -> str:

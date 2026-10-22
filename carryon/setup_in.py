@@ -498,12 +498,11 @@ def _restore_setup_item(target, source_path, backup_path, home, maps,
             reason = _backed_up(target, backup_path, home, identities)
             if reason is not None:
                 return None, True, (
-                    f"{reason}. Nothing was replaced - ADR-0002 replaces a "
-                    "Setup item only where the copy it makes first is "
-                    "recoverable")
+                    f"{reason}. Nothing was replaced, since the file here "
+                    "could not be backed up first")
             # ADR-0002's "recoverably from the backup" is only a promise the
-            # user can act on if the report says where the backup went.
-            print(f"           backed up to {backup_path.parent}")
+            # user can act on if the report says where the backup went: pull
+            # names the backup directory in its summary.
         # The stored Setup is machine-neutral (ADR-0006), so it is expanded
         # against this home the same way a History is - a hook command
         # written as '~/bin/notify' only runs here once it names this

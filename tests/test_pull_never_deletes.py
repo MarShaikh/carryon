@@ -155,7 +155,7 @@ def test_a_replace_keeps_local_only_members_of_the_session_tree(behind,
     before = (subagent.read_bytes(), workflow.read_bytes())
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
     out = capsys.readouterr().out
 
     assert subagent.is_file(), \
@@ -194,7 +194,7 @@ def test_a_replace_still_lets_the_incoming_tree_win_a_shared_name(behind):
     shared.parent.mkdir(parents=True, exist_ok=True)
     shared.write_text(jline({"from": "machine-a", "n": 1}))
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
 
     assert len(shared.read_text().splitlines()) == 2, \
         "the incoming member did not extend the local byte-prefix of it"
@@ -207,7 +207,7 @@ def test_a_replace_reports_what_it_left_in_place(behind, capsys):
     uses: a line against the Session and a line in the summary."""
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
     out = capsys.readouterr().out
 
     session_line = [line for line in out.splitlines()
@@ -216,7 +216,7 @@ def test_a_replace_reports_what_it_left_in_place(behind, capsys):
     assert "2" in session_line[0], \
         f"the kept members were not counted: {session_line[0]!r}"
     summary = [line for line in out.splitlines()
-               if line.startswith("Sessions:") and "never deletes" in line]
+               if line.startswith("  kept: ")]
     assert summary, "the summary never accounts for the members it kept"
     assert "2 local file(s)" in summary[0], \
         f"the kept members were miscounted in the summary: {summary[0]!r}"
@@ -242,7 +242,7 @@ def test_the_residue_leg_keeps_local_only_files_too(behind):
     ahead.write_text(f"Notes live in {behind / PROJ_REL}/notes.\nand more.\n")
     before = ahead.read_bytes()
 
-    assert sync.pull(ns(apply=True), behind) == 0
+    assert sync.pull(ns(verbose=True, apply=True), behind) == 0
 
     assert local.read_text() == "machine-b's own notes\n", \
         "the residue leg deleted a memory file the Archive never held"
@@ -274,7 +274,7 @@ def test_a_replace_sent_elsewhere_by_map_keeps_and_counts_the_whole_tree(
     # map_refusal). Expansion against the local home runs before the maps do,
     # so naming this machine's own directories sends the restore to the same
     # place the fragment did.
-    assert sync.pull(ns(apply=True,
+    assert sync.pull(ns(verbose=True, apply=True,
                         map=[f"{behind}/code/app={behind}/code/elsewhere"]),
                      behind) == 0
     out = capsys.readouterr().out
@@ -286,7 +286,7 @@ def test_a_replace_sent_elsewhere_by_map_keeps_and_counts_the_whole_tree(
     elsewhere = project_root(behind, "code/elsewhere")
     assert (elsewhere / (UUID_A + ".jsonl")).is_file()
     summary = [line for line in out.splitlines()
-               if line.startswith("Sessions:") and "never deletes" in line]
+               if line.startswith("  kept: ")]
     assert summary, "the summary never accounts for the tree it kept"
     assert "3 local file(s)" in summary[0], \
         f"the kept tree was miscounted: {summary[0]!r}"

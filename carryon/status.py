@@ -53,10 +53,10 @@ def run(args, home) -> int:
     refused = archive.index_refusals(index)
     if refused:
         print(f"{len(refused)} entr{'y' if len(refused) == 1 else 'ies'} in "
-              "the Archive's Index this machine could not read - left out "
-              "below:")
+              "the Archive's Index couldn't be read - left out below:")
         for refusal in refused:
-            print(f"  ?? {printable(str(refusal.key))} - {refusal.why}")
+            print(f"  {printable(str(refusal.key))}: "
+                  f"{printable(refusal.why)}")
         print()
     # Per catalogue, as push keeps them: a cwd and a UUID are different
     # namespaces, and a refusal in one must not hide a key in the other.
@@ -101,8 +101,8 @@ def run(args, home) -> int:
     if filed_sessions:
         count = len(filed_sessions)
         print(f"Filed: {count} Session{'' if count == 1 else 's'} diverged "
-              "- the Archive's copy is under ~/.carryon/conflicts/<uuid>/, "
-              "and no command merges a Session")
+              "- the Archive's copy is under ~/.carryon/conflicts/<uuid>/ "
+              "for you to merge")
         if verbose:
             for uuid in filed_sessions:
                 print(f"  filed    ~/.carryon/conflicts/{printable(uuid)}/")

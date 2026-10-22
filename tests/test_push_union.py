@@ -168,7 +168,7 @@ def test_push_from_a_machine_that_is_behind_skips_and_reports(
         "the Archive's object was rewritten"
     assert UUID_1 in out and "skip" in out
     assert "pull" in out, "the report says what to do about it"
-    assert "Sessions: 0 pushed" in out
+    assert "History: 0 Sessions pushed" in out
 
 
 def test_push_of_a_longer_divergent_copy_is_skipped_and_named(
@@ -188,7 +188,9 @@ def test_push_of_a_longer_divergent_copy_is_skipped_and_named(
         "a divergent copy overwrote the Archive's"
     assert UUID_1 in out
     assert "diverged" in out.lower(), "the report names the divergence"
-    assert "pull first" in out.lower(), "the report says what to do about it"
+    assert ("`carryon pull` files the Archive's copy under "
+            "~/.carryon/conflicts/ for you to merge") in out, \
+        "the report says what to do about it"
 
 
 def test_push_of_a_shorter_divergent_copy_fetches_and_still_skips(
@@ -227,7 +229,7 @@ def test_push_when_strictly_ahead_replaces_after_fetching_the_stored_tree(
     assert sync.push(ns(apply=True), pushed.home_a) == 0
     out = capsys.readouterr().out
 
-    assert "Sessions: 1 pushed" in out
+    assert "History: 1 Session pushed" in out
     assert stored_texts(pushed) == ["one", "two", "three"]
 
 
@@ -254,7 +256,7 @@ def test_a_first_push_of_a_session_fetches_nothing(pushed, tmp_path, capsys,
         monkeypatch.setattr(sync.archive, "get_session", real_get_session)
     out = capsys.readouterr().out
 
-    assert "Sessions: 1 pushed" in out
+    assert "History: 1 Session pushed" in out
 
 
 def test_a_cheap_veto_still_costs_no_download(pushed, tmp_path, capsys,
@@ -292,7 +294,7 @@ def test_push_with_an_identical_main_but_a_changed_tree_replaces(
     assert sync.push(ns(apply=True), pushed.home_a) == 0
     out = capsys.readouterr().out
 
-    assert "Sessions: 1 pushed" in out
+    assert "History: 1 Session pushed" in out
     master = keyring.fetch_master(home=pushed.home_a)
     dest = DirectoryDestination(pushed.root)
     meta = archive.load_index(dest, master)["sessions"][UUID_1]
@@ -338,8 +340,8 @@ def test_a_push_never_deletes_a_stored_subtree_its_main_says_nothing_about(
 
     assert journal in stored_names(pushed), \
         "a push deleted a stored subtree its main Transcript said nothing about"
-    assert UUID_1 in out and "skip" in out
-    assert "pull first" in out.lower()
+    assert UUID_1 in out and "Skipped 1 Session" in out
+    assert "`carryon pull` first" in out
 
 
 def test_pulling_first_brings_down_the_subtree_the_push_refused_over(
@@ -404,7 +406,7 @@ def test_project_residue_follows_the_same_union_rule(pushed, tmp_path,
         "a behind machine truncated the Archive's memory file"
     assert "memory/only-on-a.md" in names, \
         "a behind machine deleted a stored file it never had"
-    assert "skip" in out and "pull first" in out.lower()
+    assert "Skipped 1 project memory" in out and "`carryon pull` first" in out
 
 
 def test_a_transcript_that_vanishes_mid_push_is_reported_not_raised(
@@ -434,8 +436,8 @@ def test_a_transcript_that_vanishes_mid_push_is_reported_not_raised(
     out = capsys.readouterr().out
 
     assert code == 0
-    assert UUID_1 in out and "skip" in out
-    assert "Sessions:" in out, "the push ended before its report"
+    assert UUID_1 in out and "Skipped 1 Session" in out
+    assert "History: " in out, "the push ended before its report"
 
 
 def test_pull_then_append_then_push_round_trips(pushed, tmp_path, capsys):
@@ -452,7 +454,7 @@ def test_pull_then_append_then_push_round_trips(pushed, tmp_path, capsys):
     assert sync.push(ns(apply=True), home_b) == 0
     out = capsys.readouterr().out
 
-    assert "Sessions: 1 pushed" in out
+    assert "History: 1 Session pushed" in out
     assert stored_texts(pushed) == ["one", "two", "from b"]
 
 
@@ -795,7 +797,7 @@ def test_a_destination_dying_at_the_setup_catalogue_does_not_abort_the_pull(
     out = capsys.readouterr().out
 
     assert main_path(home_b).is_file(), "the History half did not land"
-    assert "-" * 74 in out, "the pull died before its summary"
+    assert "History: " in out, "the pull died before its summary"
     assert "Setup" in out and "git fetch" in out, \
         "the skipped Setup half is not named with its reason"
 
@@ -817,11 +819,11 @@ def test_a_destination_dying_while_serving_a_session_is_a_skip_not_an_abort(
     assert sync.pull(ns(apply=True), home_b) == 2
     out = capsys.readouterr().out
 
-    assert "-" * 74 in out, "the pull died before its summary"
+    assert "History: " in out, "the pull died before its summary"
     assert (home_b / ".claude" / "settings.json").is_file(), \
         "the Setup half was lost with the failed Session read"
     assert UUID_1 in out, "the skipped Session is not named in the report"
-    assert UUID_1 in out.split("pull finished with")[1], \
+    assert UUID_1 in out.split("still has them:")[1], \
         "the closing sentence stopped naming the skipped Session"
 
 
@@ -838,6 +840,6 @@ def test_a_destination_dying_while_laying_out_the_setup_is_one_refusal(
     out = capsys.readouterr().out
 
     assert main_path(home_b).is_file(), "the History half did not land"
-    assert "-" * 74 in out
+    assert "History: " in out
     assert "machine-a" in out and "git fetch" in out, \
         "the unreadable Setup is not named with its reason"

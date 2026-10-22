@@ -319,7 +319,7 @@ def test_an_index_cwd_that_is_not_a_string_is_refused_before_the_pull_writes(
 
     assert "cwd" in out, "the refusal does not name the field"
     assert U2 in out, "the refusal does not name the entry"
-    assert "-" * 74 in out, "the pull stopped before it printed its summary"
+    assert "History: " in out, "the pull stopped before it printed its summary"
     assert restored_sessions(archived.home_b) == {U1}, \
         "one entry with an unreadable field took the whole Archive with it"
 
@@ -384,7 +384,8 @@ def test_an_index_main_path_that_is_not_a_string_is_refused_on_the_push_leg(
     assert sync.push(ns(apply=True), archived.home_a) == 0
     out = capsys.readouterr().out
 
-    assert f"skip     {U2}" in out, "the Session was not named as skipped"
+    assert f"\n  {U2} (claude-code): " in out, \
+        "the Session was not named as skipped"
     assert "main_path" in out, "the report does not name the field"
     assert dest.read(archive.session_key(master, U2)) == stored_before, \
         "a record this machine could not read was taken for no record, and " \
@@ -880,7 +881,7 @@ def test_a_session_uuid_a_filename_can_hold_is_escaped_in_the_report(
     link_home(home_b, dest_spec, "machine-b", master_from=home)
     capsys.readouterr()
 
-    assert sync.pull(ns(apply=True), home_b) == 0
+    assert sync.pull(ns(apply=True, verbose=True), home_b) == 0
     out = capsys.readouterr().out
 
     assert "\\x1b" in out, "the Index key went into the report unescaped"
@@ -981,7 +982,7 @@ def test_a_transcript_this_machine_cannot_read_is_reported_not_raised(
     finally:
         main.chmod(0o644)
 
-    assert "Sessions:" in out, "the push ended before its report"
+    assert "History: " in out, "the push ended before its report"
     assert U2 in out, "the Transcript it could not read went unnamed"
     assert U1 in restored_sessions(home), "the readable Session was lost"
 
@@ -1005,7 +1006,7 @@ def test_a_project_directory_this_machine_cannot_list_is_reported(
     finally:
         project.chmod(0o755)
 
-    assert "Sessions:" in out, "the push ended before its report"
+    assert "History: " in out, "the push ended before its report"
     assert project.name in out, "the directory it could not list went unnamed"
 
 
@@ -1025,7 +1026,8 @@ def test_a_projects_root_this_machine_cannot_list_is_reported(
     finally:
         root.chmod(0o755)
 
-    assert "Sessions: 0 pushed" in out, "the push ended before its report"
+    assert "History: 0 Sessions pushed" in out, \
+        "the push ended before its report"
     assert ".claude/projects" in out, "the root it could not list went unnamed"
 
 
@@ -1061,7 +1063,7 @@ def test_a_memory_file_this_machine_cannot_read_does_not_end_a_pull(
     finally:
         memory.chmod(0o644)
 
-    assert "Project residue:" in out, "the pull ended before its report"
+    assert "History: " in out, "the pull ended before its report"
     assert "could not be read" in out, \
         "the residue it could not compare against went unnamed"
 

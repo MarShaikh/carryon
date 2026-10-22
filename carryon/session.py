@@ -113,10 +113,8 @@ def _no_history_here(agent: str, effective: dict) -> bool:
 
 
 _DIVERGED_SKIP = ("this machine's copy and the Archive's have diverged - "
-                  "neither main Transcript is a byte-prefix of the other, so "
-                  "neither may overwrite the other. Pull first: the "
-                  "Archive's copy lands under ~/.carryon/conflicts/ and this "
-                  "one stays put (ADR-0002)")
+                  "`carryon pull` files the Archive's copy under "
+                  "~/.carryon/conflicts/ for you to merge")
 
 
 def _index_veto(entry, canon: bytes):
@@ -145,10 +143,8 @@ def _index_veto(entry, canon: bytes):
     if not usable:
         return None
     if len(canon) < size:
-        return ("this machine's copy is behind the Archive's, or has diverged "
-                "from it - its main Transcript is shorter than the one the "
-                "Index records, so replacing could overwrite a longer "
-                "Transcript with a shorter one; pull first (ADR-0002)")
+        return ("this machine's copy is behind the Archive's or has diverged "
+                "- run `carryon pull` first")
     if hashlib.sha256(canon[:size]).hexdigest() != sha:
         return _DIVERGED_SKIP
     return None
@@ -180,11 +176,10 @@ def _tree_behind_reason(stored: dict, local: dict, bases=None):
     """
     missing = sorted(rel for rel in stored if rel not in local)
     if missing:
-        return ("the Archive holds files this machine does not - "
+        return ("the Archive's copy has files this machine doesn't ("
                 + ", ".join(printable(rel) for rel in missing[:3])
                 + (f" and {len(missing) - 3} more" if len(missing) > 3 else "")
-                + ". Replacing the stored Session would delete them, and a "
-                "Session is replaced whole; pull first (ADR-0002)")
+                + ") - run `carryon pull` first")
     for rel in sorted(stored):
         if local[rel] == stored[rel]:
             continue
@@ -193,14 +188,12 @@ def _tree_behind_reason(stored: dict, local: dict, bases=None):
         if moved == bases_mod.LOCAL:
             continue
         if moved == bases_mod.ARCHIVE:
-            return (f"the Archive's {printable(rel)} has changed since this "
-                    "machine last agreed with it - another machine's edit, "
-                    "which replacing the stored tree would undo; pull first "
-                    "(ADR-0002)")
+            return (f"another machine changed {printable(rel)} - run "
+                    "`carryon pull` first")
         if local[rel].startswith(stored[rel]):
             continue
-        return (f"this machine's {printable(rel)} is not an extension of the "
-                "Archive's - behind, or diverged; pull first (ADR-0002)")
+        return (f"this machine's {printable(rel)} is behind the Archive's or "
+                "has diverged - run `carryon pull` first")
     return None
 
 
@@ -232,16 +225,14 @@ def _push_skip_reason(dest, master, session, entry, members: dict):
             archive.get_session(dest, master, session.uuid,
                                 entry.get("object")), entry.get("object"))
     except archive.ObjectRefused as exc:
-        return (f"could not fetch the Archive's copy to compare against "
-                f"({exc}) - nothing was overwritten; sort the Destination "
-                "out and push again")
+        return (f"couldn't fetch the Archive's copy to compare ({exc}) - "
+                "nothing was overwritten")
     why = _main_mismatch(stored, entry)
     if why is not None:
-        return (f"{why} - nothing was overwritten; investigate the "
-                "Destination")
+        return f"{why} - nothing was overwritten; check the Destination"
     if (entry.get("main_path") or session.main_path) not in stored:
-        return ("the Archive's stored tree holds no main Transcript to "
-                "compare against - nothing was overwritten; pull first")
+        return ("the Archive's copy has no main Transcript to compare "
+                "against - run `carryon pull` first")
     return _tree_behind_reason(stored, members)
 
 
@@ -260,12 +251,11 @@ def _residue_skip_reason(dest, master, cwd, entry, members: dict,
             archive.get_project(dest, master, cwd, entry.get("object")),
             entry.get("object"))
     except archive.ObjectRefused as exc:
-        return (f"could not fetch the Archive's copy to compare against "
-                f"({exc}) - nothing was overwritten; sort the Destination "
-                "out and push again")
+        return (f"couldn't fetch the Archive's copy to compare ({exc}) - "
+                "nothing was overwritten")
     why = _residue_mismatch(stored, entry)
     if why is not None:
-        return f"{why} - nothing was overwritten; investigate the Destination"
+        return f"{why} - nothing was overwritten; check the Destination"
     return _tree_behind_reason(stored, members, bases)
 
 
@@ -568,7 +558,22 @@ def _extract_tree(tar_bytes, root, home, maps,
     return written, kept, near, bare, non_utf8
 
 
-def _report_deferred(deferred, home) -> int:
+class Notes:
+    """What a pull names in its summary, collected as the trees land, and
+    the per-item lines it prints only under --verbose (ADR-0016)."""
+
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.owned = []        # (home-relative path, what holds it)
+        self.refused = []      # (home-relative path, why)
+        self.diverged = []     # home-relative paths of divergent members
+
+    def say(self, line: str) -> None:
+        if self.verbose:
+            print(line)
+
+
+def _report_deferred(deferred, home, notes: Notes) -> None:
     """Name every restored path a link already claims, and count them.
 
     The Setup leg's skip line in the History leg's words, and for the same
@@ -579,14 +584,10 @@ def _report_deferred(deferred, home) -> int:
     would otherwise reach for it and find nothing.
     """
     for target, owner in deferred:
-        print(f"  skip     ~/{printable(_rel_to_home(target, home))} - "
-              f"externally owned; {printable(str(owner))} holds it (a "
-              "restored History is never written through a link, --force "
-              "included)")
-    return len(deferred)
+        notes.owned.append((_rel_to_home(target, home), str(owner)))
 
 
-def _report_refused(refused, home) -> int:
+def _report_refused(refused, home, notes: Notes) -> None:
     """Name every restored path this machine's syscalls would not take.
 
     A directory standing where a member lands, most often - one `mkdir` in a
@@ -595,10 +596,7 @@ def _report_refused(refused, home) -> int:
     and it has to name the path so the user can remove what is in the way.
     """
     for target, why in refused:
-        print(f"  refuse   ~/{printable(_rel_to_home(target, home))} - this "
-              f"machine would not take that write ({printable(str(why))}); "
-              "something else is standing where that member lands")
-    return len(refused)
+        notes.refused.append((_rel_to_home(target, home), str(why)))
 
 
 def _identity(path):
@@ -621,7 +619,8 @@ def _identities(paths) -> set:
             if ident is not None}
 
 
-def _kept_local_members(local_session, root, unrep, agent, home) -> int:
+def _kept_local_members(local_session, root, unrep, agent, home,
+                        notes: Notes) -> int:
     """Report the local members the incoming tree did not hold, and count them.
 
     This is where a replacement stops being a replacement of the DIRECTORY.
@@ -666,11 +665,9 @@ def _kept_local_members(local_session, root, unrep, agent, home) -> int:
         # in, so nothing of the local tree was superseded and all of it is
         # kept. Named by directory rather than by member, because what the
         # user needs here is where the two copies now sit.
-        print(f"  keep     ~/{printable(_rel_to_home(local_root, home))} - "
-              "the incoming tree was restored to another directory, so this "
-              f"machine's copy of {printable(local_session.uuid)} is left "
-              "where it is, "
-              "whole")
+        notes.say(f"  keep     ~/{printable(_rel_to_home(local_root, home))} "
+                  "- the Archive's copy went to another directory, so this "
+                  f"copy of {printable(local_session.uuid)} is left whole")
         return len(local_session.files)
     decided = _identities(root / name for name in unrep.member_names)
     incoming = set(unrep.member_names)
@@ -681,10 +678,8 @@ def _kept_local_members(local_session, root, unrep, agent, home) -> int:
         # The mirror image of the union line, and deliberately its shape: that
         # one says what the Archive held and this machine did not, this one
         # says what this machine holds and the Archive did not.
-        print(f"  keep     {printable(local_session.uuid)} ({agent}) - "
-              f"{len(kept)} "
-              "file(s) this machine holds and the Archive did not; left in "
-              "place, since a pull never deletes")
+        notes.say(f"  keep     {printable(local_session.uuid)} ({agent}) - "
+                  f"{len(kept)} file(s) only this machine has")
     return len(kept)
 
 
@@ -732,13 +727,11 @@ def _choose_local_copy(copies, landing, home) -> tuple:
     return chosen, tuple(s for s in ordered if s is not chosen)
 
 
-def _report_other_copies(others, uuid: str, home) -> int:
+def _report_other_copies(others, uuid: str, home, notes: Notes) -> int:
     for session in others:
         root = pathlib.Path(home) / session.project_dir
-        print(f"  keep     ~/{printable(_rel_to_home(root, home))} - this "
-              f"machine holds another copy of {printable(uuid)} there and the "
-              "incoming "
-              "tree landed elsewhere, so it is left where it is, whole")
+        notes.say(f"  keep     ~/{printable(_rel_to_home(root, home))} - "
+                  f"another copy of {printable(uuid)}, left whole")
     return sum(len(session.files) for session in others)
 
 
@@ -746,15 +739,13 @@ class _Landed(NamedTuple):
     """What laying one incoming Session tree down did, for pull's summary."""
     kept: int = 0          # members whose local copy won the union rule
     conflicted: int = 0    # members where neither copy extends the other
-    deferred: int = 0
-    refused: int = 0
     near: int = 0
     bare: int = 0
     non_utf8: int = 0
 
 
 def _land_session(tar_bytes, meta, uuid, home, maps, effective,
-                  apply) -> tuple:
+                  apply, notes: Notes) -> tuple:
     """Restore one incoming Session tree and report what it did to the local
     one. Returns (root, UnpackReport, _Landed).
 
@@ -775,17 +766,17 @@ def _land_session(tar_bytes, meta, uuid, home, maps, effective,
     """
     root, unrep = history.unpack_session(tar_bytes, meta, home, maps,
                                          adapters=effective, apply=apply)
-    deferred = _report_deferred(unrep.deferred, home)
-    refused = _report_refused(unrep.refused, home)
+    _report_deferred(unrep.deferred, home, notes)
+    _report_refused(unrep.refused, home, notes)
     for target in unrep.kept:
-        print(f"  keep     ~/{printable(_rel_to_home(target, home))} - this "
-              "machine's copy is ahead of the Archive's (the incoming one is "
-              "a byte-prefix of it); left in place (ADR-0002)")
+        notes.say(f"  keep     ~/{printable(_rel_to_home(target, home))} - "
+                  "this machine's copy is ahead")
     conflict_dir = home / ".carryon" / "conflicts" / uuid
     for target, _name in unrep.conflicted:
-        print(f"  conflict ~/{printable(_rel_to_home(target, home))} - "
-              "divergent; local kept, incoming under "
-              f"{printable(str(conflict_dir))}")
+        rel = _rel_to_home(target, home)
+        notes.diverged.append(rel)
+        notes.say(f"  conflict ~/{printable(rel)} - the Archive's copy is "
+                  f"under {printable(str(conflict_dir))}")
     near = bare = non_utf8 = 0
     if apply and unrep.conflicted:
         c_deferred, c_refused = [], []
@@ -793,10 +784,9 @@ def _land_session(tar_bytes, meta, uuid, home, maps, effective,
             tar_bytes, conflict_dir, home, maps, into_state=True,
             only=frozenset(name for _t, name in unrep.conflicted),
             deferred=c_deferred, refused=c_refused)
-        deferred += _report_deferred(c_deferred, home)
-        refused += _report_refused(c_refused, home)
+        _report_deferred(c_deferred, home, notes)
+        _report_refused(c_refused, home, notes)
     return root, unrep, _Landed(len(unrep.kept), len(unrep.conflicted),
-                                deferred, refused,
                                 unrep.near_misses + near,
                                 unrep.bare_tokens + bare,
                                 unrep.non_utf8 + non_utf8)

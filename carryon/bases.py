@@ -76,11 +76,12 @@ def _read(home):
         # Not "carryon would not read": the High-water mark's warning has
         # usually said that about this same file already, and a fault said
         # twice is a line users learn to skip.
-        _say_once(path, f"{path} also holds the Bases that let an in-place "
-                  "edit to per-project memory travel, and it is unusable ("
-                  f"{state.why or 'it is not a JSON object'}). For this run "
-                  "every memory file is judged by the prefix rule alone "
-                  "(ADR-0002).")
+        # Without the Bases, every memory file is judged by the prefix rule
+        # alone (ADR-0002).
+        _say_once(path, f"{path} is unusable ("
+                  f"{state.why or 'it is not a JSON object'}), so for this "
+                  "run an edited memory file only travels if it adds to the "
+                  "end of the other copy.")
         return None
     return state.value
 

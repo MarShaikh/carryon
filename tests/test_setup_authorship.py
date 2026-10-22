@@ -130,7 +130,7 @@ def test_a_partial_push_onto_the_current_setup_still_works(paired, capsys):
         "Archive"
     assert sync.pull(ns(apply=True), paired.home_b) == 0
     out = capsys.readouterr().out
-    assert "refuse" not in out, out
+    assert "not restored" not in out, out
     assert (paired.home_b / ".claude" / "settings.json").read_text() == \
         '{"model": "haiku"}'
 
@@ -149,7 +149,7 @@ def test_an_item_cannot_name_the_stored_setups_own_manifest_as_its_source(
 
     assert not (paired.home_b / ".claude" / "settings.json").exists(), \
         "the stored MANIFEST was restored as a settings file"
-    assert "refuse" in out and "MANIFEST.json" in out
+    assert "  not restored: " in out and "MANIFEST.json" in out
 
 
 # --- shapes a stored MANIFEST can have --------------------------------------

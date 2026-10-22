@@ -182,7 +182,9 @@ def test_a_deleted_index_refuses_a_push_rather_than_reseal_an_empty_one(
     with pytest.raises(SystemExit) as exc:
         sync.push(ns(apply=True, category=SETUP_CATEGORIES), home_a)
 
-    assert "serves no Index" in str(exc.value)
+    assert ("the Archive has no Index at carryon/index.enc, but this machine "
+            "read one there at revision 1, so it has been deleted at the "
+            "Destination.") in str(exc.value)
     assert not index_path(tmp_path).exists(), \
         "the refused push wrote an Index over the Archive anyway"
 
@@ -303,7 +305,7 @@ def test_an_archive_with_no_index_restores_nothing_and_says_why(tmp_path,
 
     assert not (home_b / ".claude" / "settings.json").exists(), \
         "a Setup no Index calls current was restored"
-    assert "no Index at all" in out, \
+    assert "but no Index, and this machine has never read one there" in out, \
         "the one case nothing can decide is refused without saying so"
     assert "the Index records as current" not in out, \
         "a missing Index was reported as one that disagrees"
