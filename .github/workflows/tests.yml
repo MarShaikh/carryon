@@ -6,15 +6,24 @@ on:
     branches: [main]
 
 jobs:
-  macos:
-    runs-on: macos-latest
+  suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     # Neither runner has a timeout of its own (see tests/test_harness.py),
     # so a wedged fifo test would otherwise hold the job for six hours.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      # run_tests.py exists for a bare macOS: the system python3, no pytest,
+      # Permission tests mean nothing as root, which reads anything; an
+      # outside Linux run blamed carryon for failures that were its sandbox's.
+      - name: Not root
+        run: test "$(id -u)" -ne 0
+
+      # run_tests.py exists for a bare machine: the system python3, no pytest,
       # so its pytest stub is what runs. Prove the stub is what ran.
       - name: run_tests.py (system python, no pytest)
         run: |
@@ -39,3 +48,13 @@ jobs:
       - name: Both runners ran the same tests
         if: ${{ !cancelled() }}
         run: python .github/compare_runners.py pytest.xml run_tests.log
+
+      # pytest's own report can be cut short when a test misbehaves with the
+      # terminal; the files are the record of what each runner saw.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: reports-${{ matrix.os }}
+          path: |
+            pytest.xml
+            run_tests.log
