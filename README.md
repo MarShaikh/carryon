@@ -108,7 +108,7 @@ only, or carry Sessions only. As of October 2026:
 
 | Tool | Agents | What moves | Where it goes | Encryption |
 | --- | --- | --- | --- | --- |
-| carryon | Claude Code, Codex CLI, Cursor, `~/.agents` | Setup for each; History for Claude Code and Codex | a synced folder, git, or rclone (R2, S3, GCS, SFTP, ...) | always; the key moves by a one-time code, with a recovery key |
+| carryon | Claude Code, Codex CLI, Cursor, `~/.agents` | chat sessions and project memory for Claude Code and Codex; settings, skills and instructions for all four | a synced folder, git, or rclone (R2, S3, GCS, SFTP, ...) | always; the key moves by a one-time code, with a recovery key |
 | [claude-sync](https://github.com/tawanorg/claude-sync) | Claude Code | Sessions and memory, and by default settings, skills, agents and plugins | R2, S3, GCS, S3-compatible, WebDAV | always (age); the same passphrase on each machine, or a copied key file |
 | [claude-code-sync](https://github.com/perfectra1n/claude-code-sync) | Claude Code | History, settings, skills, agents, memory | git | not built in |
 | [claude-brain](https://github.com/toroleapinc/claude-brain) | Claude Code (a plugin) | memory, skills, agents, rules, settings; not transcripts | git | optional (age) |
@@ -117,8 +117,9 @@ only, or carry Sessions only. As of October 2026:
 
 What carryon does that these do not, together:
 
-- One Archive holds Claude Code's, Codex CLI's and Cursor's Setup, and the
-  History of Claude Code and Codex.
+- One Archive holds the chat sessions and project memory of Claude Code and
+  Codex CLI, and the settings, skills and instructions of those two, Cursor
+  and `~/.agents`.
 - No passphrase to choose and no key file to copy. `pair` hands the key over
   under a one-time code.
 - Project memory that two machines both changed is kept aside for
