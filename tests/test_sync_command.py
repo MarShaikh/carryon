@@ -618,17 +618,40 @@ def test_a_manifest_category_is_validated_before_it_filters(paired, capsys):
         "the honest item beside the malformed ones did not restore"
 
 
-def test_a_default_sync_names_the_skipped_setup_leg_in_both_halves(
-        partner, capsys):
-    """The same line, twice, because the reasoning cuts both ways: a leg
-    that merely vanishes reads as a half that quietly carried the Setup -
-    and it used to print in the pull half only."""
-    capsys.readouterr()
-    assert sync.sync(ns(apply=True), partner) == 0
-    out = capsys.readouterr().out
+SETUP_NOT_SYNCED = "Setup: not synced - `carryon push` and `pull` carry it"
 
-    assert out.count("Setup: skipped - no Setup category was chosen") == 2, \
-        "one of the two halves skipped its Setup leg without a word"
+
+def test_a_default_sync_names_the_setup_it_leaves_once(partner, capsys):
+    """A Setup leg that merely vanishes reads as a sync that quietly carried
+    it, so it is named - once, in the push half's Setup line, and as what
+    sync does rather than as a category nobody chose."""
+    for apply in (False, True):
+        capsys.readouterr()
+        assert sync.sync(ns(apply=apply), partner) == 0
+        out = capsys.readouterr().out
+        lines = out.splitlines()
+        assert lines.count(SETUP_NOT_SYNCED) == 1, out
+        assert "no Setup category was chosen" not in out, out
+        pushing = next(i for i, line in enumerate(lines)
+                       if "push to " in line or line.startswith("Pushing to "))
+        assert lines.index(SETUP_NOT_SYNCED) == pushing + 2, out
+        assert lines[lines.index(SETUP_NOT_SYNCED) + 1].startswith(
+            "History: "), out
+
+
+def test_sync_history_says_the_same(partner, capsys):
+    capsys.readouterr()
+    assert sync.sync(ns(apply=True, category="history"), partner) == 0
+    assert capsys.readouterr().out.splitlines().count(SETUP_NOT_SYNCED) == 1
+
+
+def test_the_halves_alone_keep_their_own_line(partner, capsys):
+    for half in (sync.pull, sync.push):
+        capsys.readouterr()
+        half(ns(apply=True, category="history"), partner)
+        out = capsys.readouterr().out
+        assert "Setup: skipped - no Setup category was chosen" in out, out
+        assert SETUP_NOT_SYNCED not in out, out
 
 
 def test_the_dry_run_caveat_is_honest_when_the_setup_travels(partner, capsys):

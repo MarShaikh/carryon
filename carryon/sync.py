@@ -982,8 +982,10 @@ def push(args, home) -> int:
     verb = "pushed" if apply else "to push"
     if not setup_categories:
         # The same line pull prints for the same skip: a leg that merely
-        # vanishes reads as a push that quietly carried the Setup.
-        print(SETUP_NOT_CHOSEN)
+        # vanishes reads as a push that quietly carried the Setup. Inside a
+        # sync it is said once, for both halves, as what sync does.
+        print(SETUP_NOT_SYNCED if getattr(args, "in_sync", False)
+              else SETUP_NOT_CHOSEN)
     elif state_reads:
         capture.print_refusal(state_reads, "pushed")
     elif why_staging is not None:
@@ -1056,6 +1058,7 @@ def push(args, home) -> int:
 
 
 SETUP_NOT_CHOSEN = "Setup: skipped - no Setup category was chosen"
+SETUP_NOT_SYNCED = "Setup: not synced - `carryon push` and `pull` carry it"
 
 
 def _print_named(header: str, items: list, noun: str, plural: str = None,
@@ -1673,7 +1676,9 @@ def pull(args, home) -> int:
         # merely vanishes reads as a restore quietly short its Setup. The
         # else below IS the leg, whole: nothing of it leaks past this if,
         # so no name bound in there can be reached for on the skip path.
-        setup_lines.append(SETUP_NOT_CHOSEN)
+        # Inside a sync the push half names the skip, once, for both.
+        if not getattr(args, "in_sync", False):
+            setup_lines.append(SETUP_NOT_CHOSEN)
     else:
         setups, unusable, setups_unreachable = {}, [], None
         try:
@@ -2072,7 +2077,8 @@ def sync(args, home) -> int:
     # pull` would, and anyone needing either uses the half directly.
     verbose = bool(getattr(args, "verbose", False))
     pull_code = pull(argparse.Namespace(apply=apply, category=category,
-                                        map=[], force=False, verbose=verbose),
+                                        map=[], force=False, verbose=verbose,
+                                        in_sync=True),
                      home)
     if not apply:
         # The plan's own limit, said between the halves where it applies
@@ -2089,7 +2095,8 @@ def sync(args, home) -> int:
             print("\nsync dry run: the real pull lands first, so the real "
                   "push can only carry more than the plan below.\n")
     push_code = push(argparse.Namespace(apply=apply, category=category,
-                                        agent=None, verbose=verbose), home)
+                                        agent=None, verbose=verbose,
+                                        in_sync=True), home)
     return max(pull_code, push_code)
 
 
