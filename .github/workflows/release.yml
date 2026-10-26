@@ -1,0 +1,59 @@
+name: release
+
+# Push a tag `vX.Y.Z` matching carryon.__version__ to publish agent-carryon
+# to PyPI. The bare name `carryon` belongs to an unrelated project.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # The whole suite on both platforms is the gate: nothing publishes from a
+  # commit that has not passed it.
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: The tag names the version being built
+        run: |
+          version=$(python -c "import carryon; print(carryon.__version__)")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match carryon.__version__ $version"
+            exit 1
+          fi
+      - run: python -m pip install --quiet build
+      - run: python -m build
+      # What a user gets from `pipx install agent-carryon`, before PyPI has it
+      - name: The wheel installs a working carryon
+        run: |
+          pipx install dist/*.whl
+          carryon --version
+          carryon --help > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI accepts this workflow's OIDC identity, so no
+    # token is stored anywhere. Configured on pypi.org for owner MarShaikh,
+    # repo carryon, workflow release.yml, environment pypi.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agent-carryon/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

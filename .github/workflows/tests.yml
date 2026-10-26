@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # release.yml runs the whole suite as its gate
+  workflow_call:
 
 jobs:
   suite:

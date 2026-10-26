@@ -12,4 +12,4 @@ Transcript it records something echoed to a terminal in the past, which no
 capture rule can fix. See CONTEXT.md and docs/adr/.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
