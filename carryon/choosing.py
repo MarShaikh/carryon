@@ -223,7 +223,7 @@ def report(dest) -> None:
     It says what was checked and no more - which is also why a Destination
     whose probe was skipped gets the reason printed instead of a tick. No
     probe can say whether the storage is private, so the line that would be
-    read as "this is safe" is the one thing this must not print. The README
+    read as "this is safe" is the one thing this must not print. docs/trust.md
     says that once (ADR-0011's 2026-10-19 amendment).
     """
     skipped = dest.skips_probe()
