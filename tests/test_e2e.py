@@ -1224,7 +1224,8 @@ def test_capture_apply_refuses_a_planted_link_and_writes_no_key(
     text = capsys.readouterr().out
 
     assert code == 2, f"{name}: an --apply that refuses exits 2, not 0 or 1"
-    assert "CAPTURE REFUSED" in text, f"{name} was captured rather than refused"
+    assert "Setup: not captured - carryon won't carry these paths:" in text, \
+        f"{name} was captured rather than refused"
     assert rel in text, f"{name}: the refusal does not name the planted path"
     key_bytes_absent("the capture report", text.encode("utf-8"), spellings)
 

@@ -83,7 +83,7 @@ def test_a_credential_is_named_over_an_archive_that_is_still_written(tmp_path,
     assert code == 0, "reported, not refused (ADR-0014)"
     assert archive.exists(), "the archive ADR-0014 goes on writing"
     assert "settings.json" in printed, "the credential was not named"
-    assert "in the clear" in printed, \
+    assert capture.NOT_ENCRYPTED in printed, \
         "a plaintext artefact was written without saying it is plaintext"
 
 

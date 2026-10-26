@@ -57,3 +57,29 @@ staging directory reach a push.
 - Lines are gated where they are printed. A report object built first and
   rendered after was rejected for now. It would pay off only for machine-
   readable output, which nobody has asked for.
+
+## The rest of the commands
+
+> Amendment, 2026-10-26.
+
+The second round applies the rule to everything the first round left:
+`capture`, the refusals in `init`, `pair` and `resolve`, the closing paragraph
+of `list`, and the restore notes a Setup carries.
+
+- **`capture --out` reports the way `push` does.** It prints the Setup half of
+  push's summary: the agents captured, then anything not carried, left out,
+  holding a possible secret or missing from where an adapter expects it, each
+  named. One line then says the directory is not encrypted, because that is
+  the one fact about this command a user must not miss. `capture` gains
+  `--verbose` for the per-item lines, which were its default until now. Its
+  refusal over a path a Setup may not carry takes push's wording, so the two
+  commands refuse the same capture set in the same words.
+- **RESTORE.md is held to the rule as well.** It is written for a person to
+  read on the new machine, so it says what to do in what order and cites no
+  ADR. The exclusion reasons it renders are adapter and engine strings, and
+  they lose their ADR references for the same reason. MANIFEST.json keeps its
+  shape, because it is data that `pull` and `status` read.
+- **`pair` over a git Destination no longer says to rotate the recovery key.**
+  No command rotates one, so the cure named nothing a user could do. It says
+  instead that the repository's history keeps a used code readable, and that
+  the code should therefore stay private.

@@ -355,10 +355,8 @@ def cmd_list(args) -> int:
                      and adapters_present(home / item.src)]
             if names:
                 print(f"        {category:<11} {', '.join(names)}")
-    print("\nEverything above is Setup, and it travels sealed like the "
-          "History\n(Transcripts, per-project memory) beside it - one promise, "
-          "both\nhalves. A credential found in either is named, not refused "
-          "(ADR-0014).")
+    print("\nAll of this is the Setup. `carryon push` encrypts it, along with "
+          "the History.")
     return 0
 
 
@@ -549,6 +547,7 @@ def cmd_capture(args) -> int:
             want_categories=categories,
             home=home,
             archive=archive,
+            verbose=args.verbose,
         )
     return code
 
@@ -707,6 +706,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"subset of: {', '.join(CATEGORIES)}")
     cap.add_argument("--archive", metavar="FILE.tar.gz",
                      help="also pack the Setup into a single file")
+    cap.add_argument("--verbose", action="store_true",
+                     help="list each file and folder behind the summary")
     cap.set_defaults(func=cmd_capture)
 
     for name, helptext in (

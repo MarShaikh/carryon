@@ -55,7 +55,7 @@ from . import (archive, bases, capture, choosing, config, crypto,
                destinations, external, history, keyring, prompting, rekey,
                setup_mark)
 from .adapters import ADAPTERS, CATEGORIES, HISTORY, SETUP_CATEGORIES
-from .destinations.base import printable
+from .destinations.base import counted as _n, printable
 
 # --- what the commands ask, from the modules that own it ---------------------
 #
@@ -198,10 +198,8 @@ def _require_master(home, for_push: bool = False) -> bytes:
                 "init --recover` with your recovery key if no paired machine "
                 "is left")
         if for_push:
-            cure += (". Everything carryon carries is encrypted, a Setup "
-                     "included, so there is nothing a keyless push could "
-                     "write. For a Setup you can read, `carryon capture --out "
-                     "DIR --apply` writes one here in the clear")
+            cure += (". For an unencrypted copy of this Setup instead, run "
+                     "`carryon capture --out DIR --apply`")
         raise SystemExit(cure)
     return master
 
@@ -226,9 +224,9 @@ def init(args, home) -> int:
     home = pathlib.Path(home)
     if keyring.fetch_master(home=home) is not None:
         raise SystemExit(
-            "this machine already holds a master key - it already opens an "
-            "Archive. Remove it deliberately (keychain service 'carryon') "
-            "before running init again.")
+            "this machine already holds a master key, so it is already set "
+            "up. To start over, remove the key from the keychain (service "
+            "'carryon') first.")
 
     # Both legs that take a key ahead of the machine-name check below,
     # because a machine that kept its config takes its name from there and
@@ -436,9 +434,8 @@ def _recover(args, home) -> int:
     _begin_command()
     if not prompting.available():
         raise SystemExit(
-            "--recover needs a terminal: a recovery key is typed by a person, "
-            "at a prompt that does not echo, and carryon never reads one from "
-            "a pipe or an argument. Nothing was stored.")
+            "--recover needs a terminal, because the recovery key is typed "
+            "at a prompt. Nothing was stored.")
 
     cfg, kept, spec, machine, path = _existing_config(
         args, home, "Recovery", "carryon init --recover", "recovery",
@@ -495,10 +492,8 @@ def _recover(args, home) -> int:
         if archive.occupied(dest):
             raise SystemExit(
                 f"there is no Index at {dest.describe()}, but there are "
-                "carryon objects there - an Archive whose catalogue is "
-                "missing. The key cannot be proved against it, and nothing "
-                "on a recovered machine could use that Archive until its "
-                "Index is back. Restore an earlier copy of the Archive (a "
+                "carryon objects there, so the recovery key can't be "
+                "checked. Restore an earlier copy of the Archive (a "
                 "git Destination keeps one in its history), then run "
                 "`carryon init --recover` again. Nothing was stored.")
         raise SystemExit(
@@ -552,8 +547,7 @@ def _join(args, home) -> int:
                 home, destinations.detect_candidates(home))
         else:
             raise SystemExit(
-                "--join needs --dest: a pairing code travels through the "
-                "Destination (ADR-0005), so name the same one the paired "
+                "--join needs --dest: name the Destination the paired "
                 f"machine uses. {unspent}")
     dest = destinations.from_spec(spec, home)
 
@@ -661,11 +655,6 @@ def _captured_state_reads(effective: dict, want_agents, categories,
 VANISHED = "a file in it disappeared while it was being read"
 UNREADABLE_RECORD = ("this machine can't read the Archive's record for it, "
                      "so there is nothing to compare against")
-
-
-def _n(count: int, noun: str, plural: str = None) -> str:
-    """'1 Session', '2 Sessions'."""
-    return f"{count} {noun if count == 1 else (plural or noun + 's')}"
 
 
 def push(args, home) -> int:
@@ -777,9 +766,9 @@ def push(args, home) -> int:
         staging = pathlib.Path(tempfile.mkdtemp(prefix="setup-",
                                                 dir=str(staging_root)))
         try:
-            # The silent half of the capture engine: the state check it would
-            # make is the one asked just above, and its report is capture's
-            # own, worded for a Setup in the clear (ADR-0016).
+            # The capture engine prints nothing: the state check it would
+            # make is the one asked just above, and the report below words
+            # its findings for a sealed Setup (ADR-0016).
             with _swapped_registry(effective):
                 setup_capture, manifest = capture.collect(
                     staging, not apply, want_agents, setup_categories, home,
@@ -996,10 +985,7 @@ def push(args, home) -> int:
         # vanishes reads as a push that quietly carried the Setup.
         print(SETUP_NOT_CHOSEN)
     elif state_reads:
-        print("Setup: not pushed - carryon won't carry these paths:")
-        for _src, rel, why in state_reads:
-            print(f"  ~/{printable(rel)}: {why}")
-        print("  Remove the link, or drop the path from `carry`.")
+        capture.print_refusal(state_reads, "pushed")
     elif why_staging is not None:
         print(f"Setup: not pushed - carryon can't stage it: "
               f"{printable(why_staging)}")
@@ -1092,57 +1078,23 @@ def _no_cwd_line(count: int, verbose: bool) -> str:
                f" (--verbose lists {'it' if count == 1 else 'them'})"))
 
 
-def _home_path_of(staged: str, manifest: dict) -> str:
-    """A file's path under $HOME, from its path in the staged Setup: the
-    item whose landing path holds it says where it came from."""
-    for entry in manifest["agents"].values():
-        for item in entry.get("items", ()):
-            dst, src = item.get("dst"), item.get("src")
-            if not (isinstance(dst, str) and isinstance(src, str)):
-                continue
-            if staged == dst:
-                return src
-            if staged.startswith(dst.rstrip("/") + "/"):
-                return src.rstrip("/") + staged[len(dst.rstrip("/")):]
-    return staged
-
-
 def _print_setup_summary(verb, cap, manifest, undecodable, withheld, near,
                          verbose) -> None:
-    """The Setup half of push's report: what went, and anything that did not
-    go the way it was declared."""
-    names = ", ".join(entry["name"] for entry in manifest["agents"].values())
-    print(f"Setup: {verb}, encrypted ({names or 'nothing set up here'})")
-    if verbose:
-        for line in cap.log:
-            if line:
-                print(line)
-    undecodable = [_home_path_of(rel, manifest) for rel in undecodable]
-    for rel, why in cap.skipped:
-        print(f"  not carried: {printable(rel)} - {printable(why)}")
+    """The Setup half of push's report: capture's summary, plus the binary
+    files a sealed Setup leaves out and, under --verbose, the re-keying
+    counts."""
+    undecodable = [capture.home_path_of(rel, manifest) for rel in undecodable]
+    extra = []
     if len(undecodable) == 1:
-        print(f"  not carried: 1 binary file ({printable(undecodable[0])}) - "
-              "a Setup carries text files only")
+        extra.append(f"  not carried: 1 binary file "
+                     f"({printable(undecodable[0])}) - a Setup carries text "
+                     "files only")
     elif undecodable:
-        print(f"  not carried: {len(undecodable)} binary files - a Setup "
-              "carries text files only:")
-        for rel in undecodable:
-            print(f"    {printable(rel)}")
-    for rel in cap.declined:
-        print(f"  left out: {printable(rel)} (development files)")
-    for entry in manifest["agents"].values():
-        if entry["layout_drift"]:
-            print(f"  {entry['name']}: "
-                  f"{_n(len(entry['layout_drift']), 'expected path')} "
-                  "missing - run `carryon doctor`")
-    if cap.findings:
-        print(f"  possible secrets in {_n(len(cap.findings), 'file')}, "
-              "carried encrypted:")
-        for label, hits in cap.findings:
-            if label.endswith(capture.STRIPPED):
-                label = _home_path_of(label[:-len(capture.STRIPPED)],
-                                      manifest)
-            print(f"    {printable(label)} ({', '.join(hits)})")
+        extra.append(f"  not carried: {len(undecodable)} binary files - a "
+                     "Setup carries text files only:")
+        extra += [f"    {printable(rel)}" for rel in undecodable]
+    capture.print_summary(f"{verb}, encrypted", cap, manifest,
+                          "carried encrypted", verbose, extra)
     if verbose and withheld:
         # A MANIFEST path that names a directory on this machine; RESTORE.md
         # says so where it was (ADR-0006).
@@ -2181,19 +2133,13 @@ def pair(args, home) -> int:
     print()
     print(f"    carryon init --join {code} --dest {cfg['destination']}")
     print()
-    print("Use it once, within 24 hours: joining deletes the blob it names,")
-    print("and after that carryon says so. The master key travels through the")
-    print("Destination wrapped under the code (ADR-0005), so nothing passes")
-    print("between the machines directly.")
+    print("Use it once, within 24 hours.")
     if isinstance(dest, destinations.GitDestination):
-        # "It works once" was printed for every Destination and is false of
-        # this one: a delete is a commit, and the blob stays in the
-        # repository's history for anyone who can clone it. The one-time
-        # property is about what the Archive SERVES, and git serves its past
-        # as well.
-        print()
-        print("This Destination is a git repository, which keeps its history:")
-        print("the deleted blob stays recoverable by anyone who can clone it,")
-        print("so the code is single-use rather than single-read. Rotate the")
-        print("recovery key if a code leaks.")
+        # "It works once" is false of this Destination: a delete is a
+        # commit, and the blob stays in the repository's history for anyone
+        # who can clone it. The one-time property is about what the Archive
+        # SERVES, and git serves its past as well. No command rotates the
+        # recovery key, so the cure is keeping the code private.
+        print("This Destination is a git repository, so a used code can "
+              "still be read from its history - keep the code private.")
     return 0

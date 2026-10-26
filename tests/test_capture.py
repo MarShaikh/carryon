@@ -160,7 +160,7 @@ def test_restore_notes_name_the_unrecoverable_skills(tmp_path):
     notes = (out / "RESTORE.md").read_text()
     assert "cp -R claude/skills/mine" in notes
     assert "shared-skill" not in notes.split("## 4.")[0]
-    assert "does NOT redact" in notes
+    assert "carried unredacted" in notes
 
 
 def test_every_adapter_declares_what_it_was_verified_against():
@@ -250,9 +250,9 @@ def test_claude_and_codex_declare_their_history():
 
 
 def test_success_output_keeps_setup_and_history_promises_apart(tmp_path, capsys):
-    """A Setup is clean; a History is encrypted by push. The closing message
-    must say exactly that - not send anyone to entangle or manual encryption,
-    and not use the retired word "bundle"."""
+    """The closing line says the captured Setup is not encrypted - and does
+    not send anyone to entangle or manual encryption, or use the retired word
+    "bundle"."""
     home = build_home(tmp_path)
     out = tmp_path / "setup"
     code, _ = run(home, out)
@@ -261,7 +261,7 @@ def test_success_output_keeps_setup_and_history_promises_apart(tmp_path, capsys)
     text = capsys.readouterr().out
     assert "entangle" not in text.lower()
     assert "bundle" not in text.lower()
-    assert "carryon push" in text
+    assert text.splitlines()[-1] == capture.NOT_ENCRYPTED
 
 
 def test_the_credential_report_says_setup_not_bundle(tmp_path, capsys):

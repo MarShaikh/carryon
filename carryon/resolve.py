@@ -70,8 +70,8 @@ def _find(path, residues, sessions, home):
             raise SystemExit(
                 f"refusing to resolve {printable(str(target))}: it belongs to "
                 f"Session {printable(session.uuid)}, and only per-project "
-                "memory has a Base to resolve against (ADR-0002). A divergent "
-                "Transcript stays filed under ~/.carryon/conflicts/<uuid>/.")
+                "memory can be resolved. A divergent Transcript stays filed "
+                "under ~/.carryon/conflicts/<uuid>/.")
     raise SystemExit(
         f"refusing to resolve {printable(str(target))}: it is not a "
         "per-project memory file carryon carries, so nothing is filed for it")

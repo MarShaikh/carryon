@@ -52,8 +52,7 @@ def build_restore(manifest: dict) -> str:
         "## 1. Install the agents and log in, before copying anything",
         "",
         "First launch writes an agent's own defaults and will overwrite config you",
-        "restored early. No credentials are in this Setup - that is deliberate,",
-        "they are machine-bound and you log in again.",
+        "restored early. Logins are not carried, so log in again.",
         "",
         "## 2. Launch each agent once, then quit",
         "",
@@ -63,16 +62,14 @@ def build_restore(manifest: dict) -> str:
         "## 3. Re-resolve skills from upstream",
         "",
         "`agents/.skill-lock.json` records the upstream repo and hash per skill.",
-        "Re-install from it rather than copying bytes, so you get current versions",
-        "instead of importing a stale snapshot.",
+        "Re-install from it to get current versions rather than a stale copy.",
         "",
     ]
 
     carried = _carried_skills(manifest)
     if carried:
         out += [
-            "Then copy the skills with NO upstream. These exist only in this Setup;",
-            "if they are not restored, they are gone:",
+            "Then copy the skills with no upstream. They exist only in this Setup:",
             "",
         ]
         out += [f"    cp -R claude/skills/{name} ~/.claude/skills/" for name in carried]
@@ -84,24 +81,17 @@ def build_restore(manifest: dict) -> str:
             external.update(item.get("external", {}))
     if external:
         out += [
-            "Some skills are symlinks managed by something else - a dotfiles",
-            "repo, most likely. They are not in this Setup and the skills",
-            "installer will not restore them. Whatever owns these must run too:",
+            "Some skills are symlinks managed elsewhere, most likely by a dotfiles repo.",
+            "They are not in this Setup, so restore them with whatever manages them:",
             "",
         ]
         out += [f"    {printable(name)}  <- {printable(target)}"
                 for name, target in sorted(external.items())]
         out += [
             "",
-            "A target under `~` was that path on the machine this Setup came",
-            "from: what travels to a Destination names no particular home",
-            "(ADR-0006). Where your dotfiles put it here is their business,",
-            "not carryon's - it never writes through one of these links.",
-            "",
-            "A target shown as withheld pointed somewhere `~` cannot express -",
-            "another volume, a team share, a spelling of the home that differs",
-            "only by case. The name is still yours to re-create; the path it",
-            "had on that machine is not something an Archive gets to carry.",
+            "A target under `~` is the path on the machine this Setup came from.",
+            "A target shown as withheld was outside `~` there, so only its name",
+            "is carried.",
             "",
         ]
 
@@ -110,24 +100,20 @@ def build_restore(manifest: dict) -> str:
     out += [
         "## 5. History - last, with `carryon pull`",
         "",
-        "This Setup contains no Transcripts. The History travels in the Archive,",
-        "encrypted, and pull lays it down against this machine's home:",
+        "This Setup holds no History. Bring it down from the Archive with `carryon pull`:",
         "",
         "    carryon pull            # dry run: shows the plan",
         "    carryon pull --apply",
         "",
-        "Two things to know first:",
+        "Before you do:",
         "",
-        "- A History is unredacted by nature: push does NOT redact. A Transcript",
-        "  records everything ever printed to a terminal, credentials included;",
-        "  carryon reports how many look like that, then encrypts and carries",
-        "  them anyway. The Archive is only as safe as your recovery key.",
-        "- Pull unions a History: it never deletes a local Session, and a",
-        "  divergent copy is kept under ~/.carryon/conflicts/ instead of",
-        "  overwriting yours.",
-        "- It writes per-project memory. If you also restore curated memory from a",
-        "  dotfiles repo, run `carryon pull` FIRST and dotfiles SECOND, so the",
-        "  curated version wins.",
+        "- The History is carried unredacted, credentials included, so keep your",
+        "  recovery key safe.",
+        "- Pull never deletes a local Session. A copy that differs from yours is",
+        "  filed under ~/.carryon/conflicts/ instead.",
+        "- Pull writes per-project memory. If you also restore that memory from a",
+        "  dotfiles repo, run `carryon pull` first and dotfiles second, so the",
+        "  dotfiles copy wins.",
         "",
         "## 6. Re-install rather than migrate",
         "",
