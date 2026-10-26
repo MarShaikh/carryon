@@ -74,7 +74,7 @@ from datetime import datetime, timezone
 from . import __version__, config, development, external
 from .adapters import ADAPTERS, HISTORY, HOME, SETUP_CATEGORIES, is_installed
 from .config import state_identities, unsafe_reads
-from .destinations.base import printable
+from .destinations.base import counted, printable
 from .restore import build_restore
 from .secrets import scan
 
@@ -227,11 +227,6 @@ def _write_owned(target: pathlib.Path, data: bytes, root: pathlib.Path,
     return external.write_owned(target, data, root, mode_from=mode_from)
 
 
-# The secret scan's label for a json-strip item: its landing path, scanned
-# after the keys are removed.
-STRIPPED = " (after strip)"
-
-
 def copy_tree(src: pathlib.Path, dst: pathlib.Path, members, root) -> tuple:
     """Write exactly `members` - (path, bytes) pairs - into `dst` under their
     path relative to `src`.
@@ -334,7 +329,7 @@ class Capture:
             return True
         why = _write_owned(dst, data, self.out)
         if why is not None:
-            self.say(f"        -- {printable(label or str(dst))}  not written: "
+            self.say(f"        -- {label or str(dst)}  not written: "
                   f"{why}")
             self.skipped.append((label or str(dst), why))
             return False
@@ -356,7 +351,7 @@ class Capture:
         report exists to prevent."""
         for path, why in skipped:
             rel = self._named(path)
-            self.say(f"        -- {printable(rel)}  skipped: {why}")
+            self.say(f"        -- {rel}  skipped: {why}")
             self.skipped.append((rel, why))
 
     def _decline(self, root: pathlib.Path, files, vouched: bool) -> tuple:
@@ -390,7 +385,7 @@ class Capture:
         for it.
         """
         for rel in declined:
-            self.say(f"        ..  {printable(rel)}  left behind: "
+            self.say(f"        ..  {rel}  left behind: "
                   f"{development.WHAT}")
             self.declined.append(rel)
 
@@ -481,7 +476,7 @@ class Capture:
                           indent=2).encode()
         suffix = f" [stripped: {', '.join(removed)}]" if removed else ""
         self.say(f"      {item.src:<46} {len(body)/1024:>7.1f}K  {item.note}{suffix}")
-        self._check(item.dst + STRIPPED, body)
+        self._check(item.src, body)
         if not self._write(dst, body, item.src):
             return None
         return {"stripped_keys": removed}
@@ -692,8 +687,9 @@ def print_refusal(found: list, verb: str) -> None:
     escape, and the line naming the refusal is the whole safety property here.
     """
     print(f"Setup: not {verb} - carryon won't carry these paths:")
-    for _src, rel, why in found:
-        print(f"  ~/{printable(rel)}: {printable(why)}")
+    for src, rel, why in found:
+        inside = f" (in ~/{printable(src)})" if src != rel else ""
+        print(f"  ~/{printable(rel)}{inside}: {printable(why)}")
     print("  Remove the link, or drop the path from `carry`.")
 
 
@@ -912,21 +908,23 @@ def print_summary(state: str, cap: Capture, manifest: dict, secrets: str,
         print(f"  not carried: {printable(rel)} - {printable(why)}")
     for line in extra:
         print(line)
+    for entry in manifest["agents"].values():
+        for item in entry.get("items", ()):
+            for name, target in sorted(item.get("external", {}).items()):
+                print(f"  not carried: {printable(item['src'])}/"
+                      f"{printable(name)} - a link managed elsewhere "
+                      f"({printable(target)})")
     for rel in cap.declined:
         print(f"  left out: {printable(rel)} (development files)")
     for entry in manifest["agents"].values():
-        missing = len(entry["layout_drift"])
-        if missing:
-            print(f"  {printable(entry['name'])}: {missing} expected "
-                  f"path{'' if missing == 1 else 's'} missing - run "
-                  "`carryon doctor`")
+        if entry["layout_drift"]:
+            print(f"  {printable(entry['name'])}: "
+                  f"{counted(len(entry['layout_drift']), 'expected path')} "
+                  "missing - run `carryon doctor`")
     if cap.findings:
-        count = len(cap.findings)
-        print(f"  possible secrets in {count} file{'' if count == 1 else 's'}"
-              f", {secrets}:")
+        print(f"  possible secrets in {counted(len(cap.findings), 'file')}, "
+              f"{secrets}:")
         for label, hits in cap.findings:
-            if label.endswith(STRIPPED):
-                label = home_path_of(label[:-len(STRIPPED)], manifest)
             print(f"    {printable(label)} ({', '.join(hits)})")
 
 
@@ -943,9 +941,8 @@ def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
         print("\nDry run - add --apply to write it")
         return 0, manifest
 
-    count = cap.items_written
-    print(f"\nWrote {count} file{'' if count == 1 else 's'} to "
-          f"{printable(str(out))}")
+    print(f"\nWrote {counted(cap.items_written, 'file')} to "
+          f"{printable(str(out))} - follow its RESTORE.md on the new machine")
     if archive:
         # Packed from what is in `out` now, which includes whatever was
         # already there - so its members go through the gate (write_archive)

@@ -68,7 +68,8 @@ def test_apply_summary(home, tmp_path, capsys):
     assert lines[lines.index(secrets) + 1] == (
         "    .cursor/cli-config.json (anthropic-key, openai-key, "
         "keyed-secret)"), out
-    assert f"Wrote {5 if UNPRIVILEGED else 6} files to {out_dir}" in lines, out
+    assert (f"Wrote {5 if UNPRIVILEGED else 6} files to {out_dir} - follow "
+            "its RESTORE.md on the new machine") in lines, out
     assert lines[-1] == NOT_ENCRYPTED, out
 
 
@@ -90,7 +91,7 @@ def test_the_old_report_is_gone(home, tmp_path, capsys):
         _, out = run(home, tmp_path / f"setup-{dry}", capsys, dry=dry)
         for old in ("CAPTURING", "PLAN (dry run)", "categories:",
                     "SECRET SCAN", "NOT captured", "LAYOUT DRIFT",
-                    "MANIFEST.json", "RESTORE.md", "in the clear",
+                    "MANIFEST.json", "RESTORE.md      the order", "in the clear",
                     "Named, not refused", "-" * 20, "ADR-"):
             assert old not in out, f"capture printed {old!r}:\n{out}"
 
@@ -111,6 +112,33 @@ def test_layout_drift_names_the_agent(home, tmp_path, capsys):
     _, out = run(home, tmp_path / "setup", capsys)
     assert ("  Claude Code: 1 expected path missing - run `carryon doctor`"
             in out.splitlines()), out
+
+
+def test_a_skill_linked_from_elsewhere_is_named(home, tmp_path, capsys):
+    """Not in the Setup, so not left to --verbose: a capture that reads as
+    complete is a machine wiped before the dotfiles repo restores it."""
+    target = tmp_path / "dotfiles" / "linked"
+    target.mkdir(parents=True)
+    (home / ".claude" / "skills" / "linked").symlink_to(target)
+    _, out = run(home, tmp_path / "setup", capsys)
+    assert (f"  not carried: .claude/skills/linked - a link managed elsewhere "
+            f"({target.resolve()})") in out.splitlines(), out
+
+
+def test_a_stripped_file_is_named_by_its_home_path_when_unwritten(
+        home, tmp_path, capsys):
+    """Named where it is met: a json-strip item whose write is refused is
+    absent from the manifest, so its landing path had nothing to map back
+    from and printed as `cursor/cli-config.json`."""
+    out_dir = tmp_path / "setup"
+    (out_dir / "cursor").mkdir(parents=True)
+    (out_dir / "cursor" / "cli-config.json").symlink_to(tmp_path / "other")
+    _, out = run(home, out_dir, capsys)
+    lines = out.splitlines()
+    assert any(line.startswith("  not carried: .cursor/cli-config.json")
+               for line in lines), out
+    assert any(line.startswith("    .cursor/cli-config.json (")
+               for line in lines), out
 
 
 def test_archive_tail(home, tmp_path, capsys):
@@ -148,8 +176,9 @@ def test_refusal_mirrors_push(home, tmp_path, capsys):
         lines = out.splitlines()
         assert ("Setup: not captured - carryon won't carry these paths:"
                 in lines), out
-        assert any(line.startswith("  ~/.claude/skills/mine/key: ")
-                   for line in lines), out
+        assert any(line.startswith(
+            "  ~/.claude/skills/mine/key (in ~/.claude/skills): ")
+            for line in lines), out
         assert "  Remove the link, or drop the path from `carry`." in lines
         assert "CAPTURE REFUSED" not in out and "ADR-" not in out, out
         assert not out_dir.exists()

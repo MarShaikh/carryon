@@ -52,7 +52,7 @@ def build_restore(manifest: dict) -> str:
         "## 1. Install the agents and log in, before copying anything",
         "",
         "First launch writes an agent's own defaults and will overwrite config you",
-        "restored early. This Setup holds no login credentials, so log in again.",
+        "restored early. Logins are not carried, so log in again.",
         "",
         "## 2. Launch each agent once, then quit",
         "",

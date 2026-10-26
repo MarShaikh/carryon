@@ -116,6 +116,11 @@ _CONTROL = {c: f"\\x{c:02x}" for c in range(0x20)}
 _CONTROL[0x7f] = "\\x7f"
 
 
+def counted(count: int, noun: str, plural: str = None) -> str:
+    """'1 Session', '2 Sessions': a count and its noun, for a report line."""
+    return f"{count} {noun if count == 1 else (plural or noun + 's')}"
+
+
 def printable(value) -> str:
     """A name from a Destination, safe to put in a line of a report.
 

@@ -55,7 +55,7 @@ from . import (archive, bases, capture, choosing, config, crypto,
                destinations, external, history, keyring, prompting, rekey,
                setup_mark)
 from .adapters import ADAPTERS, CATEGORIES, HISTORY, SETUP_CATEGORIES
-from .destinations.base import printable
+from .destinations.base import counted as _n, printable
 
 # --- what the commands ask, from the modules that own it ---------------------
 #
@@ -655,11 +655,6 @@ def _captured_state_reads(effective: dict, want_agents, categories,
 VANISHED = "a file in it disappeared while it was being read"
 UNREADABLE_RECORD = ("this machine can't read the Archive's record for it, "
                      "so there is nothing to compare against")
-
-
-def _n(count: int, noun: str, plural: str = None) -> str:
-    """'1 Session', '2 Sessions'."""
-    return f"{count} {noun if count == 1 else (plural or noun + 's')}"
 
 
 def push(args, home) -> int:

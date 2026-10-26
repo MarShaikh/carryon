@@ -180,10 +180,11 @@ def test_restore_notes_are_plain(tmp_path):
     assert capture.run(out=out, dry=False, home=home)[0] == 0
     text = (out / "RESTORE.md").read_text()
     for gone in ("ADR-", "Two things", "their business", "deliberate",
-                 "capability, not what built it"):
+                 "capability, not what built it", "installed packages",
+                 "holds no login credentials"):
         assert gone not in text, f"RESTORE.md still says {gone!r}:\n{text}"
     for kept in (
-            "This Setup holds no login credentials, so log in again.",
+            "Logins are not carried, so log in again.",
             "Re-install from it to get current versions rather than a stale "
             "copy.",
             "Then copy the skills with no upstream. They exist only in this "
@@ -197,7 +198,7 @@ def test_restore_notes_are_plain(tmp_path):
             "- The History is carried unredacted, credentials included, so "
             "keep your recovery key safe.",
             "- `.claude/skills/mine/tests` - development artifact: a Setup "
-            "carries the skill, not its tests, caches or installed packages"):
+            "leaves tests and caches behind"):
         # Compared with the line wrapping taken out: the document wraps at
         # 80 columns, and where it breaks is not the sentence.
         assert kept in " ".join(text.split()), \
