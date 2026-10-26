@@ -1,9 +1,19 @@
 name: tests
 
 on:
+  # Only when something the suite tests has changed: a README or ADR edit
+  # runs nothing. Not on the push to main a merge makes, either - the PR
+  # already ran the same code, and release.yml reruns everything before a
+  # publish. Within a run it is still the whole suite: 53 of the 54 test
+  # modules import carryon, and the Linux-only failure #26 found was in a
+  # test of a module that change had not touched.
   pull_request:
-  push:
-    branches: [main]
+    paths:
+      - "carryon/**"
+      - "tests/**"
+      - "run_tests.py"
+      - "pyproject.toml"
+      - ".github/**"
   # release.yml runs the whole suite as its gate
   workflow_call:
 
