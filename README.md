@@ -8,6 +8,8 @@ it. Both are encrypted before they leave the machine.
 Works with Claude Code, Codex CLI, Cursor and the `~/.agents` skills
 convention. A History moves for Claude Code and Codex.
 
+![Two machines, five commands: init, push and pair on a laptop, then init --join and pull on a desktop](https://raw.githubusercontent.com/MarShaikh/carryon/main/docs/demo/demo.gif)
+
 ## Install
 
 ```bash
@@ -22,7 +24,9 @@ command is `carryon`. You need macOS or Linux, Python 3.9 or newer, and
 
 You also need a [Destination](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md): somewhere both machines can reach.
 A synced folder (Dropbox, Google Drive, iCloud Drive, Syncthing) is the
-simplest. A private git repository or an rclone remote works too.
+simplest. A private git repository works too, and so does anything rclone
+reaches: `init` can set up Cloudflare R2, Amazon S3, Google Cloud Storage or
+SFTP for you. See [Cloudflare R2 through rclone](https://github.com/MarShaikh/carryon/blob/main/docs/guide.md#cloudflare-r2-through-rclone).
 
 Every command that changes something prints a plan first and does nothing
 until you add `--apply`. Run it without, read the plan, then run it again.
@@ -97,6 +101,37 @@ If you lose a machine's key, run `carryon pair` on another machine and join
 again. If no machine has the key, `carryon init --recover` takes the recovery
 key.
 
+## Why carryon
+
+Other tools carry a coding agent between machines. Most carry Claude Code
+only, or carry Sessions only. As of October 2026:
+
+| Tool | Agents | What moves | Where it goes | Encryption |
+| --- | --- | --- | --- | --- |
+| carryon | Claude Code, Codex CLI, Cursor, `~/.agents` | Setup for each; History for Claude Code and Codex | a synced folder, git, or rclone (R2, S3, GCS, SFTP, ...) | always; the key moves by a one-time code, with a recovery key |
+| [claude-sync](https://github.com/tawanorg/claude-sync) | Claude Code | Sessions and memory, and by default settings, skills, agents and plugins | R2, S3, GCS, S3-compatible, WebDAV | always (age); the same passphrase on each machine, or a copied key file |
+| [claude-code-sync](https://github.com/perfectra1n/claude-code-sync) | Claude Code | History, settings, skills, agents, memory | git | not built in |
+| [claude-brain](https://github.com/toroleapinc/claude-brain) | Claude Code (a plugin) | memory, skills, agents, rules, settings; not transcripts | git | optional (age) |
+| [codex-claude-transfer](https://github.com/ahmojo/codex-claude-transfer) | Claude Code, Codex | Sessions; memory if asked | a bundle file you copy, or LAN sync | optional (age) |
+| [entangle](https://github.com/gowtham-sai-yadav/entangle) | Claude Code, Codex, opencode | one Session to anyone; a whole machine for Claude Code only | a direct transfer by a three-word code, or a file | in transit; likely secrets scrubbed |
+
+What carryon does that these do not, together:
+
+- One Archive holds Claude Code's, Codex CLI's and Cursor's Setup, and the
+  History of Claude Code and Codex.
+- No passphrase to choose and no key file to copy. `pair` hands the key over
+  under a one-time code.
+- Project memory that two machines both changed is kept aside for
+  `carryon resolve`, not overwritten.
+- Paths under `$HOME` need no mapping. They are rewritten to a neutral form on
+  push and expanded against the new home on pull.
+- Every change is a plan first, and nothing happens without `--apply`.
+
+What it does not do: it never syncs on its own (claude-sync and claude-brain
+can, through hooks), it does not hand a live Session to someone else
+(entangle does), and it does not turn a Codex Session into a Claude Code one
+(codex-claude-transfer does).
+
 ## More
 
 - [docs/trust.md](https://github.com/MarShaikh/carryon/blob/main/docs/trust.md): what is encrypted, what a Destination can
@@ -111,5 +146,5 @@ key.
 ## Licence
 
 MIT. Credential detection rules ported from
-[entangle](https://github.com/gowtham-sai-yadav/claude-teleport)
+[entangle](https://github.com/gowtham-sai-yadav/entangle)
 (MIT, © 2026 Gowtham Sai Yadav); see `LICENSE`.

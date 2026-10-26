@@ -1,0 +1,22 @@
+#!/bin/sh
+# The `carryon` demo.tape runs: the worktree's code, with two demo-only
+# additions so the commands on screen stay the README's. `init` names the
+# machine after the demo home (both homes share this computer's hostname),
+# and `pair` keeps a copy of its output so the tape can hand the code over.
+#
+# It refuses to run unless HOME and every absolute path it is given are under
+# DEMO_ROOT, so a shell that expands ~ against the real home cannot point the
+# demo at a real folder.
+case "$HOME/" in "$DEMO_ROOT"/*) ;; *) echo "demo: HOME is not under $DEMO_ROOT" >&2; exit 1 ;; esac
+for arg in "$@"; do
+  case "$arg" in
+    /*) case "$arg/" in "$DEMO_ROOT"/*) ;; *) echo "demo: $arg is not under $DEMO_ROOT" >&2; exit 1 ;; esac ;;
+  esac
+done
+PYTHONPATH="$DEMO_SRC" export PYTHONPATH
+cli='import sys; from carryon.cli import main; sys.exit(main())'
+case "$1" in
+  init) shift; exec "$DEMO_PYTHON" -c "$cli" init --machine "$(basename "$HOME")" "$@" ;;
+  pair) "$DEMO_PYTHON" -c "$cli" "$@" | tee "$DEMO_ROOT/pair.out" ;;
+  *) exec "$DEMO_PYTHON" -c "$cli" "$@" ;;
+esac

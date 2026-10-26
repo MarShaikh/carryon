@@ -12,7 +12,7 @@ description = "Carry an AI coding agent's setup and chat history between machine
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["claude-code", "codex", "cursor", "migration", "dotfiles", "agents"]
+keywords = ["claude-code", "codex", "codex-cli", "cursor", "sync", "migration", "dotfiles", "agents", "ai-agents"]
 classifiers = [
     "Environment :: Console",
     "License :: OSI Approved :: MIT License",
