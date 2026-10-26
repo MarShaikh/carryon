@@ -61,8 +61,7 @@ DEVELOPMENT_DIRS = frozenset({
 })
 
 WHAT = "development artifact"
-WHY = ("a Setup carries a capability, not what built it - the skill moves, "
-       "its test suite stays (ADR-0013)")
+WHY = "a Setup carries the skill, not its tests, caches or installed packages"
 
 
 def workshop_prefix(rel: pathlib.PurePath):

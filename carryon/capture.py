@@ -265,15 +265,13 @@ def copy_tree(src: pathlib.Path, dst: pathlib.Path, members, root) -> tuple:
 class Capture:
     """Copies what an adapter declares, and records any credential it meets."""
 
-    def __init__(self, out: pathlib.Path, dry: bool, home: pathlib.Path = HOME,
-                 loud: bool = True):
+    def __init__(self, out: pathlib.Path, dry: bool, home: pathlib.Path = HOME):
         self.out = out
         self.dry = dry
         self.home = home
-        # Every per-item line, kept whether or not it was printed: `capture`
-        # prints them as it goes, and `push` keeps them for --verbose and
-        # words the findings in its own report (ADR-0016).
-        self.loud = loud
+        # Every per-item line. Nothing here prints: `capture` and `push` show
+        # these under --verbose and word the findings in their own report
+        # (ADR-0016).
         self.log = []
         # carryon's own state inodes, collected once for the whole capture and
         # handed to every read (config.carry_refusal). Same collection
@@ -305,9 +303,9 @@ class Capture:
         self.seen = {}
 
     def say(self, line: str) -> None:
-        self.log.append(line)
-        if self.loud:
-            print(line)
+        # Escaped here, once, for every per-item line: a carried skill's name
+        # reached `push --verbose` raw through this log.
+        self.log.append(printable(line))
 
     def _see(self, dst: pathlib.Path, data: bytes) -> None:
         try:
@@ -682,34 +680,26 @@ def state_reads(want_agents, want_categories, home) -> list:
     return found
 
 
-def _refuse_state_reads(found: list, dry: bool) -> int:
+def print_refusal(found: list, verb: str) -> None:
     """ADR-0001's posture over what a Setup may read: name every offending
     path and produce nothing, rather than skip the item and carry on.
 
     A hit means the capture set is wrong - a link or a hard link planted in a
     captured directory, or a handpicked path that should never have been one -
-    and half a Setup published alongside the key that decrypts the same
-    Archive's History is not a better outcome than none. Names go through
-    `printable`: a filename may hold a newline or a CSI escape, and the line
-    naming the refusal is the whole safety property here.
+    and half a Setup is not a better outcome than none. `push` and `capture`
+    print it in the same words, because it is the same capture set refused.
+    Names go through `printable`: a filename may hold a newline or a CSI
+    escape, and the line naming the refusal is the whole safety property here.
     """
-    print("CAPTURE REFUSED: a path in the capture set reads what a Setup may "
-          "not carry\n")
-    for src, rel, why in found:
-        print(f"  !! ~/{printable(src)}")
-        print(f"     ~/{printable(rel)} - {why}")
-    print("\nThe fallback master key under ~/.carryon is bare hex that no")
-    print("credential pattern matches, and the config beside it names the")
-    print("Destination - so a Setup carrying either would hand both to")
-    print("wherever this directory ends up; a file from outside $HOME is one")
-    print("this machine never agreed to publish. Remove the link, or drop the")
-    print("path from `carry` (ADR-0008). Nothing was captured.")
-    return 1 if dry else 2
+    print(f"Setup: not {verb} - carryon won't carry these paths:")
+    for _src, rel, why in found:
+        print(f"  ~/{printable(rel)}: {printable(why)}")
+    print("  Remove the link, or drop the path from `carry`.")
 
 
 def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
         home: pathlib.Path = HOME, archive: pathlib.Path = None,
-        digest_into: dict = None) -> tuple:
+        digest_into: dict = None, verbose: bool = False) -> tuple:
     """Capture into `out`, optionally also writing a .tar.gz.
 
     Returns (exit_code, manifest).
@@ -727,13 +717,14 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
         raise SystemExit("history is pushed, not captured - use carryon push")
     want_categories = set(want_categories or SETUP_CATEGORIES)
 
-    print(f"{'PLAN (dry run)' if dry else 'CAPTURING'} -> {out}")
-    print(f"categories: {', '.join(sorted(want_categories))}\n")
+    where = printable(str(out))
+    print(f"Dry run: would capture into {where}\n" if dry
+          else f"Capturing into {where}\n")
 
     found = state_reads(want_agents, want_categories, home)
     if found:
-        return _refuse_state_reads(found, dry), _new_manifest(want_categories,
-                                                             home)
+        print_refusal(found, "captured")
+        return 1 if dry else 2, _new_manifest(want_categories, home)
 
     if not dry:
         # Naming a file where a directory belongs is the most ordinary
@@ -755,8 +746,8 @@ def run(out: pathlib.Path, dry: bool, want_agents=None, want_categories=None,
                 "something else is standing at that name")
 
     cap, manifest = collect(out, dry, want_agents, want_categories, home,
-                            digest_into, loud=True)
-    return _finish(cap, manifest, out, dry, archive)
+                            digest_into)
+    return _finish(cap, manifest, out, dry, archive, verbose)
 
 
 def _new_manifest(want_categories, home) -> dict:
@@ -773,22 +764,20 @@ def _new_manifest(want_categories, home) -> dict:
 
 
 def collect(out: pathlib.Path, dry: bool, want_agents, want_categories,
-            home: pathlib.Path = HOME, digest_into: dict = None,
-            loud: bool = False) -> tuple:
+            home: pathlib.Path = HOME, digest_into: dict = None) -> tuple:
     """(Capture, manifest): every selected item captured into `out`, and
-    MANIFEST.json and RESTORE.md beside them unless `dry`. Prints nothing
-    unless `loud`; the per-item lines are on the Capture's `log` either way.
+    MANIFEST.json and RESTORE.md beside them unless `dry`. Prints nothing;
+    the per-item lines are on the Capture's `log`.
 
-    The caller has already asked `state_reads` and refused on a hit. `run`
-    adds capture's own report around this, and `push` words the findings in
-    its own (ADR-0016).
+    The caller has already asked `state_reads` and refused on a hit, and
+    prints its own report from what this returns (`print_summary`).
 
     `digest_into`, when given, receives the Setup's digest under "digest"
     once every item has been read and before MANIFEST.json is written, whose
     `captured_at` would make two captures of one home disagree (ADR-0015).
     """
     want_categories = set(want_categories or SETUP_CATEGORIES)
-    cap = Capture(out, dry, home, loud=loud)
+    cap = Capture(out, dry, home)
     manifest = _new_manifest(want_categories, home)
 
     for key, adapter in ADAPTERS.items():
@@ -888,91 +877,84 @@ def write_archive(out: pathlib.Path, archive: pathlib.Path,
     return skipped
 
 
-def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
-            archive: pathlib.Path = None) -> tuple:
-    print("-" * 74)
-    # Reported, in a Setup exactly as it already is in a History (ADR-0014).
-    # It refused here until the Setup was sealed, and the refusal was load-
-    # bearing while it was: a Setup went to the Archive in the clear, so
-    # stopping the push was the only thing between somebody's `env` block and
-    # a readable object in a bucket. Sealing is what stands there now, which
-    # is strictly better than the refusal's best case - where the credential
-    # never travelled because nothing did.
-    #
-    # What refusing could not do is fix the case it was written for.
-    # `.claude/settings.json` holds an `env` block, that block is where an
-    # ANTHROPIC_API_KEY goes, and the file is a CONFIG Item no Adapter change
-    # can stop carrying - so "a hit means the capture list is wrong" had no
-    # purchase on it, and the user was left with a push they could not unblock.
+def home_path_of(staged: str, manifest: dict) -> str:
+    """A file's path under $HOME, from its path in the captured Setup: the
+    item whose landing path holds it says where it came from."""
+    for entry in manifest["agents"].values():
+        for item in entry.get("items", ()):
+            dst, src = item.get("dst"), item.get("src")
+            if not (isinstance(dst, str) and isinstance(src, str)):
+                continue
+            if staged == dst:
+                return src
+            if staged.startswith(dst.rstrip("/") + "/"):
+                return src.rstrip("/") + staged[len(dst.rstrip("/")):]
+    return staged
+
+
+def print_summary(state: str, cap: Capture, manifest: dict, secrets: str,
+                  verbose: bool, extra=()) -> None:
+    """The Setup half of a report: what was captured, then everything that
+    did not go the way it was declared, each named (ADR-0016).
+
+    `push` and `capture` both print it, so one capture set reads the same in
+    either. `state` is the verb and how it travels, `secrets` how a file
+    holding a possible secret travels, and `extra` lines of the caller's own
+    go after the files this machine would not hand over.
+    """
+    names = ", ".join(entry["name"] for entry in manifest["agents"].values())
+    print(f"Setup: {state} ({printable(names) or 'nothing set up here'})")
+    if verbose:
+        for line in cap.log:
+            if line:
+                print(line)
+    for rel, why in cap.skipped:
+        print(f"  not carried: {printable(rel)} - {printable(why)}")
+    for line in extra:
+        print(line)
+    for rel in cap.declined:
+        print(f"  left out: {printable(rel)} (development files)")
+    for entry in manifest["agents"].values():
+        missing = len(entry["layout_drift"])
+        if missing:
+            print(f"  {printable(entry['name'])}: {missing} expected "
+                  f"path{'' if missing == 1 else 's'} missing - run "
+                  "`carryon doctor`")
     if cap.findings:
-        print(f"SECRET SCAN: {len(cap.findings)} file(s) hold something that "
-              "matches a credential shape\n")
+        count = len(cap.findings)
+        print(f"  possible secrets in {count} file{'' if count == 1 else 's'}"
+              f", {secrets}:")
         for label, hits in cap.findings:
-            print(f"  !! {label}\n     matched: {', '.join(hits)}")
-        print("\nNamed, not refused. carryon does not manage your secrets for "
-              "you -")
-        print("it makes sure nothing crosses in the clear. If one of these is a "
-              "real")
-        print("credential you did not mean to carry, it is worth moving out of "
-              "the")
-        print("file rather than out of the Setup.")
-    else:
-        print("SECRET SCAN: no credential patterns in the captured set")
+            if label.endswith(STRIPPED):
+                label = home_path_of(label[:-len(STRIPPED)], manifest)
+            print(f"    {printable(label)} ({', '.join(hits)})")
 
-    if cap.skipped:
-        # Beside the scan verdict rather than folded into it: the scan
-        # reported nothing, and what this says is that the capture covers less
-        # than the adapters declare. A user who is not told reads it as
-        # covering more.
-        print(f"\n{len(cap.skipped)} path(s) NOT captured - this machine would "
-              "not read them (named above)")
 
-    if cap.declined:
-        # And its own line again, for the opposite reason. Nothing is wrong
-        # here: a Setup carries a capability, not the workshop that built it
-        # (ADR-0013), and this is the sentence that stops a user reading a
-        # smaller Setup as a broken one.
-        print(f"\n{len(cap.declined)} tree(s) left behind - development "
-              "artifacts a Setup does not carry (named above)")
+NOT_ENCRYPTED = "This Setup is not encrypted - keep it somewhere private."
 
-    drift = {key: agent["layout_drift"] for key, agent in manifest["agents"].items()
-             if agent["layout_drift"]}
-    if drift:
-        print("\nLAYOUT DRIFT: paths an adapter expects are missing")
-        for key, paths in drift.items():
-            for path in paths:
-                print(f"  ?? {key}: {path}")
-        print("Run `doctor` to see what is there instead. The capture below is")
-        print("still valid - it just may cover less than you expect.")
 
+def _finish(cap: Capture, manifest: dict, out: pathlib.Path, dry: bool,
+            archive: pathlib.Path = None, verbose: bool = False) -> tuple:
+    """capture's report: push's Setup summary, then what was written and the
+    one thing about it a user must not miss - it is not encrypted."""
+    print_summary("to capture" if dry else "captured", cap, manifest,
+                  "not encrypted", verbose)
     if dry:
-        print("\nDry run. Re-run with --apply to write.")
+        print("\nDry run - add --apply to write it")
         return 0, manifest
 
-    print(f"\nWrote {cap.items_written} files, {cap.items_bytes/1024:.0f}K "
-          f"to {out}")
-    print("  MANIFEST.json   what was taken, and what was deliberately left")
-    print("  RESTORE.md      the order to do things on the new machine")
-
+    count = cap.items_written
+    print(f"\nWrote {count} file{'' if count == 1 else 's'} to "
+          f"{printable(str(out))}")
     if archive:
-        # The archive is packed from what is in `out` now, which includes
-        # whatever was already there - so its members go through the gate
-        # (write_archive) and what it would not pack is named here beside
-        # everything else this capture left behind.
-        cap._report_skipped(write_archive(out, archive, cap.home,
-                                          cap.identities))
-        print(f"  {archive}  ({archive.stat().st_size/1024:.0f}K)")
-
-    # Deliberately not "the scan passed, so anywhere will do", which is what
-    # stood here and is the sentence CONTEXT.md retired the word `clean` over:
-    # it named the scan's coverage while reading as a guarantee about the
-    # bytes. This directory is plaintext because the user asked for a Setup
-    # they can read (ADR-0014), and where it is safe to put is theirs to know.
-    print("\nThis is a Setup in the clear, on the machine that already holds "
-          "the")
-    print("secrets. What `carryon push` publishes is sealed; this is not, so "
-          "it")
-    print("is only as private as the directory you put it in. Your History is "
-          "not")
-    print("in it - push carries that separately, encrypted.")
+        # Packed from what is in `out` now, which includes whatever was
+        # already there - so its members go through the gate (write_archive)
+        # and what it would not pack is named.
+        skipped = write_archive(out, archive, cap.home, cap.identities)
+        print(f"Packed {printable(str(out))} into {printable(str(archive))} "
+              f"({archive.stat().st_size / 1024:.0f}K)")
+        for path, why in skipped:
+            print(f"  not packed: {printable(cap._named(path))} - "
+                  f"{printable(why)}")
+    print(NOT_ENCRYPTED)
     return 0, manifest

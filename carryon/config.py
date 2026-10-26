@@ -1075,8 +1075,7 @@ def default_config() -> dict:
 
 
 RETIRED = {
-    "encrypt_all": "nothing ever read it, and ADR-0014 makes encryption the "
-                   "behaviour rather than something to switch on",
+    "encrypt_all": "carryon always encrypts, so the setting does nothing",
 }
 """Names that were settings once, are dropped on read, and are not errors.
 
