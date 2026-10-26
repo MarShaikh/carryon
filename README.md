@@ -1,12 +1,14 @@
 # carryon
 
-Carries an AI coding agent's working life between machines: the
-[Setup](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md) that makes an agent yours (settings, skills, subagents,
-instructions, plugin lists) and the [History](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md) of what you did with
-it. Both are encrypted before they leave the machine.
+Carries an AI coding agent between machines: your chat sessions and the
+project memory beside them (the [History](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md)), and the
+settings, skills, subagents, instructions and plugin lists that make the
+agent yours (the [Setup](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md)). Both are encrypted before they
+leave the machine.
 
 Works with Claude Code, Codex CLI, Cursor and the `~/.agents` skills
-convention. A History moves for Claude Code and Codex.
+convention. Chat sessions move for Claude Code and Codex; for Cursor and
+`~/.agents`, the Setup moves.
 
 ![Two machines, five commands: init, push and pair on a laptop, then init --join and pull on a desktop](https://raw.githubusercontent.com/MarShaikh/carryon/main/docs/demo/demo.gif)
 
@@ -53,7 +55,7 @@ only way back into your [Archive](https://github.com/MarShaikh/carryon/blob/main
 carryon push --apply
 ```
 
-This seals your Setup and every [Session](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md) into the Archive at the
+This seals your Setup and every chat [Session](https://github.com/MarShaikh/carryon/blob/main/CONTEXT.md) into the Archive at the
 Destination. If the scan recognises a credential, push names the file and
 carries it encrypted:
 
@@ -89,11 +91,11 @@ and tells you which.
 
 ```bash
 carryon status          # what is out of step, and the command that fixes it
-carryon sync --apply    # carry the History both ways: pull, then push
+carryon sync --apply    # carry chat sessions both ways: pull, then push
 ```
 
 Nothing runs on its own; carryon has no background process. `sync` moves only
-the History. After changing settings or skills, push the Setup deliberately
+chat sessions and project memory. After changing settings or skills, push the Setup deliberately
 with `carryon push --apply`, and take it on the other machine with
 `carryon pull --apply`.
 
@@ -110,7 +112,7 @@ only, or carry Sessions only. As of October 2026:
 | --- | --- | --- | --- | --- |
 | carryon | Claude Code, Codex CLI, Cursor, `~/.agents` | chat sessions and project memory for Claude Code and Codex; settings, skills and instructions for all four | a synced folder, git, or rclone (R2, S3, GCS, SFTP, ...) | always; the key moves by a one-time code, with a recovery key |
 | [claude-sync](https://github.com/tawanorg/claude-sync) | Claude Code | Sessions and memory, and by default settings, skills, agents and plugins | R2, S3, GCS, S3-compatible, WebDAV | always (age); the same passphrase on each machine, or a copied key file |
-| [claude-code-sync](https://github.com/perfectra1n/claude-code-sync) | Claude Code | History, settings, skills, agents, memory | git | not built in |
+| [claude-code-sync](https://github.com/perfectra1n/claude-code-sync) | Claude Code | chat history, settings, skills, agents, memory | git | not built in |
 | [claude-brain](https://github.com/toroleapinc/claude-brain) | Claude Code (a plugin) | memory, skills, agents, rules, settings; not transcripts | git | optional (age) |
 | [codex-claude-transfer](https://github.com/ahmojo/codex-claude-transfer) | Claude Code, Codex | Sessions; memory if asked | a bundle file you copy, or LAN sync | optional (age) |
 | [entangle](https://github.com/gowtham-sai-yadav/entangle) | Claude Code, Codex, opencode | one Session to anyone; a whole machine for Claude Code only | a direct transfer by a three-word code, or a file | in transit; likely secrets scrubbed |
