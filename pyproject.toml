@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # the distribution is published as agent-carryon. The import name, the repo and
 # the command a user types are all still `carryon`.
 name = "agent-carryon"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Carry an AI coding agent's setup and chat history between machines. carryon reports what it sees and encrypts what it carries."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -31,6 +31,12 @@ carryon = "carryon.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+
+[tool.setuptools.dynamic]
+# One place for the version: carryon/__init__.py, which `carryon --version`
+# and every capture manifest already read. The release workflow checks the
+# pushed tag against it.
+version = { attr = "carryon.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["carryon*"]
