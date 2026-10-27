@@ -186,6 +186,45 @@ written, so a refusal costs nothing and can be re-run:
 Neither question says whether the storage is private; see
 [trust.md](trust.md#what-a-destination-can-and-cannot-do).
 
+### Cloudflare R2 through rclone
+
+R2 has no egress fees and 10 GB of free storage. You need
+[rclone](https://rclone.org/install/) on both machines (`brew install rclone`,
+or your distribution's package).
+
+In the Cloudflare dashboard, under R2 Object Storage:
+
+1. Create a bucket, for example `carryon-archive`. Creating it here rather
+   than from `init` lets you keep the token below to this one bucket.
+2. Under **Manage API tokens**, create a token with **Object Read & Write**,
+   applied to that bucket only. Note the access key ID and the secret
+   access key. The secret is shown once.
+3. Note your account ID, which is on the R2 overview page.
+
+On the first machine, run `carryon init` with no `--dest`. It asks, in order:
+
+- where the Archive should live: pick *a cloud service*;
+- which service: pick *Cloudflare R2*;
+- a name for the rclone remote (`carryon` unless you already have one);
+- your account ID, access key ID and secret access key (not echoed);
+- the bucket: `carryon-archive`;
+- whether to create the bucket: answer no, since it exists.
+
+The keys go into rclone's config (`~/.config/rclone/rclone.conf`), not
+carryon's. carryon stores only the spec, `rclone:carryon:carryon-archive`.
+Then `carryon push --apply` and `carryon pair` as usual.
+
+On the second machine, run `carryon init --join CODE` with no `--dest`, and
+answer the same questions with the same keys and bucket. That creates the
+same rclone remote there before the code is used. If rclone already has a
+remote for the bucket, name it instead:
+`carryon init --join CODE --dest rclone:REMOTE:carryon-archive`.
+
+Amazon S3 and Google Cloud Storage go the same way, with their own
+questions. Backblaze B2 is not in `init`'s list, because rclone's upload to
+B2 creates a missing bucket, so a `push` could re-create one you deleted. A
+B2 remote you set up yourself still works as `rclone:REMOTE:BUCKET`.
+
 ## Where carryon keeps things
 
 On each machine, everything lives under `~/.carryon/`:

@@ -1,0 +1,10 @@
+#!/bin/sh
+# A stand-in for macOS security(1), so demo.tape never reaches the real
+# login keychain: each demo home's "keychain" is one file inside it.
+store="$HOME/.demo-keychain"
+case "$1" in
+  add-generic-password)
+    while [ $# -gt 0 ]; do [ "$1" = -w ] && printf '%s\n' "$2" > "$store"; shift; done ;;
+  find-generic-password) [ -f "$store" ] && exec cat "$store"; exit 44 ;;
+  delete-generic-password) rm -f "$store" ;;
+esac
