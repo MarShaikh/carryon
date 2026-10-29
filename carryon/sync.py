@@ -220,10 +220,38 @@ def _print_rekey_notes(near: int, bare: int, non_utf8: int) -> None:
 # --- init --------------------------------------------------------------------
 
 
+def _ask_key_file(fault) -> bool:
+    """Put `--key-file` to the user when secret-tool finds no keyring.
+
+    Only asked, never assumed (ADR-0004's 2026-10-29 amendment): the same
+    failure comes from a desktop whose keyring is merely unreachable over
+    SSH, where the key may be sitting. Without a terminal, or for any other
+    keychain, the fault stands and names the flag.
+    """
+    if fault.backend != "secret-tool" or not prompting.available():
+        raise fault
+    print(f"No keyring answered on this machine ({fault.detail}). On a "
+          "server or VM that is normal; on a desktop reached over SSH, the "
+          "key may be in a keyring that is only locked, so answer no there.")
+    if not prompting.confirm("Keep the master key in ~/.carryon/master.key "
+                             "(mode 0600) instead?"):
+        raise SystemExit("nothing was stored. Unlock or start the keyring "
+                         "and run `carryon init` again, or run `carryon "
+                         "init --key-file` to keep the key in the file.")
+    return True
+
+
 def init(args, home) -> int:
     home = pathlib.Path(home)
     key_file = getattr(args, "key_file", False)
-    if keyring.fetch_master(home=home, key_file=key_file) is not None:
+    try:
+        held = keyring.fetch_master(home=home, key_file=key_file)
+    except keyring.KeychainFault as fault:
+        # Onto args as well, because the join and recover legs read the
+        # choice from there when they store the key they are handed.
+        key_file = args.key_file = _ask_key_file(fault)
+        held = keyring.fetch_master(home=home, key_file=key_file)
+    if held is not None:
         raise SystemExit(
             "this machine already holds a master key, so it is already set "
             "up. To start over, remove the key from the keychain (service "

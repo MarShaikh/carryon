@@ -252,7 +252,7 @@ these are the ones a new user meets most.
 | this machine holds no master key | `carryon init --join CODE --dest SPEC` with a code from `carryon pair`, or `carryon init --recover` if no machine has the key |
 | there is already an Archive at ... | you are setting up a second machine: pair it rather than starting a new Archive |
 | could not read the master key via security | the keychain is locked or unreachable; the key may well still be there, so fix the keychain rather than pairing again |
-| could not read the master key via secret-tool | as above; on a server with no keyring running, set up with `carryon init --key-file` instead |
+| could not read the master key via secret-tool | as above; on a server with no keyring running, run `carryon init` in a terminal and answer yes, or pass `--key-file` |
 | the stored master key ... is not the hex carryon wrote there | put the file back from a backup, pair again, or remove it and run `carryon init --recover` |
 | wrong or expired code | the code was mistyped or is past its 24 hours; run `carryon pair` again |
 | refusing to push: the Archive's Index is at revision ... | the Archive has gone backwards since this machine last saw it; restore the newer copy, or follow the message to accept it deliberately |

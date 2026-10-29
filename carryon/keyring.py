@@ -134,11 +134,29 @@ def store_master(key: bytes, home: pathlib.Path = HOME,
                          f"{detail}")
 
 
+class KeychainFault(SystemExit):
+    """A keychain that would not answer, with which one it was.
+
+    A SystemExit, so every caller that does not ask still stops with the
+    same sentence. `init` asks: on Linux the usual cause is a server with no
+    keyring at all, and with a terminal it can put the `--key-file` choice
+    to the user rather than send them off to retype the command.
+    """
+
+    def __init__(self, backend: str, result):
+        super().__init__(_fault(backend, result))
+        self.backend = backend
+        self.detail = _detail(result)
+
+
+def _detail(result) -> str:
+    return (result.stderr or "").strip() or f"exit {result.returncode}"
+
+
 def _fault(backend: str, result) -> str:
-    detail = (result.stderr or "").strip() or f"exit {result.returncode}"
-    said = (f"could not read the master key via {backend}: {detail} - this "
-            "machine may still hold the key; fix the keychain rather than "
-            "pairing again")
+    said = (f"could not read the master key via {backend}: "
+            f"{_detail(result)} - this machine may still hold the key; fix "
+            "the keychain rather than pairing again")
     if backend == "secret-tool":
         # The usual cause on Linux is not a broken keyring but none at all:
         # a server or VM with libsecret-tools installed and no Secret Service
@@ -192,14 +210,14 @@ def fetch_master(home: pathlib.Path = HOME, platform=None,
             return None
         if key_file:
             return None
-        raise SystemExit(_fault("security", result))
+        raise KeychainFault("security", result)
     if backend == "secret-tool":
         result = _run(["secret-tool", "lookup",
                        "service", SERVICE, "account", ACCOUNT])
         if result.returncode == 0:
             return _decode(result.stdout)
         if (result.stderr or "").strip() and not key_file:
-            raise SystemExit(_fault("secret-tool", result))
+            raise KeychainFault("secret-tool", result)
         return None
     path = _fallback_path(home)
     state = config.read_state_bytes(path)

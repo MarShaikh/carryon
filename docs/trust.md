@@ -68,8 +68,9 @@ neither, it falls back to `~/.carryon/master.key` with mode 0600 and says so.
 A Linux server often has `secret-tool` installed but no keyring running for it
 to talk to. carryon does not guess that it is safe to use the file there,
 because the same error comes from a desktop whose keyring is only unreachable
-over SSH. Run `carryon init --key-file` (with `--join` or `--recover` if you
-need them) to keep the key in the file. Once the file exists, every command
+over SSH. So `init` asks, in a terminal, whether to keep the key in the file
+instead; the answer defaults to no. A script passes `--key-file` (with
+`--join` or `--recover` if it needs them). Once the file exists, every command
 uses it.
 
 It also prints your **recovery key**, once:
