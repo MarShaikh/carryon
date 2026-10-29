@@ -68,7 +68,7 @@ def test_init_on_a_machine_with_a_key(tmp_path):
     assert message == (
         "this machine already holds a master key, so it is already set up. "
         "To start over, remove the key from the keychain (service 'carryon') "
-        "first."), message
+        "or ~/.carryon/master.key first."), message
 
 
 def test_recover_without_a_terminal(tmp_path, monkeypatch):

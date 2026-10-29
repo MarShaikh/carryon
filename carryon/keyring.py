@@ -11,10 +11,18 @@ argument to `add-generic-password`, so on store the key is briefly visible in
 the exposure is documented rather than worked around; fetch and delete never
 put it on argv. On Linux, secret-tool reads the secret on stdin, and the
 fallback file involves no argv at all.
+
+Where the key lives is decided once, at `carryon init`, and then read off the
+disk: a key file that is there is this machine's key, whatever keychain is
+installed beside it. A Linux server often has secret-tool and no keyring for
+it to talk to, and secret-tool cannot tell that apart from a desktop's keyring
+that is merely unreachable over SSH. So the file is never picked on carryon's
+own guess; `init --key-file` picks it, and every run after that follows it.
 """
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import subprocess
@@ -34,6 +42,15 @@ def _backend(platform=None) -> str:
     if platform.startswith("linux") and shutil.which("secret-tool"):
         return "secret-tool"
     return "file"
+
+
+def _where(home: pathlib.Path, platform=None) -> str:
+    # lexists rather than is_file: a key file that will not read (a link
+    # loop, a directory) is still the key's place, and fetch_master has to
+    # say so rather than ask a keychain that never held it.
+    if os.path.lexists(_fallback_path(home)):
+        return "file"
+    return _backend(platform)
 
 
 def _fallback_path(home: pathlib.Path) -> pathlib.Path:
@@ -89,8 +106,10 @@ def _run(argv, secret_stdin=None):
 
 
 def store_master(key: bytes, home: pathlib.Path = HOME,
-                 platform=None) -> None:
-    backend = _backend(platform)
+                 platform=None, key_file: bool = False) -> None:
+    """Store the key, in the file when `key_file` says so (`init
+    --key-file`) or when the file is already where this machine's key is."""
+    backend = "file" if key_file else _where(home, platform)
     if backend == "security":
         # -U updates an existing entry instead of failing on it
         result = _run(["security", "add-generic-password", "-U",
@@ -117,12 +136,21 @@ def store_master(key: bytes, home: pathlib.Path = HOME,
 
 def _fault(backend: str, result) -> str:
     detail = (result.stderr or "").strip() or f"exit {result.returncode}"
-    return (f"could not read the master key via {backend}: {detail} - this "
+    said = (f"could not read the master key via {backend}: {detail} - this "
             "machine may still hold the key; fix the keychain rather than "
             "pairing again")
+    if backend == "secret-tool":
+        # The usual cause on Linux is not a broken keyring but none at all:
+        # a server or VM with libsecret-tools installed and no Secret Service
+        # running. Only the user knows which, so the cure is named, not taken.
+        said += (". On a machine with no keyring, such as a server, run "
+                 "`carryon init --key-file` to keep the key in "
+                 "~/.carryon/master.key instead")
+    return said
 
 
-def fetch_master(home: pathlib.Path = HOME, platform=None):
+def fetch_master(home: pathlib.Path = HOME, platform=None,
+                 key_file: bool = False):
     """The master key, or None when this machine genuinely holds none yet.
 
     None is reserved for not-stored, because callers turn it into "pair this
@@ -148,8 +176,13 @@ def fetch_master(home: pathlib.Path = HOME, platform=None):
     So the read is the guard. ENOENT and ENOTDIR are the two errnos that mean
     'nothing is stored here', the same two config.load names; everything else
     is a fault, and a fault says so.
+
+    `key_file` is `init --key-file` asking: the user has said this machine
+    has no keyring, so a keychain that will not answer is taken at their word
+    as holding nothing. A keychain that does answer is still asked, so a key
+    already stored there is refused over rather than shadowed by a new file.
     """
-    backend = _backend(platform)
+    backend = _where(home, platform)
     if backend == "security":
         result = _run(["security", "find-generic-password",
                        "-s", SERVICE, "-a", ACCOUNT, "-w"])
@@ -157,13 +190,15 @@ def fetch_master(home: pathlib.Path = HOME, platform=None):
             return _decode(result.stdout)
         if result.returncode == 44:  # errSecItemNotFound
             return None
+        if key_file:
+            return None
         raise SystemExit(_fault("security", result))
     if backend == "secret-tool":
         result = _run(["secret-tool", "lookup",
                        "service", SERVICE, "account", ACCOUNT])
         if result.returncode == 0:
             return _decode(result.stdout)
-        if (result.stderr or "").strip():
+        if (result.stderr or "").strip() and not key_file:
             raise SystemExit(_fault("secret-tool", result))
         return None
     path = _fallback_path(home)
@@ -189,7 +224,7 @@ def fetch_master(home: pathlib.Path = HOME, platform=None):
 def forget_master(home: pathlib.Path = HOME, platform=None) -> None:
     """Remove the cached key. Nothing to remove is not an error - the point
     is the state afterwards, not what was there before."""
-    backend = _backend(platform)
+    backend = _where(home, platform)
     if backend == "security":
         _run(["security", "delete-generic-password",
               "-s", SERVICE, "-a", ACCOUNT])

@@ -131,6 +131,8 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
     ("init", "recover"): "a flag - the recovery key it stands for is asked "
                          "at a prompt and never passed, so there is no text "
                          "here to spell",
+    ("init", "key_file"): "a flag - the file it names is carryon's own "
+                          "~/.carryon/master.key, never a path from the user",
 }
 
 ALL_ARGUMENTS = dict(ARGUMENTS_THAT_NAME_A_PATH)

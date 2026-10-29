@@ -65,6 +65,13 @@ they stay in the repository's history.
 keychain (`security` on macOS, `secret-tool` on Linux). On a machine with
 neither, it falls back to `~/.carryon/master.key` with mode 0600 and says so.
 
+A Linux server often has `secret-tool` installed but no keyring running for it
+to talk to. carryon does not guess that it is safe to use the file there,
+because the same error comes from a desktop whose keyring is only unreachable
+over SSH. Run `carryon init --key-file` (with `--join` or `--recover` if you
+need them) to keep the key in the file. Once the file exists, every command
+uses it.
+
 It also prints your **recovery key**, once:
 
 ```

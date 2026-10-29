@@ -14,7 +14,11 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from carryon import crypto, keyring  # noqa: E402
+import argparse
+import re
+
+from carryon import crypto, keyring, sync  # noqa: E402
+from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 
 KEY = bytes(range(32))
 
@@ -63,11 +67,11 @@ def no_tools(tmp_path, monkeypatch):
 def test_darwin_round_trip_via_security(tmp_path, monkeypatch):
     log, _ = install_fake(tmp_path, monkeypatch, "security", SECURITY_FAKE)
 
-    keyring.store_master(KEY, platform="darwin")
-    assert keyring.fetch_master(platform="darwin") == KEY
+    keyring.store_master(KEY, home=tmp_path, platform="darwin")
+    assert keyring.fetch_master(home=tmp_path, platform="darwin") == KEY
 
-    keyring.forget_master(platform="darwin")
-    assert keyring.fetch_master(platform="darwin") is None
+    keyring.forget_master(home=tmp_path, platform="darwin")
+    assert keyring.fetch_master(home=tmp_path, platform="darwin") is None
 
     lines = log.read_text().splitlines()
     add = [l for l in lines if l.startswith("add-generic-password")][0]
@@ -80,7 +84,7 @@ def test_darwin_round_trip_via_security(tmp_path, monkeypatch):
 
 def test_darwin_fetch_is_none_when_nothing_stored(tmp_path, monkeypatch):
     install_fake(tmp_path, monkeypatch, "security", SECURITY_FAKE)
-    assert keyring.fetch_master(platform="darwin") is None
+    assert keyring.fetch_master(home=tmp_path, platform="darwin") is None
 
 
 LOCKED_SECURITY_FAKE = """#!/bin/sh
@@ -97,7 +101,7 @@ def test_darwin_fetch_surfaces_a_keychain_fault_not_none(tmp_path, monkeypatch):
     install_fake(tmp_path, monkeypatch, "security", LOCKED_SECURITY_FAKE)
 
     with pytest.raises(SystemExit) as exc:
-        keyring.fetch_master(platform="darwin")
+        keyring.fetch_master(home=tmp_path, platform="darwin")
     assert "User interaction is not allowed" in str(exc.value)
 
 
@@ -106,11 +110,11 @@ def test_darwin_fetch_surfaces_a_keychain_fault_not_none(tmp_path, monkeypatch):
 def test_linux_round_trip_via_secret_tool(tmp_path, monkeypatch):
     log, _ = install_fake(tmp_path, monkeypatch, "secret-tool", SECRET_TOOL_FAKE)
 
-    keyring.store_master(KEY, platform="linux")
-    assert keyring.fetch_master(platform="linux") == KEY
+    keyring.store_master(KEY, home=tmp_path, platform="linux")
+    assert keyring.fetch_master(home=tmp_path, platform="linux") == KEY
 
-    keyring.forget_master(platform="linux")
-    assert keyring.fetch_master(platform="linux") is None
+    keyring.forget_master(home=tmp_path, platform="linux")
+    assert keyring.fetch_master(home=tmp_path, platform="linux") is None
 
     text = log.read_text()
     assert "store" in text and "lookup" in text and "clear" in text
@@ -123,7 +127,7 @@ def test_linux_round_trip_via_secret_tool(tmp_path, monkeypatch):
 def test_linux_fetch_is_none_when_nothing_stored(tmp_path, monkeypatch):
     """secret-tool's silent exit 1 is genuinely 'no key here'."""
     install_fake(tmp_path, monkeypatch, "secret-tool", SECRET_TOOL_FAKE)
-    assert keyring.fetch_master(platform="linux") is None
+    assert keyring.fetch_master(home=tmp_path, platform="linux") is None
 
 
 NO_DBUS_SECRET_TOOL_FAKE = """#!/bin/sh
@@ -141,8 +145,10 @@ def test_linux_fetch_surfaces_a_secret_tool_fault_not_none(tmp_path,
     install_fake(tmp_path, monkeypatch, "secret-tool", NO_DBUS_SECRET_TOOL_FAKE)
 
     with pytest.raises(SystemExit) as exc:
-        keyring.fetch_master(platform="linux")
+        keyring.fetch_master(home=tmp_path, platform="linux")
     assert "D-Bus" in str(exc.value)
+    assert "--key-file" in str(exc.value), \
+        "a server with no keyring is the usual cause, and its cure is unnamed"
 
 
 # --- fallback file ----------------------------------------------------------
@@ -370,3 +376,154 @@ def test_storing_over_carryons_own_key_file_still_works(tmp_path, monkeypatch,
     assert keyring.fetch_master(home=home, platform="linux") == KEY
     assert stat.S_IMODE(path.stat().st_mode) == 0o600, \
         "a key file that was already there kept its old mode"
+
+
+# --- a headless Linux machine: secret-tool installed, no keyring (#38) -------
+#
+# Both shapes reproduced in an Ubuntu 24.04 container answer every
+# subcommand with exit 1 and a reason on stderr: no D-Bus at all ("Cannot
+# autolaunch D-Bus without X11 $DISPLAY") and a bus with no Secret Service on
+# it ("org.freedesktop.secrets was not provided by any .service files").
+# The same answer comes from a desktop whose keyring is only unreachable over
+# SSH, where the key may well be sitting - so carryon never moves to the file
+# on its own guess. `init --key-file` moves it, and the file then decides.
+
+NO_KEYRING_SECRET_TOOL_FAKE = """#!/bin/sh
+printf '%s\\n' "$*" >> "{log}"
+echo 'secret-tool: The name org.freedesktop.secrets was not provided by any .service files' >&2
+exit 1
+"""
+
+
+def test_key_file_stores_in_the_file_and_never_asks_the_keyring(
+        tmp_path, monkeypatch, capsys):
+    log, _ = install_fake(tmp_path, monkeypatch, "secret-tool",
+                          NO_KEYRING_SECRET_TOOL_FAKE)
+    home = state_dir(tmp_path)
+
+    keyring.store_master(KEY, home=home, platform="linux", key_file=True)
+
+    path = home / ".carryon" / "master.key"
+    assert path.read_text().strip() == KEY.hex()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert "master.key" in capsys.readouterr().err, "the warning was dropped"
+    assert not log.exists(), "secret-tool was run for a key bound for the file"
+
+
+def test_once_the_file_exists_every_command_reads_it_and_not_the_keyring(
+        tmp_path, monkeypatch):
+    log, _ = install_fake(tmp_path, monkeypatch, "secret-tool",
+                          NO_KEYRING_SECRET_TOOL_FAKE)
+    home = state_dir(tmp_path)
+    keyring.store_master(KEY, home=home, platform="linux", key_file=True)
+
+    assert keyring.fetch_master(home=home, platform="linux") == KEY
+    keyring.store_master(bytes(32), home=home, platform="linux")
+    assert keyring.fetch_master(home=home, platform="linux") == bytes(32), \
+        "a re-store went somewhere other than the file the key lives in"
+    keyring.forget_master(home=home, platform="linux")
+    assert not (home / ".carryon" / "master.key").exists()
+    assert not log.exists(), "secret-tool was asked about a key in the file"
+
+
+def test_the_file_wins_over_a_working_keyring_too(tmp_path, monkeypatch):
+    """Where the key lives is read off the disk, not off which tools happen
+    to work today: a keyring that comes up later must not shadow the file."""
+    _, store = install_fake(tmp_path, monkeypatch, "secret-tool",
+                            SECRET_TOOL_FAKE)
+    store.write_text(bytes(32).hex())
+    home = state_dir(tmp_path)
+    (home / ".carryon" / "master.key").write_text(KEY.hex() + "\n")
+
+    assert keyring.fetch_master(home=home, platform="linux") == KEY
+
+
+def test_without_key_file_a_dead_keyring_is_still_a_fault_not_no_key(
+        tmp_path, monkeypatch):
+    """The desktop-over-SSH case: answering None here is what lets init mint
+    a second master key over one the keyring still holds."""
+    install_fake(tmp_path, monkeypatch, "secret-tool",
+                 NO_KEYRING_SECRET_TOOL_FAKE)
+    home = state_dir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        keyring.fetch_master(home=home, platform="linux")
+    assert "org.freedesktop.secrets" in str(exc.value)
+    assert not (home / ".carryon" / "master.key").exists()
+
+
+def test_key_file_takes_a_dead_keyring_at_the_users_word(tmp_path,
+                                                          monkeypatch):
+    install_fake(tmp_path, monkeypatch, "secret-tool",
+                 NO_KEYRING_SECRET_TOOL_FAKE)
+    home = state_dir(tmp_path)
+    assert keyring.fetch_master(home=home, platform="linux",
+                                key_file=True) is None
+
+
+def test_key_file_still_finds_a_key_a_working_keyring_holds(tmp_path,
+                                                             monkeypatch):
+    """So `init --key-file` on a machine already set up refuses, rather than
+    writing a second key into a file that would then shadow the first."""
+    install_fake(tmp_path, monkeypatch, "secret-tool", SECRET_TOOL_FAKE)
+    home = state_dir(tmp_path)
+    keyring.store_master(KEY, home=home, platform="linux")
+
+    assert keyring.fetch_master(home=home, platform="linux",
+                                key_file=True) == KEY
+    assert not (home / ".carryon" / "master.key").exists()
+
+
+def init_ns(**kw) -> argparse.Namespace:
+    base = dict(dest=None, join=None, recover=False, machine=None,
+                key_file=False)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+@pytest.fixture
+def headless(tmp_path, monkeypatch):
+    """A Linux machine as #38 found it, whatever this test runs on."""
+    install_fake(tmp_path, monkeypatch, "secret-tool",
+                 NO_KEYRING_SECRET_TOOL_FAKE)
+    monkeypatch.setattr(keyring, "_backend",
+                        lambda platform=None: "secret-tool")
+
+
+def test_init_on_a_headless_machine_refuses_and_names_key_file(
+        tmp_path, headless):
+    home = state_dir(tmp_path)
+    spec = str(tmp_path / "archive")
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(init_ns(dest=spec, machine="vm"), home)
+
+    assert "--key-file" in str(exc.value)
+    assert sorted(p.name for p in (home / ".carryon").iterdir()) == [], \
+        "a refused init left something behind"
+
+
+def test_init_and_join_with_key_file_on_headless_machines(
+        tmp_path, headless, capsys):
+    home_a, home_b = tmp_path / "a", tmp_path / "b"
+    home_a.mkdir()
+    home_b.mkdir()
+    spec = str(tmp_path / "archive")
+
+    assert sync.init(init_ns(dest=spec, machine="vm-a", key_file=True),
+                     home_a) == 0
+    key_a = keyring.fetch_master(home=home_a)
+    assert len(key_a) == crypto.MASTER_BYTES
+
+    assert sync.pair(argparse.Namespace(), home_a) == 0
+    code = re.search(r"--join (\S+)", capsys.readouterr().out).group(1)
+    assert sync.init(init_ns(dest=spec, join=code, machine="vm-b",
+                             key_file=True), home_b) == 0
+    assert keyring.fetch_master(home=home_b) == key_a
+    assert (home_b / ".carryon" / "master.key").is_file()
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(init_ns(dest=spec, machine="vm-b", key_file=True), home_b)
+    assert "already holds a master key" in str(exc.value)
+    assert DirectoryDestination(tmp_path / "archive").list("carryon/pair/") \
+        == []
