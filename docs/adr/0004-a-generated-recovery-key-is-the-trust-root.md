@@ -149,6 +149,12 @@ keychain and the file without the user asking. Without the flag, a keyring
 that will not answer is still a fault, and the fault names `--key-file` as the
 cure for a machine that has no keyring.
 
+With a terminal on both ends (ADR-0011), `init` puts the same choice as a
+question when secret-tool finds no keyring: it shows what secret-tool said and
+asks whether to keep the key in the file, with no as the default. A yes is the
+flag, typed for the user. It is asked only for secret-tool; a locked macOS
+keychain is a keychain to unlock.
+
 ## Considered options
 
 **A user-chosen passphrase as the only root.** Rejected as the default: it

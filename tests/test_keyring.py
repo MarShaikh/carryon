@@ -17,7 +17,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import argparse
 import re
 
-from carryon import crypto, keyring, sync  # noqa: E402
+from carryon import crypto, keyring, prompting, sync  # noqa: E402
 from carryon.destinations.directory import DirectoryDestination  # noqa: E402
 
 KEY = bytes(range(32))
@@ -491,7 +491,8 @@ def headless(tmp_path, monkeypatch):
 
 
 def test_init_on_a_headless_machine_refuses_and_names_key_file(
-        tmp_path, headless):
+        tmp_path, headless, monkeypatch):
+    monkeypatch.setattr(prompting, "available", lambda: False)
     home = state_dir(tmp_path)
     spec = str(tmp_path / "archive")
 
@@ -527,3 +528,93 @@ def test_init_and_join_with_key_file_on_headless_machines(
     assert "already holds a master key" in str(exc.value)
     assert DirectoryDestination(tmp_path / "archive").list("carryon/pair/") \
         == []
+
+
+# --- with a terminal, init asks rather than naming the flag ------------------
+
+
+def a_terminal(monkeypatch, *answers):
+    """A terminal on both ends, holding these answers in order."""
+    queue = list(answers)
+    prompts = []
+
+    def next_answer(prompt):
+        prompts.append(prompt)
+        if not queue:
+            raise EOFError
+        return queue.pop(0)
+
+    monkeypatch.setattr(prompting, "available", lambda: True)
+    monkeypatch.setattr(prompting, "_read_line", next_answer)
+    return prompts
+
+
+def test_init_with_a_terminal_asks_and_yes_keeps_the_key_in_the_file(
+        tmp_path, headless, monkeypatch, capsys):
+    prompts = a_terminal(monkeypatch, "y")
+    home = state_dir(tmp_path)
+
+    assert sync.init(init_ns(dest=str(tmp_path / "archive"), machine="vm"),
+                     home) == 0
+
+    assert len(prompts) == 1 and "master.key" in prompts[0]
+    assert "org.freedesktop.secrets" in capsys.readouterr().out, \
+        "the question does not say what the keyring answered"
+    assert (home / ".carryon" / "master.key").is_file()
+    assert len(keyring.fetch_master(home=home)) == crypto.MASTER_BYTES
+
+
+def test_init_with_a_terminal_and_no_stores_nothing(tmp_path, headless,
+                                                     monkeypatch):
+    """No is the default, and the desktop-over-SSH answer: the keyring may
+    hold the key, so nothing is minted and nothing is written."""
+    a_terminal(monkeypatch, "")
+    home = state_dir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(init_ns(dest=str(tmp_path / "archive"), machine="vm"), home)
+
+    assert "nothing was stored" in str(exc.value)
+    assert "--key-file" in str(exc.value)
+    assert list((home / ".carryon").iterdir()) == []
+    assert not (tmp_path / "archive").exists()
+
+
+def test_join_with_a_terminal_asks_too(tmp_path, headless, monkeypatch,
+                                        capsys):
+    home_a, home_b = tmp_path / "a", tmp_path / "b"
+    home_a.mkdir()
+    home_b.mkdir()
+    spec = str(tmp_path / "archive")
+    monkeypatch.setattr(prompting, "available", lambda: False)
+    sync.init(init_ns(dest=spec, machine="vm-a", key_file=True), home_a)
+    sync.pair(argparse.Namespace(), home_a)
+    code = re.search(r"--join (\S+)", capsys.readouterr().out).group(1)
+
+    a_terminal(monkeypatch, "yes")
+    assert sync.init(init_ns(dest=spec, join=code, machine="vm-b"),
+                     home_b) == 0
+    assert keyring.fetch_master(home=home_b) == keyring.fetch_master(
+        home=home_a)
+
+
+LOCKED_KEYCHAIN_FAKE = """#!/bin/sh
+echo 'security: SecKeychainItemCopyContent: User interaction is not allowed.' >&2
+exit 51
+"""
+
+
+def test_a_locked_macos_keychain_is_not_offered_the_file(tmp_path,
+                                                          monkeypatch):
+    """The question is for a Linux machine with no keyring. A locked login
+    keychain is a keychain to unlock, so the fault stands as it was."""
+    install_fake(tmp_path, monkeypatch, "security", LOCKED_KEYCHAIN_FAKE)
+    monkeypatch.setattr(keyring, "_backend", lambda platform=None: "security")
+    prompts = a_terminal(monkeypatch)
+    home = state_dir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        sync.init(init_ns(dest=str(tmp_path / "archive")), home)
+
+    assert "User interaction is not allowed" in str(exc.value)
+    assert prompts == []
