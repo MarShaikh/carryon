@@ -130,6 +130,25 @@ This makes the recovery key what performs recovery, not only what makes it
 possible. An Archive with no machine left holding the key can be opened by
 hand.
 
+## Where the key is kept on a machine with no keyring
+
+> Amendment, 2026-10-29.
+
+On Linux, carryon chose `secret-tool` whenever it was installed. A server or VM
+often has it installed with no keyring running, so `init` stopped at its first
+lookup and wrote nothing (#38). carryon cannot fix that by moving to the file
+on its own. secret-tool fails the same way on a desktop whose keyring is only
+unreachable over SSH, and the key may be in that keyring. Reading that failure
+as "no key" would let `init` mint a second master key.
+
+So the user picks the file with `carryon init --key-file`, which also works
+with `--join` and `--recover`. After that, the file decides: once
+`~/.carryon/master.key` exists, every command reads and writes the key there,
+whatever keychain is installed beside it. A key is never moved between the
+keychain and the file without the user asking. Without the flag, a keyring
+that will not answer is still a fault, and the fault names `--key-file` as the
+cure for a machine that has no keyring.
+
 ## Considered options
 
 **A user-chosen passphrase as the only root.** Rejected as the default: it

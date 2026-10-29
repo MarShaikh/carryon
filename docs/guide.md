@@ -235,7 +235,7 @@ On each machine, everything lives under `~/.carryon/`:
 | `state.json` | what this machine has seen of each Archive: the highest Index revision (so a rolled-back Archive is noticed) and each memory file's Base |
 | `backups/` | every file a pull overwrote, one directory per pull |
 | `conflicts/` | the Archive's copy of anything two machines changed at once, waiting for you |
-| `master.key` | only on a machine with no OS keychain; elsewhere the key is in the keychain under service `carryon` |
+| `master.key` | only on a machine with no OS keychain, or one set up with `init --key-file`; elsewhere the key is in the keychain under service `carryon` |
 
 At the Destination, everything sits under `carryon/`. The Index records which
 Sessions and Setups the Archive holds, Setups are kept one sealed object per
@@ -252,6 +252,7 @@ these are the ones a new user meets most.
 | this machine holds no master key | `carryon init --join CODE --dest SPEC` with a code from `carryon pair`, or `carryon init --recover` if no machine has the key |
 | there is already an Archive at ... | you are setting up a second machine: pair it rather than starting a new Archive |
 | could not read the master key via security | the keychain is locked or unreachable; the key may well still be there, so fix the keychain rather than pairing again |
+| could not read the master key via secret-tool | as above; on a server with no keyring running, set up with `carryon init --key-file` instead |
 | the stored master key ... is not the hex carryon wrote there | put the file back from a backup, pair again, or remove it and run `carryon init --recover` |
 | wrong or expired code | the code was mistyped or is past its 24 hours; run `carryon pair` again |
 | refusing to push: the Archive's Index is at revision ... | the Archive has gone backwards since this machine last saw it; restore the newer copy, or follow the message to accept it deliberately |

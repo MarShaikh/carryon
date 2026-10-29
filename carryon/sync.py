@@ -222,11 +222,12 @@ def _print_rekey_notes(near: int, bare: int, non_utf8: int) -> None:
 
 def init(args, home) -> int:
     home = pathlib.Path(home)
-    if keyring.fetch_master(home=home) is not None:
+    key_file = getattr(args, "key_file", False)
+    if keyring.fetch_master(home=home, key_file=key_file) is not None:
         raise SystemExit(
             "this machine already holds a master key, so it is already set "
             "up. To start over, remove the key from the keychain (service "
-            "'carryon') first.")
+            "'carryon') or ~/.carryon/master.key first.")
 
     # Both legs that take a key ahead of the machine-name check below,
     # because a machine that kept its config takes its name from there and
@@ -262,7 +263,7 @@ def init(args, home) -> int:
     choosing.confirm_fresh(dest)
 
     display, master = crypto.new_recovery_key()
-    keyring.store_master(master, home=home)
+    keyring.store_master(master, home=home, key_file=key_file)
     cfg = config.default_config()
     cfg["destination"] = spec
     cfg["machine"] = machine
@@ -392,7 +393,8 @@ def _existing_config(args, home, leg: str, run: str, not_it: str,
     return cfg, True, spec, machine, path
 
 
-def _take_key(home, cfg, kept, spec, machine, master, revision) -> None:
+def _take_key(home, cfg, kept, spec, machine, master, revision,
+              key_file=False) -> None:
     """Store what a leg that takes a key has proved, config first.
 
     A config with no key is a machine a re-run takes the key back on, by
@@ -407,7 +409,7 @@ def _take_key(home, cfg, kept, spec, machine, master, revision) -> None:
         fresh["destination"] = spec
         fresh["machine"] = machine
         config.save(fresh, home)
-    keyring.store_master(master, home=home)
+    keyring.store_master(master, home=home, key_file=key_file)
     _record_revision(home, spec, revision)
 
 
@@ -508,7 +510,8 @@ def _recover(args, home) -> int:
     _warn_on_rollback(home, spec, index)
 
     _take_key(home, cfg, kept, spec, machine, master,
-              archive.index_revision(index))
+              archive.index_revision(index),
+              getattr(args, "key_file", False))
     choosing.report(dest)
     print(f"recovered as {machine!r}: this machine opens the Archive again")
     _say_config(kept, path)
@@ -616,7 +619,8 @@ def _join(args, home) -> int:
     # next push to be the first to say so.
     revision = payload["index_revision"]
     _warn_on_rollback(home, spec, {"revision": revision})
-    _take_key(home, cfg, kept, spec, machine, payload["master_key"], revision)
+    _take_key(home, cfg, kept, spec, machine, payload["master_key"], revision,
+              getattr(args, "key_file", False))
     choosing.report(dest)
     print(f"paired as {machine!r}: this machine now opens the Archive")
     _say_config(kept, path)

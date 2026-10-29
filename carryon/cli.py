@@ -597,6 +597,11 @@ def build_parser() -> argparse.ArgumentParser:
                                "has opened the Archive's Index")
     ini.add_argument("--machine", metavar="NAME",
                      help="this machine's name in the Archive (default: hostname)")
+    ini.add_argument("--key-file", action="store_true",
+                     help="keep the master key in ~/.carryon/master.key "
+                          "(mode 0600) rather than the OS keychain, for a "
+                          "machine with no keyring, such as a server. Later "
+                          "commands find the file on their own")
     ini.set_defaults(func=cmd_init)
 
     pus = sub.add_parser(
