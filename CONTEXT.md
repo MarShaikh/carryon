@@ -140,6 +140,15 @@ status by itself.
 _Avoid_: sync status (Sync carries; a status carries nothing), scheduled sync
 (there is none, ADR-0015)
 
+**Hook**:
+An agent's own session event that runs carryon, installed only by
+`carryon hooks install`. A session end pushes the History, in the background;
+a session start shows the person one line if something is waiting, read from
+what the last session end recorded. A hook never pulls, never pushes a Setup,
+never prompts, and fails silently except in `status` (ADR-0019).
+_Avoid_: auto-sync, background sync (only the History is pushed, and only when
+a session ends)
+
 **Handover**:
 Carrying a Setup or a Session from one agent to another on the same machine,
 rather than from one machine to another. Only in a direction no vendor importer
