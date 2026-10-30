@@ -148,3 +148,14 @@ lock comes with it.
 person arrives at a machine. It costs a round trip to the Destination before
 every agent starts and has no equivalent for Codex or Cursor, so it is its own
 decision, taken once `status` exists and its cost is measured.
+
+## A session end pushes the History
+
+> Amendment, 2026-10-30.
+
+The deferred hook was decided. An opt-in Claude Code hook now pushes the
+History when a session ends, and at session start shows the person one line
+read from what the last session end recorded, with no round trip. That is the
+one thing that runs without being typed, and with it comes the lock this
+record promised. ADR-0019 records the limits. Everything else here stands:
+no schedule, no daemon, no unattended pull or Setup push.
