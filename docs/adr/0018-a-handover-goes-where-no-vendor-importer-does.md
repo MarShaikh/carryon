@@ -136,9 +136,13 @@ and its Claude copy as two Sessions. That duplicates content, encrypted, and is
 correct: they are two Sessions in two agents, and either can be extended
 without the other.
 
-Handing the same Session over twice must not make two copies. carryon keeps a
-record of which source Session became which target Session, on this machine,
-like the High-water mark.
+Handing the same Session over twice must not make two copies. The target
+Session's UUID is derived from the source's, so a second Handover lands on the
+same name and the write refuses it. Nothing records what was handed over, so
+there is no record to lose. (The first draft of this ADR kept such a record
+beside the High-water mark; the derived name made it unnecessary.) The target
+file is the target agent's once written, because resuming it appends to it,
+and carryon never writes it again.
 
 Like everything since ADR-0015, a Handover runs when the user asks for one and
 never on its own.

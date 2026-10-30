@@ -133,6 +133,11 @@ ARGUMENTS_THAT_ARE_NOT_TEXT_AT_ALL = {
                          "here to spell",
     ("init", "key_file"): "a flag - the file it names is carryon's own "
                           "~/.carryon/master.key, never a path from the user",
+    ("handover", "source"): "an agent key - handover.run admits one pair "
+                            "and refuses every other before reading anything",
+    ("handover", "target"): "an agent key - handover.run, the same check",
+    ("handover", "apply"): "a flag",
+    ("handover", "verbose"): "a flag",
 }
 
 ALL_ARGUMENTS = dict(ARGUMENTS_THAT_NAME_A_PATH)

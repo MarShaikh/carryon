@@ -136,10 +136,11 @@ of step then is filed by `pull --apply`, and needs that same merge and
 | `pair` | mint a one-time code that hands another machine the master key, via the Destination |
 | `list` | show detected agents and what would be captured |
 | `doctor` | check for layout changes: entries no adapter recognises |
+| `handover codex claude-code` | carry Codex over to Claude Code on this machine: each Session becomes one `claude --resume` opens, `~/.codex/AGENTS.md` is imported from `~/.claude/CLAUDE.md`, and MCP servers are added with `claude mcp add-json`. For Claude Code to Codex, Codex's own `/import` does it |
 | `capture --out DIR` | capture a Setup into a local directory, in the clear, to read or diff: no Destination, no key, no History |
 | `encrypt` / `decrypt` | encrypt any file with a passphrase: a standalone cipher, nothing to do with an Archive |
 
-`push`, `pull`, `sync`, `resolve` and `capture` print a plan and change nothing
+`push`, `pull`, `sync`, `resolve`, `handover` and `capture` print a plan and change nothing
 without `--apply`. `--help` on a subcommand lists its own flags (`--agent`,
 `--category`, `--map`, `--force`, `--verbose`). `--verbose` lists each file
 and Session behind a summary.
