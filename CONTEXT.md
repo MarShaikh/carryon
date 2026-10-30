@@ -140,6 +140,15 @@ status by itself.
 _Avoid_: sync status (Sync carries; a status carries nothing), scheduled sync
 (there is none, ADR-0015)
 
+**Handover**:
+Carrying a Setup or a Session from one agent to another on the same machine,
+rather than from one machine to another. Only in a direction no vendor importer
+covers; for the others carryon names the importer (ADR-0018). A handed-over
+Session is a new Session in the target agent, carrying the conversation and not
+the tool calls, and the source is never written.
+_Avoid_: migration (ADR-0002 already uses it for a new machine), import (that is
+the vendors' word for their own direction), conversion
+
 **Re-keying**:
 Rewriting the absolute paths recorded inside a History so they do not belong to
 the machine that wrote them. Happens on the way out, leaving the Archive
