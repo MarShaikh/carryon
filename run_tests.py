@@ -63,6 +63,7 @@ MODULES = (
     "tests.test_sync",
     "tests.test_setup_mark",
     "tests.test_status",
+    "tests.test_handover",
     "tests.test_sync_command",
     "tests.test_sync_security",
     "tests.test_sync_hostile",

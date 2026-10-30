@@ -56,8 +56,8 @@ import pathlib
 import stat
 import sys
 
-from . import (__version__, capture, config, crypto, external, layout,
-               resolve, status, sync)
+from . import (__version__, capture, config, crypto, external, handover,
+               layout, resolve, status, sync)
 # No HOME here on purpose: it is bound at import in adapters/__init__, and
 # every command below asks pathlib.Path.home() for itself instead.
 from .adapters import ADAPTERS, CATEGORIES, is_installed
@@ -490,6 +490,10 @@ def cmd_resolve(args) -> int:
     return resolve.run(args, home)
 
 
+def cmd_handover(args) -> int:
+    return handover.run(args, pathlib.Path.home())
+
+
 def cmd_pair(args) -> int:
     return sync.pair(args, pathlib.Path.home())
 
@@ -695,6 +699,24 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("--apply", action="store_true",
                      help="actually resolve (default: dry run)")
     res.set_defaults(func=cmd_resolve)
+
+    han = sub.add_parser(
+        "handover",
+        help="carry Codex Sessions over to Claude Code on this machine",
+        description="Each Codex Session becomes a new Claude Code Session "
+                    "holding the conversation, which `claude --resume` "
+                    "opens. Tool calls become one-line notes and Codex's "
+                    "encrypted reasoning stays behind. The Codex Sessions "
+                    "are only read, and a Session already handed over is "
+                    "left as it is. For Claude Code to Codex, use Codex's "
+                    "own /import.")
+    han.add_argument("source", metavar="FROM", help="codex")
+    han.add_argument("target", metavar="TO", help="claude-code")
+    han.add_argument("--apply", action="store_true",
+                     help="actually write (default: dry run)")
+    han.add_argument("--verbose", action="store_true",
+                     help="list each Session and where it lands")
+    han.set_defaults(func=cmd_handover)
 
     par = sub.add_parser(
         "pair", help="mint a one-time code that hands another machine the "
